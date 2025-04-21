@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "geoclimate-fetcher"
+version = "0.1.0"
+authors = [
+    {name = "GeoClimate Fetcher Team", email = "example@example.com"},
+]
+description = "A Python package for downloading climate data from Google Earth Engine"
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: GIS",
+    "Topic :: Scientific/Engineering :: Atmospheric Science",
+]
+
+dependencies = [
+    "earthengine-api>=0.1.380",
+    "geemap>=0.28",
+    "ipyleaflet>=0.18",
+    "ipywidgets>=8",
+    "pandas",
+    "xarray",
+    "rapidfuzz",
+    "tqdm",
+    "rich",
+    "geopandas",
+    "rasterio",
+    "rio-cogeo",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/example/geoclimate-fetcher"
+"Bug Tracker" = "https://github.com/example/geoclimate-fetcher/issues"
+
+[project.scripts]
+geoclimate-fetcher = "geoclimate_fetcher.cli.fetch:main"
+
+[tool.setuptools]
+packages = ["geoclimate_fetcher"]
+
+[tool.setuptools.package-data]
+geoclimate_fetcher = ["data/*.csv"]
