@@ -23,12 +23,22 @@ class DatasetPickerWidget:
         self.metadata_catalog = metadata_catalog
         self.on_dataset_selected = on_dataset_selected
         self.selected_dataset = None
+        self.current_category = 'all'
         
         # Create UI components
         self.title = widgets.HTML("<h3>Dataset Selection</h3>")
         
+        # Create category options
+        category_options = [('All Datasets', 'all')]
+        # Add categories from metadata catalog
+        if hasattr(self.metadata_catalog, 'categories'):
+            for cat in self.metadata_catalog.categories:
+                # Format category name for display (replace underscores, capitalize)
+                display_name = cat.replace('_', ' ').title()
+                category_options.append((display_name, cat))
+        
         self.category_dropdown = widgets.Dropdown(
-            options=[('All', 'all')] + [(cat, cat) for cat in self.metadata_catalog.categories],
+            options=category_options,
             description='Category:',
             style={'description_width': 'initial'}
         )
@@ -98,44 +108,83 @@ class DatasetPickerWidget:
     def _load_datasets(self, category: str = 'all', search_query: str = ''):
         """Load datasets based on category and search query."""
         try:
-            if category == 'all' and not search_query:
-                # All datasets
-                df = self.metadata_catalog.all_datasets
-            elif category != 'all' and not search_query:
-                # Filter by category
-                df = self.metadata_catalog.get_datasets_by_category(category)
-            elif search_query:
-                # Search across all or within category
-                df = self.metadata_catalog.search_datasets(search_query)
-                if category != 'all':
-                    # Further filter by category
-                    category_df = self.metadata_catalog.get_datasets_by_category(category)
-                    df = pd.merge(df, category_df, how='inner')
-            else:
-                df = pd.DataFrame()
+            # Store current category
+            self.current_category = category
+            
+            with self.output:
+                clear_output()
+                print(f"Loading datasets for category: {category}")
                 
-            # Update dropdown options
-            if df.empty:
-                self.dataset_dropdown.options = []
-                self.dataset_info.value = '<p>No datasets found.</p>'
-                self.select_button.disabled = True
-            else:
-                # Get dataset names
-                dataset_names = df['Dataset Name'].tolist()
-                self.dataset_dropdown.options = [(name, name) for name in dataset_names]
+                try:
+                    if category == 'all' and not search_query:
+                        # All datasets
+                        df = self.metadata_catalog.all_datasets
+                        print(f"Loaded {len(df)} datasets from all categories")
+                    elif category != 'all' and not search_query:
+                        # Filter by category
+                        print(f"Getting datasets from category: {category}")
+                        df = self.metadata_catalog.get_datasets_by_category(category)
+                        print(f"Loaded {len(df)} datasets from category {category}")
+                    elif search_query:
+                        # Search across all or within category
+                        if category == 'all':
+                            # Search all datasets
+                            df = self.metadata_catalog.search_datasets(search_query)
+                            print(f"Found {len(df)} datasets matching '{search_query}'")
+                        else:
+                            # Search within selected category
+                            try:
+                                category_df = self.metadata_catalog.get_datasets_by_category(category)
+                                # Filter the category dataframe by search term
+                                df = category_df[
+                                    category_df['Dataset Name'].str.contains(search_query, case=False) |
+                                    category_df['Description'].str.contains(search_query, case=False)
+                                ]
+                                print(f"Found {len(df)} datasets in category {category} matching '{search_query}'")
+                            except Exception as e:
+                                print(f"Error searching within category: {str(e)}")
+                                df = pd.DataFrame()
+                    else:
+                        df = pd.DataFrame()
+                except Exception as e:
+                    print(f"Error loading datasets: {str(e)}")
+                    df = pd.DataFrame()
                 
-                # Select the first dataset by default
-                if dataset_names:
-                    self.dataset_dropdown.value = dataset_names[0]
+                # Update dropdown options
+                if df is None or df.empty:
+                    self.dataset_dropdown.options = []
+                    self.dataset_info.value = '<p>No datasets found.</p>'
+                    self.select_button.disabled = True
+                    print("No datasets found for the selected criteria")
+                else:
+                    # Get dataset names and create options list safely
+                    dataset_names = df['Dataset Name'].tolist()
+                    dataset_options = []
+                    for name in dataset_names:
+                        dataset_options.append((name, name))
                     
+                    # Update dropdown
+                    self.dataset_dropdown.options = dataset_options
+                    print(f"Updated dropdown with {len(dataset_options)} options")
+                    
+                    # Select the first dataset by default
+                    if dataset_options:
+                        self.dataset_dropdown.value = dataset_options[0][0]
+                
         except Exception as e:
             with self.output:
                 clear_output()
                 print(f"Error loading datasets: {str(e)}")
+                import traceback
+                traceback.print_exc()
                 
     def _on_category_change(self, change):
         """Handle category selection change."""
         if change.new:
+            with self.output:
+                clear_output()
+                print(f"Category changed to: {change.new}")
+            
             self._load_datasets(category=change.new, search_query=self.search_input.value)
             
     def _on_search_button_click(self, button):
@@ -143,8 +192,9 @@ class DatasetPickerWidget:
         with self.output:
             clear_output()
             search_query = self.search_input.value.strip()
-            category = self.category_dropdown.value
-            self._load_datasets(category=category, search_query=search_query)
+            print(f"Searching for: '{search_query}' in category: {self.current_category}")
+            
+            self._load_datasets(category=self.current_category, search_query=search_query)
             
     def _on_dataset_change(self, change):
         """Handle dataset selection change."""

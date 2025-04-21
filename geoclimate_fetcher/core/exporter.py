@@ -263,13 +263,12 @@ class GEEExporter:
                 
                 rect_region = ee.Geometry.Rectangle([xmin, ymin, xmax, ymax])
                 
-                # Get the data
+                # Get the data - but don't pass scale parameter to sampleRectangle
                 try:
                     pixels = image.select(band).sampleRectangle(
                         region=rect_region,
                         properties=None,
-                        defaultValue=0,
-                        scale=scale
+                        defaultValue=0
                     ).getInfo()
                     
                     if band in pixels:

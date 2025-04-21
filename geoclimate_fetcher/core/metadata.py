@@ -134,20 +134,31 @@ class MetadataCatalog:
             limit=limit
         )
         
-        # Get indices of matches
-        name_indices = [self._all_datasets.index[self._all_datasets['Dataset Name'] == name].tolist()[0]
-                      for name, score in name_matches if score >= threshold]
+        # Get indices of matches - safely handling the tuple unpacking
+        name_indices = []
+        for match in name_matches:
+            if match[1] >= threshold:  # Check if score is above threshold
+                name = match[0]  # Get the name 
+                # Find corresponding index in dataframe
+                indices = self._all_datasets.index[self._all_datasets['Dataset Name'] == name].tolist()
+                if indices:  # If found, add the first one
+                    name_indices.append(indices[0])
         
         desc_indices = []
-        for desc, score in desc_matches:
-            if score >= threshold:
-                found_indices = self._all_datasets.index[self._all_datasets['Description'] == desc].tolist()
-                if found_indices:
-                    desc_indices.append(found_indices[0])
+        for match in desc_matches:
+            if match[1] >= threshold:  # Check if score is above threshold
+                desc = match[0]  # Get the description
+                indices = self._all_datasets.index[self._all_datasets['Description'] == desc].tolist()
+                if indices:  # If found, add the first one
+                    desc_indices.append(indices[0])
         
         # Combine unique indices
         all_indices = list(set(name_indices + desc_indices))
         
+        # Return empty DataFrame if no matches
+        if not all_indices:
+            return pd.DataFrame(columns=self._all_datasets.columns)
+            
         return self._all_datasets.loc[all_indices].reset_index(drop=True)
         
     def get_bands_for_dataset(self, dataset_name: str) -> List[str]:

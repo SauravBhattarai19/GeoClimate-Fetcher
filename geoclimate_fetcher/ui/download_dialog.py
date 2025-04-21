@@ -13,6 +13,73 @@ from geoclimate_fetcher.core.exporter import GEEExporter
 from geoclimate_fetcher.core.metadata import MetadataCatalog
 from geoclimate_fetcher.core.geometry import GeometryHandler
 
+# Import our GeometryStateManager
+try:
+    # Try to find it in the module first
+    from geoclimate_fetcher.state_manager import GeometryStateManager
+except ImportError:
+    # Define it inline if not found
+    class GeometryStateManager:
+        """Singleton class to store global geometry state across widgets"""
+        
+        _instance = None
+        
+        def __new__(cls):
+            if cls._instance is None:
+                cls._instance = super(GeometryStateManager, cls).__new__(cls)
+                cls._instance.geometry_handler = GeometryHandler()
+                cls._instance.geometry_set = False
+                cls._instance.debug_mode = True
+            return cls._instance
+        
+        def set_geometry(self, geo_json=None, geometry=None, name="user_drawn_geometry"):
+            """Set the geometry from GeoJSON or direct EE geometry"""
+            if self.debug_mode:
+                print(f"GeometryStateManager: Setting geometry with name '{name}'")
+            
+            if geo_json is not None:
+                self.geometry_handler.set_geometry_from_geojson(geo_json, name)
+                self.geometry_set = True
+                
+                if self.debug_mode:
+                    try:
+                        area = self.geometry_handler.get_geometry_area()
+                        print(f"GeometryStateManager: Set geometry from GeoJSON, area = {area:.2f} km²")
+                    except Exception as e:
+                        print(f"GeometryStateManager: Error calculating area: {str(e)}")
+            
+            elif geometry is not None:
+                self.geometry_handler._current_geometry = geometry
+                self.geometry_handler._current_geometry_name = name
+                self.geometry_set = True
+                
+                if self.debug_mode:
+                    try:
+                        area = self.geometry_handler.get_geometry_area()
+                        print(f"GeometryStateManager: Set direct geometry, area = {area:.2f} km²")
+                    except Exception as e:
+                        print(f"GeometryStateManager: Error calculating area: {str(e)}")
+        
+        def get_geometry_handler(self):
+            """Get the geometry handler with current geometry"""
+            if self.debug_mode:
+                print(f"GeometryStateManager: Getting geometry handler, geometry set = {self.geometry_set}")
+                if self.geometry_set:
+                    try:
+                        area = self.geometry_handler.get_geometry_area()
+                        print(f"GeometryStateManager: Current geometry area = {area:.2f} km²")
+                    except Exception as e:
+                        print(f"GeometryStateManager: Error calculating area: {str(e)}")
+            
+            return self.geometry_handler
+        
+        def has_geometry(self):
+            """Check if geometry is set"""
+            return self.geometry_set
+
+# Create a global state manager
+global_state_manager = GeometryStateManager()
+
 class DownloadDialogWidget:
     """Widget for configuring and initiating downloads from Earth Engine."""
     
@@ -27,9 +94,42 @@ class DownloadDialogWidget:
             on_download_complete: Callback function to execute after download completion
         """
         self.metadata_catalog = metadata_catalog
+        
+        # First use the provided geometry_handler
         self.geometry_handler = geometry_handler
+        
+        # Then check if we have a geometry in the provided handler
+        has_geometry = False
+        try:
+            has_geometry = self.geometry_handler.current_geometry is not None
+            if has_geometry:
+                print(f"DownloadDialogWidget: Using provided geometry handler with area {self.geometry_handler.get_geometry_area():.2f} km²")
+        except:
+            pass
+            
+        # If no geometry in provided handler, use the global state
+        if not has_geometry:
+            print("DownloadDialogWidget: No geometry in provided handler, using global state manager")
+            self.geometry_handler = global_state_manager.get_geometry_handler()
+        
         self.on_download_complete = on_download_complete
         self.exporter = GEEExporter()
+        
+        # Print debug info about geometry
+        print(f"Initializing DownloadDialogWidget with geometry_handler")
+        if self.geometry_handler.current_geometry is not None:
+            print(f"Geometry is set: {self.geometry_handler.current_geometry_name}")
+            try:
+                area = self.geometry_handler.get_geometry_area()
+                print(f"Area: {area:.2f} km²")
+            except Exception as e:
+                print(f"Error getting area: {str(e)}")
+        else:
+            print("No geometry is set in the geometry_handler")
+            # Try to get geometry from global state as a backup
+            if global_state_manager.has_geometry():
+                self.geometry_handler = global_state_manager.get_geometry_handler()
+                print("Using geometry from global state manager instead")
         
         # Download parameters
         self.dataset_name = None
@@ -80,7 +180,7 @@ class DownloadDialogWidget:
         )
         
         self.local_path_input = widgets.Text(
-            value='downloads/',
+            value='downloads',
             description='Local Path:',
             placeholder='Enter local directory path',
             style={'description_width': 'initial'},
@@ -218,13 +318,46 @@ class DownloadDialogWidget:
         with self.output:
             clear_output()
             
+            # Additional geometry check with detailed info
+            print("Checking geometry before download...")
+            
+            # Try using the global state first as a last resort
+            if self.geometry_handler is None or self.geometry_handler.current_geometry is None:
+                print("No geometry in local handler, checking global state...")
+                if global_state_manager.has_geometry():
+                    print("Found geometry in global state, using it")
+                    self.geometry_handler = global_state_manager.get_geometry_handler()
+            
+            # Normal check for geometry
+            if self.geometry_handler is None:
+                print("Error: geometry_handler is None")
+                return
+                
+            # More detailed check for geometry
+            if self.geometry_handler.current_geometry is None:
+                print("Error: No area of interest selected. Please select an area first.")
+                
+                # Let's try one more approach - check if there's a user_roi on the map
+                try:
+                    from geemap.geemap import Map
+                    maps = [obj for obj in globals().values() if isinstance(obj, Map)]
+                    if maps:
+                        map_obj = maps[0]
+                        if hasattr(map_obj, 'user_roi') and map_obj.user_roi is not None:
+                            print("Found geometry in map.user_roi, applying it now...")
+                            self.geometry_handler.set_geometry_from_geojson(map_obj.user_roi, "recovered_aoi")
+                            # Also update global state
+                            global_state_manager.set_geometry(geo_json=map_obj.user_roi, name="recovered_aoi")
+                except Exception as e:
+                    print(f"Attempted recovery failed: {str(e)}")
+                    
+                # Check again after recovery attempt
+                if self.geometry_handler.current_geometry is None:
+                    return
+                
             # Validate parameters
             if not self.dataset_name or not self.ee_id or not self.bands:
                 print("Error: Missing dataset parameters. Please select a dataset and bands first.")
-                return
-                
-            if not self.geometry_handler.current_geometry:
-                print("Error: No area of interest selected. Please select an area first.")
                 return
                 
             extraction_mode = self.extraction_mode_dropdown.value
@@ -245,6 +378,13 @@ class DownloadDialogWidget:
             # Create the appropriate fetcher based on snippet type
             try:
                 geometry = self.geometry_handler.current_geometry
+                
+                # Verify we have a geometry
+                if geometry is None:
+                    print("Error: Still no geometry available for download. Cannot proceed.")
+                    return
+                    
+                print(f"Using geometry with area: {self.geometry_handler.get_geometry_area():.2f} km²")
                 
                 # Initialize progress
                 self.progress.value = 10
@@ -275,6 +415,7 @@ class DownloadDialogWidget:
                         if export_mode == 'local':
                             # Local export
                             local_path = Path(self.local_path_input.value)
+                            local_path.mkdir(parents=True, exist_ok=True)
                             file_path = local_path / f"{filename}.csv"
                             
                             print(f"Saving to {file_path}...")
@@ -313,6 +454,7 @@ class DownloadDialogWidget:
                         if export_mode == 'local':
                             # Local export
                             local_path = Path(self.local_path_input.value)
+                            local_path.mkdir(parents=True, exist_ok=True)
                             
                             if output_format == 'netcdf':
                                 file_path = local_path / f"{filename}.nc"
@@ -361,6 +503,7 @@ class DownloadDialogWidget:
                         if export_mode == 'local':
                             # Local export
                             local_path = Path(self.local_path_input.value)
+                            local_path.mkdir(parents=True, exist_ok=True)
                             file_path = local_path / f"{filename}.csv"
                             
                             print(f"Saving to {file_path}...")
@@ -393,6 +536,7 @@ class DownloadDialogWidget:
                         if export_mode == 'local':
                             # Local export
                             local_path = Path(self.local_path_input.value)
+                            local_path.mkdir(parents=True, exist_ok=True)
                             
                             if output_format == 'geotiff':
                                 file_path = local_path / f"{filename}.tif"
@@ -456,4 +600,6 @@ class DownloadDialogWidget:
                     
             except Exception as e:
                 print(f"Error during download: {str(e)}")
+                import traceback
+                traceback.print_exc()
                 self.progress.value = 0

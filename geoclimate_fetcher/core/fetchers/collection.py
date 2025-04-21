@@ -40,6 +40,14 @@ class ImageCollectionFetcher:
         Returns:
             Self for method chaining
         """
+        # Convert Python date/datetime objects to strings if needed
+        if isinstance(start_date, (date, datetime)):
+            start_date = start_date.strftime('%Y-%m-%d')
+            
+        if isinstance(end_date, (date, datetime)):
+            end_date = end_date.strftime('%Y-%m-%d')
+            
+        print(f"Filtering dates from {start_date} to {end_date}")
         self.collection = self.collection.filterDate(start_date, end_date)
         return self
         
@@ -83,20 +91,25 @@ class ImageCollectionFetcher:
                 maxPixels=1e9
             )
             
+            # Create properties object with bands
+            properties = {'date': date_string}
+            for band in self.bands:
+                # Use .get() method to get band value from means
+                properties[band] = means.get(band)
+            
             # Create a feature with properties
-            return ee.Feature(None, {
-                'date': date_string,
-                **{band: means.get(band) for band in self.bands}
-            })
+            return ee.Feature(None, properties)
             
         # Map over the collection and get average values
         features = self.collection.map(extract_date_value)
         
         # Get the data as a Pandas DataFrame
+        print("Fetching feature collection from Earth Engine...")
         feature_collection = features.getInfo()
         
         # Extract the properties we need into a DataFrame
-        if not feature_collection.get('features'):
+        if 'features' not in feature_collection or not feature_collection.get('features'):
+            print("No features returned from Earth Engine. Collection may be empty for the given time range.")
             return pd.DataFrame()
             
         rows = []
