@@ -68,6 +68,79 @@ class GEEExporter:
         ds.to_netcdf(output_path)
         
         return output_path
+    
+    def export_time_series_to_geotiff(self, dataset: xr.Dataset, output_dir: Union[str, Path]) -> List[Path]:
+        """
+        Export a time series xarray Dataset to individual GeoTIFF files, one per date.
+        
+        Args:
+            dataset: xarray Dataset with time, lat, lon dimensions
+            output_dir: Directory to save the GeoTIFF files
+            
+        Returns:
+            List of paths to the saved files
+        """
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        import rasterio
+        from rasterio.transform import from_bounds
+        from tqdm import tqdm
+        
+        # Get dimensions and coordinates
+        times = dataset.time.values
+        lats = dataset.lat.values
+        lons = dataset.lon.values
+        bands = list(dataset.data_vars.keys())
+        
+        # Print information
+        print(f"Exporting {len(times)} dates with {len(bands)} bands")
+        print(f"Time range: {pd.to_datetime(times[0])} to {pd.to_datetime(times[-1])}")
+        print(f"Spatial extent: {lons.min()} to {lons.max()}, {lats.min()} to {lats.max()}")
+        
+        # Get geotransform
+        height = len(lats)
+        width = len(lons)
+        transform = from_bounds(lons.min(), lats.min(), lons.max(), lats.max(), width, height)
+        
+        # Create list to store output file paths
+        output_files = []
+        
+        # Export each time step as a separate GeoTIFF
+        for i, time_value in enumerate(tqdm(times, desc="Exporting time steps")):
+            # Convert time to string for filename
+            time_str = pd.to_datetime(time_value).strftime('%Y%m%d')
+            
+            # Create output filename
+            output_file = output_dir / f"{time_str}.tif"
+            output_files.append(output_file)
+            
+            # Extract data for this time step
+            arrays = []
+            for band in bands:
+                # Get the data for this time and band
+                array = dataset[band].values[i, :, :]
+                arrays.append(array)
+            
+            # Open a new GeoTIFF file
+            with rasterio.open(
+                output_file,
+                'w',
+                driver='GTiff',
+                height=height,
+                width=width,
+                count=len(bands),
+                dtype=arrays[0].dtype,
+                crs='+proj=longlat +datum=WGS84 +no_defs',
+                transform=transform
+            ) as dst:
+                # Write each band
+                for j, array in enumerate(arrays, 1):
+                    dst.write(array, j)
+                    dst.set_band_description(j, bands[j-1])
+        
+        print(f"Successfully exported {len(output_files)} GeoTIFF files to {output_dir}")
+        return output_files
         
     def estimate_export_size(self, image: ee.Image, region: ee.Geometry, 
                            scale: float) -> float:
@@ -134,6 +207,29 @@ class GEEExporter:
                 # Wait before checking again
                 time.sleep(5)
                 
+    def _sanitize_description(self, description: str) -> str:
+        """
+        Sanitize a description string for Earth Engine export.
+        
+        Args:
+            description: The input description string
+            
+        Returns:
+            Sanitized string that complies with EE requirements
+        """
+        import re
+        # Replace spaces with underscores
+        description = description.replace(' ', '_')
+        
+        # Keep only allowed characters: a-z, A-Z, 0-9, ".", ",", ":", ";", "_", "-"
+        description = re.sub(r'[^a-zA-Z0-9.,;:_\-]', '', description)
+        
+        # Truncate to 100 characters
+        if len(description) > 100:
+            description = description[:100]
+            
+        return description
+
     def export_image_to_drive(self, image: ee.Image, filename: str, 
                             folder: str, region: ee.Geometry, 
                             scale: float = 30.0, crs: str = 'EPSG:4326',
@@ -157,10 +253,13 @@ class GEEExporter:
         if filename.endswith('.tif'):
             filename = filename[:-4]
             
+        # Sanitize the filename for EE description
+        safe_description = self._sanitize_description(filename)
+        
         # Start the export task
         task = ee.batch.Export.image.toDrive(
             image=image,
-            description=filename,
+            description=safe_description,
             folder=folder,
             fileNamePrefix=filename,
             region=region.bounds().getInfo()['coordinates'],
@@ -199,10 +298,13 @@ class GEEExporter:
         if filename.endswith('.csv') or filename.endswith('.geojson'):
             filename = filename[:-4]
             
+        # Sanitize the filename for EE description
+        safe_description = self._sanitize_description(filename)
+        
         # Start the export task
         task = ee.batch.Export.table.toDrive(
             collection=feature_collection,
-            description=filename,
+            description=safe_description,
             folder=folder,
             fileNamePrefix=filename,
             fileFormat='CSV'
@@ -219,9 +321,9 @@ class GEEExporter:
             return task.id
             
     def export_image_to_local(self, image: ee.Image, output_path: Union[str, Path], 
-                           region: ee.Geometry, scale: float = 30.0) -> Path:
+                        region: ee.Geometry, scale: float = 30.0) -> Path:
         """
-        Export an Earth Engine image directly to local disk.
+        Export an Earth Engine image directly to local disk using geemap.
         
         Args:
             image: Earth Engine Image to export
@@ -232,28 +334,56 @@ class GEEExporter:
         Returns:
             Path to the saved file
         """
+        import geemap
+        
         output_path = Path(output_path)
         
         # Ensure directory exists
         output_path.parent.mkdir(parents=True, exist_ok=True)
         
-        # Check estimated size
-        estimated_size = self.estimate_export_size(image, region, scale)
-        
-        if estimated_size > self.max_chunk_size:
-            raise ValueError(
-                f"Estimated export size ({estimated_size/1e6:.1f} MB) exceeds "
-                f"maximum direct download size ({self.max_chunk_size/1e6:.1f} MB). "
-                "Use export_to_drive instead."
+        try:
+            # Use geemap's export function which is more reliable
+            print(f"Exporting image using geemap to {output_path}...")
+            
+            # First ensure image is clipped to the region
+            clipped_image = image.clip(region)
+            
+            # Use geemap to export
+            geemap.ee_export_image(
+                clipped_image,
+                filename=str(output_path),
+                scale=scale,
+                region=region,
+                file_per_band=False
             )
             
-        # Get image as numpy arrays
-        arrays = {}
-        band_names = image.bandNames().getInfo()
-        
-        with tqdm(total=len(band_names), desc="Downloading bands") as pbar:
-            for band in band_names:
-                # Sample rectangle to get pixel values
+            print(f"Export complete: {output_path}")
+            return output_path
+            
+        except Exception as e:
+            print(f"Error exporting image with geemap: {str(e)}")
+            print("\nTrying alternative export method...")
+            
+            try:
+                # Fall back to our original method with some improvements
+                # Check estimated size
+                estimated_size = self.estimate_export_size(image, region, scale)
+                
+                if estimated_size > self.max_chunk_size:
+                    raise ValueError(
+                        f"Estimated export size ({estimated_size/1e6:.1f} MB) exceeds "
+                        f"maximum direct download size ({self.max_chunk_size/1e6:.1f} MB). "
+                        "Use export_to_drive instead."
+                    )
+                    
+                # Get image as numpy arrays
+                arrays = {}
+                band_names = image.bandNames().getInfo()
+                
+                if not band_names:
+                    raise ValueError("No bands found in the image. Please check your band selection.")
+                
+                # Get the bounds
                 bounds = region.bounds().getInfo()['coordinates'][0]
                 xs = [p[0] for p in bounds]
                 ys = [p[1] for p in bounds]
@@ -263,49 +393,74 @@ class GEEExporter:
                 
                 rect_region = ee.Geometry.Rectangle([xmin, ymin, xmax, ymax])
                 
-                # Get the data - but don't pass scale parameter to sampleRectangle
-                try:
-                    pixels = image.select(band).sampleRectangle(
-                        region=rect_region,
-                        properties=None,
-                        defaultValue=0
-                    ).getInfo()
-                    
-                    if band in pixels:
-                        arrays[band] = np.array(pixels[band])
-                        
-                    pbar.update(1)
-                except Exception as e:
-                    print(f"Error downloading band {band}: {str(e)}")
-                    raise
-        
-        # Create a simple GeoTIFF
-        import rasterio
-        from rasterio.transform import from_bounds
-        
-        # Get dimensions
-        height, width = next(iter(arrays.values())).shape
-        
-        # Create the geotransform
-        transform = from_bounds(xmin, ymin, xmax, ymax, width, height)
-        
-        # Write the GeoTIFF
-        with rasterio.open(
-            output_path,
-            'w',
-            driver='GTiff',
-            height=height,
-            width=width,
-            count=len(arrays),
-            dtype=next(iter(arrays.values())).dtype,
-            crs='+proj=longlat +datum=WGS84 +no_defs',
-            transform=transform
-        ) as dst:
-            for i, (band, array) in enumerate(arrays.items(), 1):
-                dst.write(array, i)
-                dst.set_band_description(i, band)
+                # Download bands
+                with tqdm(total=len(band_names), desc="Downloading bands") as pbar:
+                    for band in band_names:
+                        try:
+                            # Get the data - but don't pass scale parameter to sampleRectangle
+                            pixels = image.select(band).sampleRectangle(
+                                region=rect_region,
+                                properties=None,
+                                defaultValue=0
+                            ).getInfo()
+                            
+                            if band in pixels and pixels[band] is not None and len(pixels[band]) > 0:
+                                arrays[band] = np.array(pixels[band])
+                            else:
+                                print(f"Warning: No data returned for band '{band}'")
+                                
+                            pbar.update(1)
+                        except Exception as e:
+                            print(f"Error downloading band {band}: {str(e)}")
+                            pbar.update(1)
                 
-        return output_path
+                # Check if we successfully got any data
+                if not arrays:
+                    print("No data was returned from Earth Engine. This could be because:")
+                    print("1. There is no data available for this region in the selected dataset")
+                    print("2. The region might be too large for direct download")
+                    print("3. The Earth Engine API request failed")
+                    print("\nTry one of the following solutions:")
+                    print("- Use 'Export to Google Drive' instead of direct download")
+                    print("- Select a smaller region")
+                    print("- Try a different dataset that covers this region")
+                    raise ValueError("Failed to download any image data")
+                
+                # Create a simple GeoTIFF
+                import rasterio
+                from rasterio.transform import from_bounds
+                
+                # Get dimensions from the first array
+                height, width = next(iter(arrays.values())).shape
+                
+                # Create the geotransform
+                transform = from_bounds(xmin, ymin, xmax, ymax, width, height)
+                
+                # Write the GeoTIFF
+                with rasterio.open(
+                    output_path,
+                    'w',
+                    driver='GTiff',
+                    height=height,
+                    width=width,
+                    count=len(arrays),
+                    dtype=next(iter(arrays.values())).dtype,
+                    crs='+proj=longlat +datum=WGS84 +no_defs',
+                    transform=transform
+                ) as dst:
+                    for i, (band, array) in enumerate(arrays.items(), 1):
+                        dst.write(array, i)
+                        dst.set_band_description(i, band)
+                        
+                print(f"Export complete using fallback method: {output_path}")
+                return output_path
+                
+            except Exception as e2:
+                print(f"Both export methods failed.")
+                print(f"First error: {str(e)}")
+                print(f"Second error: {str(e2)}")
+                print("Please try using Google Drive export instead.")
+                raise ValueError("Failed to export image to local file")
         
     def export_to_cloud_optimized_geotiff(self, image: ee.Image, output_path: Union[str, Path],
                                        region: ee.Geometry, scale: float = 30.0) -> Path:

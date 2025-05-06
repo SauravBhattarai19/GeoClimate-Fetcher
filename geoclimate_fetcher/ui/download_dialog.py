@@ -388,7 +388,7 @@ class DownloadDialogWidget:
                 
                 # Initialize progress
                 self.progress.value = 10
-                
+
                 if snippet_type == 'ImageCollection':
                     from geoclimate_fetcher.core.fetchers import ImageCollectionFetcher
                     
@@ -460,26 +460,75 @@ class DownloadDialogWidget:
                                 file_path = local_path / f"{filename}.nc"
                                 print(f"Saving to {file_path}...")
                                 self.exporter.export_gridded_data_to_netcdf(data, file_path)
+                                print(f"Download complete: {file_path}")
                                 
-                            else:  # geotiff or cog
-                                # Convert xarray to ee.Image for export
-                                print("Error: Direct GeoTIFF export for gridded time series not implemented.")
-                                print("Please use NetCDF format or export to Google Drive.")
+                            elif output_format in ['geotiff', 'cog']:
+                                # For GeoTIFF, export each time step as a separate file
+                                print(f"Saving time series as individual GeoTIFF files to {local_path}/{filename}_YYYYMMDD.tif...")
+                                
+                                # Create subdirectory with the filename
+                                tiff_dir = local_path / filename
+                                self.exporter.export_time_series_to_geotiff(data, tiff_dir)
+                                
+                                print(f"Download complete: {tiff_dir}")
+                                
+                            else:
+                                print("Error: Unsupported output format. Please use NetCDF or GeoTIFF.")
                                 self.progress.value = 0
                                 return
                                 
-                            print(f"Download complete: {file_path}")
-                            
                         else:  # Google Drive
                             folder = self.drive_folder_input.value
-                            print(f"Exporting to Google Drive folder '{folder}'...")
                             
-                            # This would require converting the xarray to an EE Image
-                            # This is complex and not fully implemented here
-                            print("Error: Export to Drive for gridded time series not implemented.")
-                            print("Please use local export with NetCDF format.")
-                            self.progress.value = 0
-                            return
+                            # For time series in Drive, we need to export each image separately
+                            if output_format in ['geotiff', 'cog']:
+                                print(f"Exporting time series to Google Drive folder '{folder}'...")
+                                
+                                # Get times from the dataset
+                                times = pd.to_datetime(data.time.values)
+                                
+                                # For each date, export an image to Drive
+                                success_count = 0
+                                total_dates = len(times)
+                                
+                                with tqdm(total=total_dates, desc="Exporting dates to Drive") as pbar:
+                                    for i, time_value in enumerate(times):
+                                        date_str = time_value.strftime('%Y%m%d')
+                                        date_filename = f"{filename}_{date_str}"
+                                        
+                                        try:
+                                            # Create an image for this date with all bands
+                                            img_date = time_value.strftime('%Y-%m-%d')
+                                            next_day = (time_value + timedelta(days=1)).strftime('%Y-%m-%d')
+                                            
+                                            # Filter collection to this date
+                                            date_img = self.collection.filter(ee.Filter.date(img_date, next_day)).first()
+                                            
+                                            if date_img is not None:
+                                                # Export to Drive
+                                                self.exporter.export_image_to_drive(
+                                                    date_img.select(self.bands), 
+                                                    date_filename, 
+                                                    folder, 
+                                                    geometry, 
+                                                    scale, 
+                                                    wait=False  # Don't wait for each - just start the tasks
+                                                )
+                                                success_count += 1
+                                        except Exception as e:
+                                            print(f"Error exporting date {date_str}: {str(e)}")
+                                        
+                                        # Update progress bar
+                                        pbar.update(1)
+                                
+                                print(f"Submitted {success_count} out of {total_dates} dates for export to Google Drive")
+                                print("Exports will continue in the background. Check your Drive folder when complete.")
+                                
+                            else:  # Export NetCDF to Drive
+                                print("Error: Direct NetCDF export to Google Drive is not supported.")
+                                print("Please use GeoTIFF format for Google Drive exports or save NetCDF locally.")
+                                self.progress.value = 0
+                                return
                             
                 else:  # Image
                     from geoclimate_fetcher.core.fetchers import StaticRasterFetcher
