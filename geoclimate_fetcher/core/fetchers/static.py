@@ -135,7 +135,6 @@ class StaticRasterFetcher:
             region=region,
             properties=None,
             defaultValue=0,
-            scale=scale
         ).getInfo()
         
         # Extract the arrays for each band

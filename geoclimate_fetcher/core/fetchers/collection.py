@@ -259,7 +259,6 @@ class ImageCollectionFetcher:
                             region=region,
                             properties=None,
                             defaultValue=0,
-                            scale=scale
                         ).getInfo()
                         
                         # Extract the array
