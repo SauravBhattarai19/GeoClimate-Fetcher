@@ -47,6 +47,107 @@ class GEEExporter:
         df.to_csv(output_path, index=False)
         
         return output_path
+    
+    def export_time_series_to_drive_chunked(self, df, filename, folder, 
+                                      date_col='date', chunk_months=3):
+        """
+        Export a time series DataFrame to Google Drive in chunks.
+        
+        Args:
+            df: DataFrame containing time series data
+            filename: Base filename for exports
+            folder: Google Drive folder name
+            date_col: Column name containing dates
+            chunk_months: Number of months per chunk
+            
+        Returns:
+            List of task IDs for each chunk
+        """
+        import ee
+        import pandas as pd
+        from datetime import datetime, timedelta
+        import calendar
+        
+        if df.empty:
+            print("No data to export")
+            return []
+        
+        # Convert date column to datetime if needed
+        df[date_col] = pd.to_datetime(df[date_col])
+        
+        # Sort by date
+        df = df.sort_values(date_col)
+        
+        # Get min and max dates
+        min_date = df[date_col].min().date()
+        max_date = df[date_col].max().date()
+        
+        # Create chunks
+        chunks = []
+        current_start = min_date
+        
+        while current_start <= max_date:
+            # Calculate the end of this chunk (adding chunk_months months)
+            year = current_start.year
+            month = current_start.month + chunk_months
+            
+            # Handle year overflow
+            while month > 12:
+                month -= 12
+                year += 1
+            
+            # Get last day of the month
+            last_day = calendar.monthrange(year, month)[1]
+            
+            # Create chunk end date
+            chunk_end = datetime(year, month, last_day).date()
+            
+            # Ensure chunk_end doesn't exceed max_date
+            if chunk_end > max_date:
+                chunk_end = max_date
+            
+            chunks.append((current_start, chunk_end))
+            
+            # Set up the next chunk
+            current_start = (chunk_end + timedelta(days=1))
+        
+        # Process each chunk
+        task_ids = []
+        
+        for i, (chunk_start, chunk_end) in enumerate(chunks):
+            # Filter the dataframe to this chunk
+            chunk_df = df[(df[date_col].dt.date >= chunk_start) & 
+                        (df[date_col].dt.date <= chunk_end)]
+            
+            if chunk_df.empty:
+                print(f"Chunk {i+1}: No data for {chunk_start} to {chunk_end}")
+                continue
+                
+            # Create a filename with date range
+            chunk_filename = f"{filename}_{chunk_start.strftime('%Y%m%d')}_to_{chunk_end.strftime('%Y%m%d')}"
+            
+            # Create features for this chunk
+            features = []
+            for _, row in chunk_df.iterrows():
+                properties = {col: val for col, val in row.items() if pd.notna(val)}
+                # Convert dates to strings to avoid serialization issues
+                if date_col in properties and isinstance(properties[date_col], datetime):
+                    properties[date_col] = properties[date_col].strftime('%Y-%m-%d')
+                features.append(ee.Feature(None, properties))
+                
+            fc = ee.FeatureCollection(features)
+            
+            # Export to Drive
+            print(f"Exporting chunk {i+1}/{len(chunks)}: {chunk_start} to {chunk_end} with {len(chunk_df)} records")
+            
+            task_id = self.export_table_to_drive(
+                fc, chunk_filename, folder, wait=False
+            )
+            
+            if task_id:
+                task_ids.append(task_id)
+        
+        return task_ids
         
     def export_gridded_data_to_netcdf(self, ds: xr.Dataset, output_path: Union[str, Path]) -> Path:
         """

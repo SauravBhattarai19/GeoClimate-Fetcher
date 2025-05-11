@@ -404,9 +404,9 @@ class DownloadDialogWidget:
                     
                     # Extract data
                     if extraction_mode == 'average':
-                        # Get time series average
-                        print("Fetching time series averages...")
-                        data = fetcher.get_time_series_average()
+                        # Use chunked processing to handle large datasets
+                        print("Fetching time series averages using chunked processing...")
+                        data = fetcher.get_time_series_average_chunked()
                         
                         # Update progress
                         self.progress.value = 50
@@ -424,23 +424,15 @@ class DownloadDialogWidget:
                             print(f"Download complete: {file_path}")
                             
                         else:  # Google Drive
-                            # Create a feature collection from the DataFrame
-                            features = []
-                            for _, row in data.iterrows():
-                                properties = {col: row[col] for col in data.columns}
-                                features.append(ee.Feature(None, properties))
-                                
-                            fc = ee.FeatureCollection(features)
-                            
-                            # Export to Drive
+                            # Export to Drive with chunking
                             folder = self.drive_folder_input.value
-                            print(f"Exporting to Google Drive folder '{folder}'...")
+                            print(f"Exporting to Google Drive folder '{folder}' using chunked processing...")
                             
-                            self.exporter.export_table_to_drive(
-                                fc, filename, folder, wait=True
+                            task_ids = self.exporter.export_time_series_to_drive_chunked(
+                                data, filename, folder
                             )
                             
-                            print(f"Export to Google Drive complete. Check your Drive folder: {folder}")
+                            print(f"Started {len(task_ids)} export tasks to Google Drive folder: {folder}")
                             
                     else:  # gridded
                         # Get gridded data
