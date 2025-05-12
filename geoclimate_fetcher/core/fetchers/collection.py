@@ -348,7 +348,16 @@ class ImageCollectionFetcher:
         Returns:
             xarray Dataset with time, lat, lon dimensions
         """
-        # Get the time range and bounds
+        import xarray as xr
+        import numpy as np
+        from datetime import datetime
+        import pandas as pd
+        import os
+        import tempfile
+        
+        print("Fetching gridded data using new unified-export approach...")
+        
+        # Get the bounds of the region
         bounds = self.geometry.bounds().getInfo()['coordinates'][0]
         xs = [p[0] for p in bounds]
         ys = [p[1] for p in bounds]
@@ -356,201 +365,134 @@ class ImageCollectionFetcher:
         xmin, xmax = min(xs), max(xs)
         ymin, ymax = min(ys), max(ys)
         
-        # Create the dimensions
-        width = int((xmax - xmin) / scale * 111000)  # approximate degrees to meters conversion
-        height = int((ymax - ymin) / scale * 111000)
-        
-        # Define the region
         region = ee.Geometry.Rectangle([xmin, ymin, xmax, ymax])
         
-        # Get the dates from the collection - use filterDate with our date range
-        print(f"Getting available dates from collection...")
+        # Create a temporary directory for exporting data
+        temp_dir = tempfile.mkdtemp()
         
-        # Get explicit date information to debug
-        collection_size = self.collection.size().getInfo()
-        print(f"Collection contains {collection_size} images")
-        
-        # Get image information for debugging
-        first_image = self.collection.first()
-        if first_image:
-            first_image_date = ee.Date(first_image.get('system:time_start')).format('YYYY-MM-dd').getInfo()
-            print(f"First image in collection is from: {first_image_date}")
-            print(f"Available bands: {first_image.bandNames().getInfo()}")
-        
-        # Log the full date range
-        date_range = self.collection.reduceColumns(
-            ee.Reducer.minMax(), 
-            ['system:time_start']
-        ).getInfo()
-        
-        if date_range and 'min' in date_range and 'max' in date_range:
-            min_date = datetime.fromtimestamp(date_range['min'] / 1000).strftime('%Y-%m-%d')
-            max_date = datetime.fromtimestamp(date_range['max'] / 1000).strftime('%Y-%m-%d')
-            print(f"Collection date range: {min_date} to {max_date}")
-        
-        # Get the dates
-        dates_info = self.collection.aggregate_array('system:time_start').getInfo()
-        if not dates_info:
-            print("No dates found in the collection for the specified time range.")
-            return xr.Dataset()
-        
-        # Convert timestamps to datetime objects (normalized to midnight)
-        dates = []
-        for d in dates_info:
-            date_obj = datetime.fromtimestamp(d / 1000)
-            # Normalize to midnight
-            midnight_date = datetime(date_obj.year, date_obj.month, date_obj.day)
-            dates.append(midnight_date)
-        
-        print(f"Found {len(dates)} dates in collection: {dates[0]} to {dates[-1]}\n")
-        
-        # Sort dates for consistency
-        dates.sort()
-        
-        # Initialize the dataset arrays
-        data_arrays = {}
-        for band in self.bands:
-            data_arrays[band] = np.zeros((len(dates), height, width))
-        
-        # Track successful dates and corresponding indices
-        successful_indices = []
-        successful_dates = []
-        
-        # Download each image with progress tracking
-        from tqdm import tqdm
-        for i, img_date in enumerate(tqdm(dates, desc="Processing dates")):
-            try:
-                # Create date range filters for the exact date (midnight to midnight)
-                date_str = img_date.strftime('%Y-%m-%d')
+        try:
+            # Get timestamps from the collection
+            timestamps = self.collection.aggregate_array('system:time_start').getInfo()
+            if not timestamps:
+                print("No images found in the collection for the specified time range.")
+                return xr.Dataset()
+            
+            timestamps.sort()  # Make sure they're in order
+            
+            # Convert to pandas datetime objects for proper NetCDF serialization
+            dates = [pd.Timestamp(ts, unit='ms') for ts in timestamps]
+            print(f"Found {len(dates)} dates in collection")
+            
+            # Instead of processing day by day, export the entire collection as a composite
+            # For each band
+            band_arrays = {}
+            
+            for band in self.bands:
+                print(f"Processing band '{band}'...")
                 
-                # For dates within the valid range (1980-01-01 onwards)
-                if img_date < datetime(1980, 1, 1):
-                    print(f"Warning: Date {date_str} is before the dataset's valid range (1980-01-01)")
-                    continue
+                # Create a time series stack of images for this band
+                # More efficient approach than day-by-day filtering
+                try:
+                    # Use ee.ImageCollection.toBands() to convert collection to a multi-band image
+                    # where each band represents a different date
+                    band_collection = self.collection.select(band)
                     
-                # Create filter for the specific day
-                day_start = ee.Date(date_str)
-                day_end = day_start.advance(1, 'day')
-                
-                # Filter to get image for this day
-                filtered = self.collection.filter(ee.Filter.date(day_start, day_end))
-                
-                # Check if the filtered collection is empty
-                count = filtered.size().getInfo()
-                if count == 0:
-                    print(f"Warning: No image found for date: {date_str}")
-                    continue
-                
-                # Get the first image of that day
-                img = filtered.first()
-                
-                # Get band names from the image to verify
-                available_bands = img.bandNames().getInfo()
-                
-                # Check if all requested bands are available
-                missing_bands = [band for band in self.bands if band not in available_bands]
-                if missing_bands:
-                    print(f"Warning: The following bands are not available for {date_str}: {', '.join(missing_bands)}")
-                
-                # Track if we got data for at least one band
-                got_data_for_date = False
-                
-                # Process each band
-                for j, band in enumerate(self.bands):
-                    # Skip missing bands
-                    if band not in available_bands:
+                    # Add timestamp as a property to use for naming
+                    def add_date_to_band_name(img):
+                        date_str = ee.Date(img.get('system:time_start')).format('YYYY_MM_dd')
+                        return img.rename(ee.String(band).cat('_').cat(date_str))
+                    
+                    # Map the function to rename bands with dates
+                    band_collection = band_collection.map(add_date_to_band_name)
+                    
+                    # Convert to a single multi-band image
+                    stack_img = band_collection.toBands()
+                    
+                    # Export the multi-band image to a temporary GeoTIFF
+                    temp_file = os.path.join(temp_dir, f"{band}_stack.tif")
+                    
+                    # Use getDownloadURL instead of sampleRectangle
+                    url = stack_img.getDownloadURL({
+                        'scale': scale,
+                        'crs': crs,
+                        'region': region,
+                        'format': 'GEO_TIFF'
+                    })
+                    
+                    # Download the file
+                    import requests
+                    response = requests.get(url)
+                    if response.status_code == 200:
+                        with open(temp_file, 'wb') as f:
+                            f.write(response.content)
+                        print(f"Downloaded data for band '{band}'")
+                    else:
+                        print(f"Failed to download data for band '{band}': HTTP {response.status_code}")
                         continue
-                        
-                    try:
-                        print(f"  Downloading band '{band}' for {date_str}...")
-                        
-                        # Get pixel values
-                        band_data = img.select(band).sampleRectangle(
-                            region=region,
-                            properties=None,
-                            defaultValue=0,
-                        ).getInfo()
-                        
-                        # Extract the array
-                        if band in band_data:
-                            array = np.array(band_data[band])
-                            if array.shape[0] == height and array.shape[1] == width:
-                                data_arrays[band][i] = array
-                                got_data_for_date = True
-                                print(f"  Successfully retrieved {array.shape[0]}x{array.shape[1]} data points")
-                            else:
-                                print(f"  Warning: Array shape mismatch. Expected {height}x{width}, got {array.shape}")
-                        else:
-                            print(f"  Warning: No data returned for band {band}")
-                            
-                    except Exception as band_error:
-                        print(f"  Error processing band {band}: {str(band_error)}")
-                
-                # If we got data for at least one band, mark this date as successful
-                if got_data_for_date:
-                    print(f"Successfully processed date: {date_str}")
-                    successful_indices.append(i)
-                    successful_dates.append(img_date)
-                else:
-                    print(f"No data retrieved for any band on {date_str}")
                     
-            except Exception as date_error:
-                print(f"Error processing date {img_date.strftime('%Y-%m-%d')}: {str(date_error)}")
-        
-        # If we have no successful dates, return an empty dataset
-        if not successful_dates:
-            print("\nNo data could be retrieved for any date. Returning empty dataset.")
+                    # Read the GeoTIFF with rasterio
+                    import rasterio
+                    with rasterio.open(temp_file) as src:
+                        # Read all bands
+                        raster_data = src.read()
+                        height, width = raster_data.shape[1], raster_data.shape[2]
+                        
+                        # Create a 3D array (time, height, width)
+                        time_series = np.zeros((len(dates), height, width))
+                        
+                        # Read the band data - match band names with dates
+                        band_names = src.descriptions
+                        for i, band_name in enumerate(band_names):
+                            if i < len(dates):  # Only process if we have a matching date
+                                time_series[i] = raster_data[i]
+                        
+                        band_arrays[band] = time_series
+                        print(f"Successfully processed band '{band}' with shape {time_series.shape}")
+                
+                except Exception as e:
+                    print(f"Error processing band '{band}': {str(e)}")
+                    import traceback
+                    print(traceback.format_exc())
             
-            # Create minimal valid xarray Dataset - works better than empty
-            coords = {
-                'time': [datetime.now()],  # Single timestamp
-                'lat': [np.mean([ymin, ymax])],  # Single latitude
-                'lon': [np.mean([xmin, xmax])]   # Single longitude
-            }
-            
-            data_vars = {
-                band: (['time', 'lat', 'lon'], np.zeros((1, 1, 1)))
-                for band in self.bands
-            }
-            
-            # Add attributes
-            ds = xr.Dataset(data_vars=data_vars, coords=coords)
-            ds.attrs['description'] = f"Empty dataset - no data found for {self.ee_id}"
-            ds.attrs['warning'] = "This dataset contains no valid data"
-            ds.attrs['created'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            
-            return ds
+            # If we have any data, create an xarray Dataset
+            if band_arrays:
+                # Create coordinates for the dataset - use pandas DatetimeIndex for time
+                first_band = next(iter(band_arrays))
+                coords = {
+                    # Use pandas DatetimeIndex which is serializable to NetCDF
+                    'time': pd.DatetimeIndex(dates),
+                    'lat': np.linspace(ymax, ymin, band_arrays[first_band].shape[1]),
+                    'lon': np.linspace(xmin, xmax, band_arrays[first_band].shape[2])
+                }
+                
+                # Create data variables
+                data_vars = {
+                    band: (['time', 'lat', 'lon'], array)
+                    for band, array in band_arrays.items()
+                }
+                
+                # Create the dataset
+                ds = xr.Dataset(data_vars=data_vars, coords=coords)
+                
+                # Add metadata
+                ds.attrs['description'] = f"Data from {self.ee_id}"
+                ds.attrs['created'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                ds.attrs['scale'] = scale
+                ds.attrs['crs'] = crs
+                ds.attrs['bounds'] = f"[{xmin}, {ymin}, {xmax}, {ymax}]"
+                
+                return ds
+            else:
+                print("No data could be retrieved for any band.")
+                return xr.Dataset()
         
-        print(f"\nSuccessfully processed {len(successful_dates)} out of {len(dates)} dates")
-        
-        # Filter data arrays to only include successful dates
-        filtered_data_arrays = {}
-        for band in self.bands:
-            filtered_data_arrays[band] = data_arrays[band][successful_indices]
-        
-        # Create the xarray dataset
-        coords = {
-            'time': successful_dates,
-            'lat': np.linspace(ymax, ymin, height),
-            'lon': np.linspace(xmin, xmax, width)
-        }
-        
-        data_vars = {
-            band: (['time', 'lat', 'lon'], filtered_data_arrays[band])
-            for band in self.bands
-        }
-        
-        # Create the dataset
-        ds = xr.Dataset(data_vars=data_vars, coords=coords)
-        
-        # Add metadata
-        ds.attrs['description'] = f"Data from {self.ee_id}"
-        ds.attrs['created'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        ds.attrs['scale'] = scale
-        ds.attrs['crs'] = crs
-        ds.attrs['bounds'] = f"[{xmin}, {ymin}, {xmax}, {ymax}]"
-        
-        return ds
+        finally:
+            # Clean up temporary directory
+            import shutil
+            try:
+                shutil.rmtree(temp_dir)
+            except Exception as e:
+                print(f"Warning: Could not clean up temporary directory: {str(e)}")
         
     def aggregate_values(self, reducer: str = 'mean', temporal: bool = False) -> Union[Dict[str, float], pd.DataFrame]:
         """
