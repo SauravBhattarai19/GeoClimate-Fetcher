@@ -86,8 +86,9 @@ credentials.json
 private-key.json
 
 # Data files and outputs
-data/
+tests/
 .vs/
+data/*.ipynb
 !data/*.csv
 downloads/
 tmp/
