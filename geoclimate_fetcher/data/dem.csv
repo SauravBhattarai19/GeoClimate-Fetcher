@@ -1,0 +1,4 @@
+Dataset Name,Earth Engine ID,Snippet Type,Provider,Start Date,End Date,Pixel Size (m),Temporal Resolution,Band Names,Band Units,Description
+ALOS World 3D DSM (30m),JAXA/ALOS/AW3D30/V3_2,,JAXA EORC,1/1/2006,5/12/2011,30.0,static,DSM,meters,ALOS AW3D30 global digital surface model at ~30 m (1″) resolution (elevation relative to EGM96)
+NASADEM Digital Elevation (30 m),NASA/NASADEM_HGT/001,Image,NASA/USGS (JPL),2/11/2000,2/22/2000,30.0,Static,elevation,m,Global 30 m DEM from reprocessed SRTM data (NASADEM)
+SRTM Digital Elevation (30m),USGS/SRTMGL1_003,,USGS,2/11/2000,2/22/2000,30.0,static,elevation,meters,Shuttle Radar Topography Mission (SRTM) DEM at 30 m (~1 arc-second) resolution

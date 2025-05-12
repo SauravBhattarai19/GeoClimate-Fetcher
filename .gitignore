@@ -89,13 +89,16 @@ private-key.json
 tests/
 .vs/
 data/*.ipynb
-!data/*.csv
+
+# Allow only data/*.csv and ignore all others
+!data/*.csv          # 👈 Must come BEFORE *.csv to take effect
+*.csv                # 👈 Global ignore after exception
+
 downloads/
 tmp/
 output/
 *.tif
 *.nc
-*.csv
 *.zip
 *.geojson
 *.gpkg
@@ -103,7 +106,3 @@ output/
 *.shx
 *.dbf
 *.prj
-
-# OS specific files
-.DS_Store
-Thumbs.db

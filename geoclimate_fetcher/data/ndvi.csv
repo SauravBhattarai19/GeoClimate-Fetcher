@@ -1,0 +1,6 @@
+Dataset Name,Earth Engine ID,Snippet Type,Provider,Start Date,End Date,Pixel Size (m),Temporal Resolution,Band Names,Band Units,Description
+MODIS Terra+Aqua Vegetation Indices (16-day 1km),MODIS/061/MCD13A2,ImageCollection,NASA LP DAAC (USGS),2/18/2000,3/22/2025,1000.0,16 Days,NDVI,unitless,16-day composite global vegetation indices (NDVI & EVI) at 1-km resolution
+MODIS NDVI 16-day Composite,MODIS/061/MOD13Q1,,NASA LP DAAC,2/18/2000,3/29/2024,250.0,16-day,NDVI,unitless (scale 0.0001),16-day MODIS vegetation indices (NDVI & EVI) at 250 m resolution
+VIIRS Vegetation Indices 16-day,NASA/VIIRS/002/VNP13A1,,NASA LP DAAC,1/17/2012,3/30/2025,500.0,16-day,NDVI,unitless (scale 0.0001),"Suomi NPP VIIRS 16-day vegetation indices (NDVI, EVI, EVI2) at 500 m resolution"
+NOAA CDR AVHRR NDVI (Daily V5),NOAA/CDR/AVHRR/NDVI/V5,ImageCollection,NOAA NCEI,6/24/1981,12/31/2013,5566.0,Daily,NDVI,unitless,Daily global Normalized Difference Vegetation Index from AVHRR (Climate Data Record)
+NOAA VIIRS NDVI CDR (Daily),NOAA/CDR/VIIRS/NDVI/V1,,NOAA NCEI,1/1/2014,4/13/2025,5566.0,daily,NDVI,unitless (scale 0.0001),Daily 0.05° VIIRS NDVI Climate Data Record extending NDVI from 2014 to present
