@@ -1,0 +1,14 @@
+version: '3'
+
+services:
+  geoclimate-fetcher-web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped 

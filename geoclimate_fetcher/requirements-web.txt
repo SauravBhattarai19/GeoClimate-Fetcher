@@ -1,0 +1,7 @@
+streamlit>=1.25.0
+geemap>=0.25.0
+folium>=0.14.0
+streamlit-folium>=0.15.0
+pandas>=2.0.0
+xarray>=2023.0.0
+earthengine-api>=0.1.350 
