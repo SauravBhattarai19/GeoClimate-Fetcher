@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "geoclimate-fetcher"
 version = "0.1.0"
 authors = [
-    {name = "GeoClimate Fetcher Team", email = "example@example.com"},
+    {name = "Saurav Bhattarai", email = "saurav.bhattarai.1999@gmail.com"},
 ]
 description = "A Python package for downloading climate data from Google Earth Engine"
 readme = "README.md"
@@ -21,22 +21,32 @@ classifiers = [
 
 dependencies = [
     "earthengine-api>=0.1.380",
-    "geemap>=0.28",
-    "ipyleaflet>=0.18",
-    "ipywidgets>=8",
+    "geemap==0.26.0",
+    "ipyleaflet==0.17.2",
+    "jupyter-leaflet==0.19.0",
+    "ipywidgets==8.0.6",
+    "IPython==8.12.0",
+    "jupyter-core>=4.11.1",
     "pandas",
     "xarray",
+    "netCDF4",
+    "scipy",
     "rapidfuzz",
     "tqdm",
     "rich",
     "geopandas",
     "rasterio",
     "rio-cogeo",
+    "setuptools>=61.0",
+    "jupyter>=1.0.0",
+    "streamlit>=1.25.0",
+    "folium>=0.14.0",
+    "streamlit-folium>=0.15.0",
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/example/geoclimate-fetcher"
-"Bug Tracker" = "https://github.com/example/geoclimate-fetcher/issues"
+"Homepage" = "https://github.com/Saurav-JSU/GeoClimate-Fetcher"
+"Bug Tracker" = "https://github.com/Saurav-JSU/GeoClimate-Fetcher/issues"
 
 [project.scripts]
 geoclimate-fetcher = "geoclimate_fetcher.cli.fetch:main"

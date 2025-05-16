@@ -534,10 +534,10 @@ else:
             # Add options to handle large files
             st.write("### Large File Handling:")
             use_drive_for_large = st.checkbox("Use Google Drive for large files (>50MB)", value=True)
+            drive_folder = "GeoClimate_Downloads"  # Default value
             if use_drive_for_large:
                 drive_folder = st.text_input("Google Drive folder name:", "GeoClimate_Downloads")
-                st.info("Files larger than 50MB will be exported to your Google Drive instead of direct download.")
-            
+                
             clip_to_region = st.checkbox("Clip data to exact region boundary", value=True)
             st.info("Clipping to the exact boundary can reduce file size but may take longer.")
             
@@ -596,10 +596,16 @@ else:
         else:
             filename = default_filename
         
-        def download_data():
+        def download_data(drive_folder=drive_folder, use_drive_for_large=use_drive_for_large):
             """Function to handle the download process"""
-            try:
+            try:                
                 with st.spinner("Downloading data... This may take a while."):
+                    # Show info about Google Drive usage for large files
+                    if use_drive_for_large:
+                        st.info(f"Files larger than 50MB will be automatically exported to Google Drive. Drive folder: '{drive_folder}'")
+                    else:
+                        st.info("Large file handling is disabled. Files exceeding 50MB limit may fail to download.")
+                    
                     # Get the geometry from the geometry handler
                     geometry = st.session_state.geometry_handler.current_geometry
                     
@@ -621,7 +627,28 @@ else:
                     
                     # Ensure output directory exists
                     os.makedirs(output_dir, exist_ok=True)
-                    output_path = os.path.join(output_dir, f"{filename}.{file_format.lower()}")
+                    
+                    # Set the appropriate file extension based on format
+                    if file_format.lower() == 'geotiff':
+                        file_ext = '.tif'
+                    elif file_format.lower() == 'netcdf':
+                        file_ext = '.nc'
+                    elif file_format.lower() == 'csv':
+                        file_ext = '.csv'
+                    else:
+                        file_ext = f'.{file_format.lower()}'
+                    
+                    # Ensure the filename doesn't already have the extension
+                    if filename.lower().endswith(file_ext.lower()):
+                        base_filename = filename[:-len(file_ext)]
+                    else:
+                        base_filename = filename
+                    
+                    # Create the full output path with correct extension
+                    output_path = os.path.join(output_dir, f"{base_filename}{file_ext}")
+                    
+                    # Log the output path for debugging
+                    print(f"Output path: {output_path}")
                     
                     # Initialize the appropriate fetcher based on snippet type
                     if snippet_type == 'ImageCollection':
@@ -728,17 +755,64 @@ else:
                                                 image=image,
                                                 output_path=image_output_path,
                                                 region=geometry,
-                                                scale=scale
+                                                scale=scale,
+                                                use_drive_for_large=use_drive_for_large,
+                                                drive_folder=drive_folder
                                             )
                                             
-                                            successful_downloads += 1
+                                            # Check if it was actually exported to Drive
+                                            drive_export_marker = Path(str(image_output_path) + '.drive_export.txt')
+                                            if drive_export_marker.exists():
+                                                # It was too large and exported to Drive instead
+                                                st.info(f"Image {i+1}/{collection_size} (date {date_str}): Exported to Google Drive (>50MB)")
+                                                # Read the task ID from the marker file
+                                                try:
+                                                    with open(drive_export_marker, 'r') as f:
+                                                        lines = f.readlines()
+                                                        for line in lines:
+                                                            if line.startswith('Task ID:'):
+                                                                task_id = line.strip().split('Task ID:')[1].strip()
+                                                                st.info(f"Google Drive export Task ID: {task_id}")
+                                                                break
+                                                except:
+                                                    pass  # If we can't read the file, just continue
+                                                drive_exports += 1
+                                            else:
+                                                # Verify the file actually exists and has content
+                                                if image_output_path.exists() and image_output_path.stat().st_size > 0:
+                                                    # It was successfully downloaded locally
+                                                    st.info(f"Image {i+1}/{collection_size} (date {date_str}): Downloaded successfully")
+                                                    successful_downloads += 1
+                                                else:
+                                                    # File doesn't exist or is empty - automatically export to Drive
+                                                    st.warning(f"Failed to download image for date {date_str}. Exporting to Google Drive instead.")
+                                                    
+                                                    # Export this specific image to Google Drive
+                                                    safe_description = image_filename.replace(' ', '_')
+                                                    safe_description = re.sub(r'[^a-zA-Z0-9.,;:_\-]', '', safe_description)
+                                                    if len(safe_description) > 100:
+                                                        safe_description = safe_description[:100]
+                                                    
+                                                    # Start the export task for this individual image
+                                                    task = ee.batch.Export.image.toDrive(
+                                                        image=image,
+                                                        description=safe_description,
+                                                        folder=drive_folder,
+                                                        fileNamePrefix=image_filename,
+                                                        region=geometry.bounds().getInfo()['coordinates'],
+                                                        scale=scale,
+                                                        crs='EPSG:4326',
+                                                        maxPixels=1e10,
+                                                        fileFormat='GeoTIFF'
+                                                    )
+                                                    
+                                                    task.start()
+                                                    st.info(f"Started Google Drive export for image {date_str}, Task ID: {task.id}")
+                                                    drive_exports += 1
                                         except Exception as e:
                                             # Check if the error is due to size limit
-                                            if "exceeds maximum" in str(e) or "size" in str(e).lower() or "too large" in str(e).lower() or use_drive_for_large:
-                                                if "exceeds maximum" in str(e) or "size" in str(e).lower() or "too large" in str(e).lower():
-                                                    st.warning(f"Image for date {date_str} is too large for direct download. Exporting to Google Drive instead.")
-                                                elif use_drive_for_large:
-                                                    st.info(f"Using Google Drive for image {date_str} as requested.")
+                                            if "exceeds maximum" in str(e) or "size" in str(e).lower() or "too large" in str(e).lower():
+                                                st.warning(f"Image for date {date_str} is too large for direct download. Exporting to Google Drive instead.")
                                                 
                                                 # Export this specific image to Google Drive
                                                 safe_description = image_filename.replace(' ', '_')
@@ -772,11 +846,43 @@ else:
                                 # Show summary of exports
                                 if drive_exports > 0:
                                     st.info(f"{drive_exports} images were exported to Google Drive folder '{drive_folder}'")
-                                    st.info("You can check the status of these exports in the Earth Engine Code Editor Tasks tab.")
-                                    st.info("Export URL: https://code.earthengine.google.com/tasks")
+                                    st.info("You can check the status of these exports in the Earth Engine Code Editor.")
+                                    st.info("Export status URL: https://code.earthengine.google.com/tasks")
                                 
                                 if successful_downloads > 0:
-                                    st.success(f"Exported {successful_downloads} out of {collection_size} images to {geotiff_dir}")
+                                    # Check if files actually exist in the directory
+                                    actual_files = list(Path(geotiff_dir).glob('*.tif'))
+                                    if len(actual_files) == successful_downloads:
+                                        st.success(f"Successfully downloaded {successful_downloads} out of {collection_size} images to {geotiff_dir}")
+                                    else:
+                                        st.warning(f"Only {len(actual_files)} files were found in {geotiff_dir}, though {successful_downloads} were reported as downloaded.")
+                                        # If no files were found but some were reported as downloaded
+                                        if len(actual_files) == 0 and successful_downloads > 0:
+                                            # All exports might have failed silently - try Google Drive for all
+                                            st.error("No files were found in the output directory. All exports may have failed.")
+                                            st.info("Please check the Google Drive exports, or try again with smaller time range.")
+                                
+                                # Update to show combined message when files were sent to both locations
+                                if drive_exports > 0 and successful_downloads > 0:
+                                    actual_files = list(Path(geotiff_dir).glob('*.tif'))
+                                    if len(actual_files) > 0:
+                                        st.warning(f"Note: {drive_exports} files were too large (>50MB) and were sent to Google Drive instead of local download.")
+                                        st.success(f"Export complete. {len(actual_files)} files saved locally, {drive_exports} files sent to Google Drive.")
+                                    else:
+                                        st.warning("All files may have been sent to Google Drive as no local files were found.")
+                                        st.info(f"Please check your Google Drive folder '{drive_folder}' for all {collection_size} files.")
+                                elif drive_exports == collection_size:
+                                    st.warning(f"All {drive_exports} files were too large (>50MB) and were sent to Google Drive instead of local download.")
+                                    st.success(f"Export complete. All files were sent to Google Drive folder '{drive_folder}'.")
+                                elif successful_downloads == collection_size:
+                                    actual_files = list(Path(geotiff_dir).glob('*.tif'))
+                                    if len(actual_files) == successful_downloads:
+                                        st.success(f"Export complete. All {successful_downloads} files saved locally to {geotiff_dir}")
+                                    else:
+                                        st.warning(f"Export incomplete. Only {len(actual_files)} out of {successful_downloads} reported downloads were found in {geotiff_dir}")
+                                elif drive_exports + successful_downloads < collection_size:
+                                    st.warning(f"Export may be incomplete. Only processed {drive_exports + successful_downloads} out of {collection_size} images.")
+                                    st.info("Some exports may have failed. Try with a smaller date range or area.")
                         
                         except Exception as e:
                             st.error(f"Error with ImageCollection fetcher: {str(e)}")
@@ -815,17 +921,39 @@ else:
                                         image=image,
                                         output_path=output_path,
                                         region=geometry,
-                                        scale=scale
+                                        scale=scale,
+                                        use_drive_for_large=use_drive_for_large,
+                                        drive_folder=drive_folder
                                     )
-                                    final_output_path = output_path
-                                    st.success(f"Exported image to {output_path}")
+                                    
+                                    # Check if it was actually exported to Drive
+                                    drive_export_marker = Path(str(output_path) + '.drive_export.txt')
+                                    if drive_export_marker.exists():
+                                        # It was too large and exported to Drive instead
+                                        st.info(f"Image was automatically exported to Google Drive folder '{drive_folder}' (>50MB).")
+                                        st.warning("Note: The file was too large for direct download and was sent to Google Drive.")
+                                        st.success(f"Export complete! Check Google Drive folder '{drive_folder}' for your file.")
+                                        final_output_path = f"Google Drive: {drive_folder}/{filename}.tif"
+                                        
+                                        # Read and display the task ID for tracking
+                                        try:
+                                            with open(drive_export_marker, 'r') as f:
+                                                lines = f.readlines()
+                                                for line in lines:
+                                                    if line.startswith('Task ID:'):
+                                                        task_id = line.strip().split('Task ID:')[1].strip()
+                                                        st.info(f"Google Drive export Task ID: {task_id}")
+                                                        break
+                                        except:
+                                            pass  # If we can't read the file, just continue
+                                    else:
+                                        # It was successfully downloaded locally
+                                        final_output_path = output_path
+                                        st.success(f"Export complete! Your file has been saved to {output_path}")
                                 except Exception as e:
-                                    # Check if the error is due to size limit or if user requested Google Drive
-                                    if "exceeds maximum" in str(e) or "size" in str(e).lower() or "too large" in str(e).lower() or use_drive_for_large:
-                                        if "exceeds maximum" in str(e) or "size" in str(e).lower() or "too large" in str(e).lower():
-                                            st.warning(f"Image is too large for direct download. Exporting to Google Drive instead.")
-                                        elif use_drive_for_large:
-                                            st.info(f"Using Google Drive as requested.")
+                                    # Check if the error is due to size limit
+                                    if "exceeds maximum" in str(e) or "size" in str(e).lower() or "too large" in str(e).lower():
+                                        st.warning(f"Image is too large for direct download. Exporting to Google Drive instead.")
                                         
                                         # Export to Google Drive
                                         safe_description = filename.replace(' ', '_')
@@ -834,22 +962,16 @@ else:
                                             safe_description = safe_description[:100]
                                         
                                         # Start the export task
-                                        task = ee.batch.Export.image.toDrive(
+                                        task_id = exporter.export_image_to_drive(
                                             image=image,
-                                            description=safe_description,
+                                            filename=filename,
                                             folder=drive_folder,
-                                            fileNamePrefix=filename,
-                                            region=geometry.bounds().getInfo()['coordinates'],
+                                            region=geometry,
                                             scale=scale,
-                                            crs='EPSG:4326',
-                                            maxPixels=1e10,
-                                            fileFormat='GeoTIFF'
+                                            wait=False
                                         )
                                         
-                                        task.start()
-                                        
                                         # Show export task information
-                                        task_id = task.id
                                         st.success(f"Export started! Your file will be available in Google Drive folder '{drive_folder}'")
                                         st.info(f"Task ID: {task_id}")
                                         st.info("You can check the status of your export in the Earth Engine Code Editor Tasks tab.")
@@ -869,6 +991,47 @@ else:
                     # Store the final output path in session state
                     st.session_state.download_path = final_output_path
                     
+                    # Final confirmation of where the file actually went
+                    if "Google Drive:" in str(final_output_path):
+                        st.warning("⚠️ NOTE: Your file exceeded the 50MB direct download limit and was exported to Google Drive instead.")
+                        st.info("Google Drive exports run in the background. Please check your Google Drive folder when the task completes.")
+                        st.info("You can check export status at: https://code.earthengine.google.com/tasks")
+                    else:
+                        # Check if the file actually exists locally before confirming
+                        local_file = Path(final_output_path)
+                        if local_file.exists() and local_file.stat().st_size > 0:
+                            st.info(f"✓ Confirmed: Your file was successfully saved to {final_output_path}")
+                        else:
+                            # If we got here but the file doesn't exist, check for a drive_export marker
+                            marker_file = Path(str(local_file) + '.drive_export.txt')
+                            if marker_file.exists():
+                                drive_folder = "unknown"
+                                try:
+                                    with open(marker_file, 'r') as f:
+                                        for line in f.readlines():
+                                            if line.startswith("Folder:"):
+                                                drive_folder = line.strip().split("Folder:")[1].strip()
+                                                break
+                                except:
+                                    pass
+                                
+                                st.warning("⚠️ NOTE: Your file exceeded the 50MB direct download limit and was exported to Google Drive.")
+                                st.info(f"Check Google Drive folder: {drive_folder}")
+                                st.info("You can check export status at: https://code.earthengine.google.com/tasks")
+                            else:
+                                st.warning("⚠️ NOTE: The expected output file wasn't found.")
+                                if isinstance(final_output_path, str) and os.path.isdir(final_output_path):
+                                    # It's a directory - check if it has any files
+                                    files = list(Path(final_output_path).glob('*.tif'))
+                                    if files:
+                                        st.info(f"Found {len(files)} files in the output directory: {final_output_path}")
+                                    else:
+                                        st.error("No files were found in the output directory. The download may have failed.")
+                                        st.info("Please try exporting to Google Drive instead or select a smaller region.")
+                                else:
+                                    st.error("The download may have failed. Please check the logs for errors.")
+                                    st.info("Try exporting to Google Drive instead or select a smaller region.")
+                    
             except Exception as e:
                 st.error(f"Error during download: {str(e)}")
                 # Print more detailed error information
@@ -876,7 +1039,7 @@ else:
                 st.code(traceback.format_exc(), language="python")
         
         if st.button("Download Data"):
-            download_data()
+            download_data(drive_folder=drive_folder, use_drive_for_large=use_drive_for_large)
 
 # Add a reset button at the bottom
 if st.button("Reset Application"):
