@@ -180,9 +180,59 @@ class MetadataCatalog:
         bands_str = dataset.get('Band Names', '')
         if not isinstance(bands_str, str):
             return []
+        
+        # Handle different band name notation patterns
+        results = []
+        
+        # If we have "band1, ..., bandN" pattern, try to expand it
+        if '…' in bands_str or '...' in bands_str:
+            # First split by comma and process each part
+            parts = [p.strip() for p in bands_str.split(',')]
             
-        # Band names may be comma-separated
-        return [band.strip() for band in bands_str.split(',')]
+            for part in parts:
+                if '…' in part or '...' in part:
+                    # Skip parts that just contain ellipsis
+                    if part.strip() in ['…', '...']:
+                        continue
+                    
+                    # Try to expand patterns like "SPEI_01_month, …, SPEI_12_month"
+                    try:
+                        # Get prefix and suffix (e.g., "SPEI_" and "_month")
+                        if '…' in part:
+                            prefix, suffix = part.split('…')
+                        else:
+                            prefix, suffix = part.split('...')
+                            
+                        # Try to find any numeric pattern
+                        import re
+                        prefix_match = re.search(r'(\D+)(\d+)$', prefix)
+                        if prefix_match:
+                            true_prefix = prefix_match.group(1)  # e.g., "SPEI_"
+                            start_num = int(prefix_match.group(2))  # e.g., "01" becomes 1
+                            
+                            # Find ending number in another part in the list
+                            for other_part in parts:
+                                if other_part.startswith(true_prefix) and not ('…' in other_part or '...' in other_part):
+                                    end_match = re.search(r'(\D+)(\d+)', other_part)
+                                    if end_match and end_match.group(1) == true_prefix:
+                                        end_num = int(end_match.group(2))
+                                        # Generate all bands in range
+                                        for i in range(start_num, end_num + 1):
+                                            band_name = f"{true_prefix}{i:02d}{suffix}"
+                                            results.append(band_name)
+                    except Exception:
+                        # If expansion fails, just add as-is
+                        results.append(part)
+                else:
+                    # Regular band name
+                    results.append(part)
+        else:
+            # Standard comma-separated list
+            results = [band.strip() for band in bands_str.split(',')]
+            
+        # Remove any empty strings or duplicates
+        results = [band for band in results if band and band not in ['…', '...']]
+        return list(dict.fromkeys(results))  # Remove duplicates while preserving order
         
     def get_date_range(self, dataset_name: str) -> Tuple[Optional[str], Optional[str]]:
         """

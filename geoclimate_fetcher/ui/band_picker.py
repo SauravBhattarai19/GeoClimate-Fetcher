@@ -6,6 +6,8 @@ from IPython.display import display, clear_output
 from typing import Optional, Callable, Dict, Any, List
 import pandas as pd
 from typing import Optional, Callable, Dict, Any, List, Union
+import re
+import sys
 
 from geoclimate_fetcher.core.metadata import MetadataCatalog
 
@@ -29,7 +31,17 @@ class BandPickerWidget:
         # Create UI components
         self.title = widgets.HTML("<h3>Band Selection</h3>")
         
-        self.band_checkboxes = widgets.VBox([])
+        # Use VBox to contain the band checkboxes
+        self.band_checkboxes_container = widgets.VBox([])
+        
+        # Add scrolling for large lists of bands
+        self.scroll_area = widgets.VBox([self.band_checkboxes_container], 
+                                        layout=widgets.Layout(
+                                            overflow='auto',
+                                            max_height='300px',
+                                            min_height='100px',
+                                            border='1px solid #ddd'
+                                        ))
         
         self.select_all_button = widgets.Button(
             description='Select All',
@@ -68,7 +80,7 @@ class BandPickerWidget:
         self.widget = widgets.VBox([
             self.title,
             widgets.Label("Select bands to include:"),
-            self.band_checkboxes,
+            self.scroll_area,
             buttons,
             self.output
         ])
@@ -94,53 +106,107 @@ class BandPickerWidget:
         # Get bands for this dataset
         bands = self.metadata_catalog.get_bands_for_dataset(dataset_name)
         
+        with self.output:
+            clear_output()
+            print(f"Loading bands for dataset: {dataset_name}")
+            print(f"Found {len(bands)} bands: {', '.join(bands)}")
+        
         # Update checkboxes
         self._update_band_checkboxes(bands)
         
     def _update_band_checkboxes(self, bands: List[str]):
         """Update the band checkboxes based on available bands."""
-        # Clear existing checkboxes
-        self.band_checkboxes.children = []
+        # Create a checkbox for each band
+        self.checkboxes = []
+        self.checkbox_values = {}
         
         if not bands:
             with self.output:
                 clear_output()
                 print("No bands available for this dataset.")
+            
+            self.band_checkboxes_container.children = []
+            self.apply_button.disabled = True
             return
             
-        # Create a checkbox for each band
-        checkboxes = []
+        # Clean and normalize the band names
+        cleaned_bands = []
         for band in bands:
-            checkbox = widgets.Checkbox(
-                value=False,
-                description=band,
-                indent=False
-            )
-            checkboxes.append(checkbox)
+            # Clean up whitespace and ellipsis
+            band = band.strip()
+            if band == "…" or band == "..." or band == "":
+                continue
+                
+            # Remove any ellipsis notation like "band1, …, bandN"
+            if re.match(r".*_\d+_.*", band) and "…" in band:
+                continue
+                
+            cleaned_bands.append(band)
+            
+        # Detect platform to apply different layouts
+        is_mac = sys.platform == 'darwin'
+        
+        # Create checkboxes with appropriate layout
+        checkbox_widgets = []
+        for band in cleaned_bands:
+            # Use a slightly different approach for macOS
+            if is_mac:
+                # For macOS, we'll use a combination of checkbox and label in an HBox
+                checkbox = widgets.Checkbox(
+                    value=False,
+                    indent=False,
+                    layout=widgets.Layout(width='30px')
+                )
+                
+                # Store reference to the checkbox
+                self.checkboxes.append(checkbox)
+                self.checkbox_values[band] = checkbox
+                
+                # Create label
+                label = widgets.HTML(value=f"<span>{band}</span>")
+                
+                # Combine in HBox
+                checkbox_row = widgets.HBox([checkbox, label], 
+                                            layout=widgets.Layout(
+                                                width='100%',
+                                                margin='2px'
+                                            ))
+                checkbox_widgets.append(checkbox_row)
+            else:
+                # For Windows, the standard approach works fine
+                checkbox = widgets.Checkbox(
+                    value=False,
+                    description=band,
+                    indent=False
+                )
+                
+                self.checkboxes.append(checkbox)
+                self.checkbox_values[band] = checkbox
+                checkbox_widgets.append(checkbox)
             
         # Update the widget
-        self.band_checkboxes.children = checkboxes
+        self.band_checkboxes_container.children = checkbox_widgets
         
         # Enable apply button if bands are available
-        self.apply_button.disabled = len(bands) == 0
-        
+        self.apply_button.disabled = len(cleaned_bands) == 0
+            
     def _on_select_all_button_click(self, button):
         """Handle select all button click."""
-        for checkbox in self.band_checkboxes.children:
+        for checkbox in self.checkboxes:
             checkbox.value = True
             
     def _on_clear_all_button_click(self, button):
         """Handle clear all button click."""
-        for checkbox in self.band_checkboxes.children:
+        for checkbox in self.checkboxes:
             checkbox.value = False
             
     def _on_apply_button_click(self, button):
         """Handle apply button click."""
         # Get selected bands
         selected = []
-        for checkbox in self.band_checkboxes.children:
+        for band, checkbox in self.checkbox_values.items():
             if checkbox.value:
-                selected.append(checkbox.description)
+                selected.append(band)
                 
         self.selected_bands = selected
         
