@@ -20,14 +20,19 @@ An open-source Python package for downloading Google Earth Engine (GEE) climate 
    ```
 
 2. Create and activate a virtual environment:
-   ```
-   python -m venv fresh_env
-   fresh_env\Scripts\activate  # Windows
-   source fresh_env/bin/activate  # macOS/Linux
+   ```bash
+   # Windows
+   python -m venv .venv
+   .venv\Scripts\activate
+   
+   # macOS/Linux
+   python -m venv .venv
+   source .venv/bin/activate
    ```
 
 3. Upgrade pip:
-   ```
+   ```bash
+   # Windows/macOS/Linux
    python -m pip install --upgrade pip
    ```
 
@@ -46,12 +51,22 @@ An open-source Python package for downloading Google Earth Engine (GEE) climate 
    pip install -e .
    ```
 
+6. Authenticate with Google Earth Engine:
+   ```bash
+   earthengine authenticate
+   ```
+   Follow the prompts to complete the authentication process.
+
 ## Running the Interactive GUI
 
 After installation, run the interactive Jupyter notebook:
 
-```
+```bash
+# Windows
 jupyter notebook geoclimate_fetcher\notebooks\interactive_gui.ipynb
+
+# macOS/Linux
+jupyter notebook geoclimate_fetcher/notebooks/interactive_gui.ipynb
 ```
 
 This will launch the interactive GUI in a browser window.
@@ -68,11 +83,16 @@ This will launch the interactive GUI in a browser window.
 
 2. Create and activate a virtual environment:
    ```
-   python -m venv fresh_env
-   fresh_env\Scripts\activate
+   python -m venv .venv
+   .venv\Scripts\activate
    ```
 
-3. Install the package in development mode:
+3. Upgrade pip:
+   ```
+   python -m pip install --upgrade pip
+   ```
+
+4. Install the package in development mode:
    ```
    pip install -e .
    ```
@@ -87,11 +107,16 @@ This will launch the interactive GUI in a browser window.
 
 2. Create and activate a virtual environment:
    ```
-   python -m venv fresh_env
-   source fresh_env/bin/activate
+   python -m venv .venv
+   source .venv/bin/activate
    ```
 
-3. Install the package in development mode:
+3. Upgrade pip:
+   ```
+   python -m pip install --upgrade pip
+   ```
+
+4. Install the package in development mode:
    ```
    pip install -e .
    ```
