@@ -26,4 +26,4 @@ dependencies:
     - rich
     - rio-cogeo
     - streamlit>=1.25.0
-    - streamlit-folium>=0.15.0
+    - streamlit-folium>=0.15.0 

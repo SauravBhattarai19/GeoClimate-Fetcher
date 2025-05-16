@@ -51,7 +51,7 @@ An open-source Python package for downloading Google Earth Engine (GEE) climate 
 After installation, run the interactive Jupyter notebook:
 
 ```
-python geoclimate_fetcher\notebooks\interactive_gui.ipynb
+jupyter notebook geoclimate_fetcher\notebooks\interactive_gui.ipynb
 ```
 
 This will launch the interactive GUI in a browser window.
