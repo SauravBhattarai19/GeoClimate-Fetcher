@@ -1,0 +1,49 @@
+# Core Streamlit and web framework
+streamlit>=1.28.0
+streamlit-folium>=0.15.0
+
+# Google Earth Engine and geospatial core
+earthengine-api>=0.1.380
+geemap>=0.26.0
+
+# Geospatial libraries
+folium>=0.14.0
+geopandas>=0.14.0
+rasterio>=1.3.0
+fiona>=1.9.0
+shapely>=2.0.0
+pyproj>=3.4.0
+
+# Data processing and analysis
+pandas>=2.0.0
+numpy>=1.24.0
+xarray>=2023.1.0
+netCDF4>=1.6.0
+scipy>=1.10.0
+
+# Visualization
+matplotlib>=3.6.0
+plotly>=5.14.0
+
+# HTTP and networking
+requests>=2.28.0
+urllib3>=1.26.0
+
+# File I/O and utilities
+tqdm>=4.64.0
+rich>=13.0.0
+rapidfuzz>=3.0.0
+Pillow>=9.5.0
+
+# Optional: Enhanced geospatial capabilities
+rio-cogeo>=4.0.0
+mercantile>=1.2.0
+morecantile>=4.0.0
+
+# Jupyter support (for notebook compatibility)
+ipywidgets>=8.0.6
+ipyleaflet>=0.17.2
+jupyter-leaflet>=0.19.0
+
+# Development and debugging
+typing-extensions>=4.4.0 

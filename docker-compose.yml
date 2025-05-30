@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  geoclimate-fetcher:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8501:8501"
+    volumes:
+      # Mount data directory for persistent storage
+      - ./downloads:/app/downloads
+      # Mount credentials directory if it exists
+      - ~/.geoclimate-fetcher:/root/.geoclimate-fetcher:ro
+      # Optional: Mount your own data directory
+      - ./data:/app/data:ro
+    environment:
+      # Set any environment variables here
+      - PYTHONPATH=/app
+      # Optional: Set Google Cloud credentials
+      # - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials/key.json
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+  # Optional: Add a development service with volume mounting for live editing
+  geoclimate-fetcher-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8502:8501"
+    volumes:
+      # Mount source code for live editing
+      - .:/app
+      # Mount downloads for output
+      - ./downloads:/app/downloads
+      # Mount credentials
+      - ~/.geoclimate-fetcher:/root/.geoclimate-fetcher:ro
+    environment:
+      - PYTHONPATH=/app
+    command: ["streamlit", "run", "main.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.headless=true", "--server.enableCORS=false", "--server.enableXsrfProtection=false", "--server.runOnSave=true"]
+    profiles:
+      - dev 
