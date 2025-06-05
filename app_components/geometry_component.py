@@ -30,10 +30,17 @@ class GeometryComponent:
             tiles='OpenStreetMap',
             attr='Map data © OpenStreetMap contributors'
         )
-        
-        # Add additional tile layers
-        folium.TileLayer('Stamen Terrain', name='Terrain').add_to(m)
-        folium.TileLayer('CartoDB positron', name='Light').add_to(m)
+          # Add additional tile layers
+        folium.TileLayer(
+            tiles='Stamen Terrain',
+            attr='Map tiles by Stamen Design, under CC BY 3.0. Data by OpenStreetMap, under ODbL.',
+            name='Terrain'
+        ).add_to(m)
+        folium.TileLayer(
+            tiles='CartoDB positron',
+            attr='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+            name='Light'
+        ).add_to(m)
         
         # Add drawing tools
         draw = Draw(

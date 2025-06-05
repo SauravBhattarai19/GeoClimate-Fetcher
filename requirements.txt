@@ -18,4 +18,5 @@ rio-cogeo
 jupyter>=1.0.0
 streamlit>=1.25.0
 folium>=0.14.0
-streamlit-folium>=0.15.0 
+streamlit-folium>=0.15.0
+plotly>=5.14.0 

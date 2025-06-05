@@ -1,0 +1,3 @@
+Requirement already satisfied: plotly in c:\users\j01013381\appdata\local\miniconda3\envs\geoclimate-fetcher\lib\site-packages (6.0.1)
+Requirement already satisfied: narwhals>=1.15.1 in c:\users\j01013381\appdata\local\miniconda3\envs\geoclimate-fetcher\lib\site-packages (from plotly) (1.35.0)
+Requirement already satisfied: packaging in c:\users\j01013381\appdata\local\miniconda3\envs\geoclimate-fetcher\lib\site-packages (from plotly) (24.2)
