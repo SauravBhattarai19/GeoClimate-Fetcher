@@ -6,6 +6,7 @@ from typing import Optional, Dict, Any, Callable
 import json
 import ee
 import tempfile
+from ee.oauth import OAuth2Credentials  # Local import to avoid hard dep if unused
 
 # Define path for storing credentials
 CREDENTIALS_FILE = os.path.expanduser("~/.geoclimate-fetcher/credentials.json")
@@ -42,27 +43,52 @@ class GEEAuth:
             
             # Method 2: Credentials file content (for web apps with file upload)
             elif credentials_content:
-                # Create a temporary credentials file with the content
+                # Handle uploaded credentials content (typically the file named 'credentials' created by
+                # running `earthengine authenticate` locally). This is **NOT** a service-account JSON; it
+                # contains keys like `redirect_uri`, `refresh_token`, and `scopes`.
                 try:
-                    # Parse the credentials content to validate it
+                    # Validate that the JSON parses correctly – this also helps catch file upload issues.
                     creds_data = json.loads(credentials_content)
-                    
-                    # Create temporary file with credentials
-                    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as temp_file:
-                        temp_file.write(credentials_content)
-                        temp_credentials_path = temp_file.name
-                    
-                    try:
-                        # Set the environment variable to point to our temp credentials
-                        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = temp_credentials_path
-                        ee.Initialize(project=project_id)
-                    finally:
-                        # Clean up temp file and environment variable
-                        if os.path.exists(temp_credentials_path):
-                            os.unlink(temp_credentials_path)
-                        if 'GOOGLE_APPLICATION_CREDENTIALS' in os.environ:
-                            del os.environ['GOOGLE_APPLICATION_CREDENTIALS']
-                            
+
+                    # Heuristic: if the uploaded file includes a `private_key`, it's a service-account key
+                    # rather than a user credentials file. In that case we fall back to the service-account
+                    # method so the existing logic can handle it.
+                    if "private_key" in creds_data and "client_email" in creds_data:
+                        # Temporarily write to disk and reuse ServiceAccountCredentials logic
+                        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tmp_sa:
+                            tmp_sa.write(credentials_content)
+                            tmp_sa_path = tmp_sa.name
+
+                        try:
+                            credentials = ee.ServiceAccountCredentials(creds_data["client_email"], tmp_sa_path)
+                            ee.Initialize(credentials, project=project_id)
+                        finally:
+                            if os.path.exists(tmp_sa_path):
+                                os.unlink(tmp_sa_path)
+                    else:
+                        # This is a user OAuth credentials file (named just "credentials", created by
+                        # `earthengine authenticate`).  We'll do two things:
+                        #   1. Persist it to ~/.config/earthengine/ so subsequent sessions work
+                        #   2. Build an OAuth2Credentials object from the JSON and pass it explicitly
+                        #      to ee.Initialize so we always include the project ID the user provided.
+
+                        # Persist the credentials file to the standard location so future calls that rely
+                        # on EE's default discovery behaviour will still succeed.
+                        ee_creds_dir = os.path.expanduser("~/.config/earthengine")
+                        os.makedirs(ee_creds_dir, exist_ok=True)
+
+                        ee_creds_path = os.path.join(ee_creds_dir, "credentials")
+
+                        try:
+                            with open(ee_creds_path, "w", encoding="utf-8") as f:
+                                f.write(credentials_content)
+                        except Exception as write_err:
+                            raise Exception(f"Unable to write credentials file: {write_err}")
+
+                        # Explicitly initialize using an OAuth2Credentials instance (includes project ID)
+                        oauth_creds = OAuth2Credentials.from_json(credentials_content)
+                        ee.Initialize(credentials=oauth_creds, project=project_id)
+
                 except json.JSONDecodeError:
                     raise Exception("Invalid credentials file format. Please upload a valid Earth Engine credentials file.")
             
