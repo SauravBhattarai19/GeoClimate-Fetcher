@@ -1415,12 +1415,25 @@ elif st.session_state.app_mode == "data_explorer":
                 
                 # Ensure the directory exists and is accessible
                 try:
-                    # Expand user path (converts ~ to actual home directory)
-                    output_dir = os.path.expanduser(output_dir)
+                    # Clean and normalize the path for Windows
+                    output_dir = os.path.normpath(output_dir.strip())
+                    
                     # Create directory if it doesn't exist
                     os.makedirs(output_dir, exist_ok=True)
-                    st.success(f"📂 Files will be saved to: `{output_dir}`")
                     
+                    # Verify write permissions by attempting to create a test file
+                    test_file_path = os.path.join(output_dir, 'test_write_permission.txt')
+                    try:
+                        with open(test_file_path, 'w') as f:
+                            f.write('test')
+                        os.remove(test_file_path)
+                        st.success(f"📂 Files will be saved to: `{output_dir}`")
+                        st.success("✅ Write permission verified!")
+                    except Exception as write_error:
+                        st.error(f"❌ Cannot write to directory: {str(write_error)}")
+                        st.warning("Please choose a location where you have write permissions.")
+                        output_dir = None
+                        
                     # Show some helpful information about the location
                     st.info("""
                     💡 **Note:**
@@ -1540,6 +1553,25 @@ elif st.session_state.app_mode == "data_explorer":
                             st.info(f"📤 Large files (>50MB) will be exported to Google Drive folder: '{drive_folder}'")
                         else:
                             st.warning("⚠️ Large file handling disabled. Files >50MB may fail.")
+                        
+                        # Verify output directory again before proceeding
+                        if not output_dir:
+                            st.error("❌ No valid output directory selected.")
+                            return
+                            
+                        st.info(f"📂 Attempting to save to: {output_dir}")
+                        
+                        # Create output path and verify
+                        try:
+                            os.makedirs(output_dir, exist_ok=True)
+                            test_file_path = os.path.join(output_dir, 'test_write_permission.txt')
+                            with open(test_file_path, 'w') as f:
+                                f.write('test')
+                            os.remove(test_file_path)
+                        except Exception as e:
+                            st.error(f"❌ Cannot write to output directory: {str(e)}")
+                            st.warning("Please select a different download location.")
+                            return
                         
                         # Get the geometry from the geometry handler
                         geometry = st.session_state.geometry_handler.current_geometry
@@ -1883,6 +1915,23 @@ elif st.session_state.app_mode == "data_explorer":
                         # Final success message
                         st.balloons()
                         st.success("🎉 Download completed successfully!")
+                        
+                        # After successful download
+                        if os.path.exists(output_path):
+                            file_size = os.path.getsize(output_path)
+                            st.success(f"""
+                            ✅ Download completed successfully!
+                            📂 File saved to: {output_path}
+                            📊 File size: {file_size/1024/1024:.2f} MB
+                            
+                            If you can't find the file:
+                            1. Check the exact path above
+                            2. Refresh your file explorer
+                            3. Make sure you have access to the location
+                            """)
+                        else:
+                            st.error(f"❌ File not found at {output_path}")
+                            st.info("Please try a different download location or check permissions.")
                         
                 except Exception as e:
                     st.error(f"❌ Download failed: {str(e)}")
