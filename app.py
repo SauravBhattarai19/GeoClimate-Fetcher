@@ -1744,89 +1744,104 @@ elif st.session_state.app_mode == "data_explorer":
                                     st.warning(f"⚠️ Large download estimated ({total_estimated_size/1024/1024:.1f} MB total)")
                                     st.info("💡 Consider using Google Drive backup for large downloads")
                                 
-                                # Create subdirectory for GeoTIFFs
-                                geotiff_dir = os.path.join(output_dir, f"{filename}_geotiffs")
-                                os.makedirs(geotiff_dir, exist_ok=True)
+                                # Create root directory for GeoTIFFs
+                                geotiff_root = os.path.join(output_dir, f"{filename}_geotiffs")
+                                os.makedirs(geotiff_root, exist_ok=True)
                                 
-                                st.info(f"📸 Processing {collection_size} images...")
+                                st.info(f"📸 Processing {collection_size} images…")
                                 progress_bar = st.progress(0)
                                 status_text = st.empty()
                                 
-                                # Process images
                                 image_list = collection.toList(collection.size())
-                                successful_downloads = 0
+                                successful_downloads = []  # store file paths
                                 drive_exports = 0
                                 
                                 for i in range(collection_size):
                                     progress_bar.progress((i + 1) / collection_size)
-                                    status_text.text(f"Processing image {i+1}/{collection_size}")
                                     
                                     try:
                                         image = ee.Image(image_list.get(i))
                                         date_millis = image.get('system:time_start').getInfo()
-                                        date_str = datetime.fromtimestamp(date_millis / 1000).strftime('%Y%m%d')
-                                        
+                                        date_obj = datetime.fromtimestamp(date_millis / 1000)
+                                        date_str = date_obj.strftime('%Y%m%d')
+                                        year_folder = os.path.join(geotiff_root, date_obj.strftime('%Y'))
+                                        os.makedirs(year_folder, exist_ok=True)
+                                        status_text.text(f"⬇️ {i+1}/{collection_size} • {date_str}.tif → {os.path.basename(year_folder)}/")
+
                                         if selected_bands:
                                             image = image.select(selected_bands)
-                                        
-                                        image_output_path = os.path.join(geotiff_dir, f"{date_str}.tif")
-                                        
+
+                                        image_output_path = os.path.join(year_folder, f"{date_str}.tif")
+
                                         try:
-                                            # Note: Data type harmonization is handled automatically in the exporter
                                             result_path = exporter.export_image_to_local(
-                                                image=image, output_path=image_output_path,
-                                                region=processing_geometry, scale=scale
+                                                image=image,
+                                                output_path=image_output_path,
+                                                region=processing_geometry,
+                                                scale=scale
                                             )
-                                            
                                             if os.path.exists(result_path) and os.path.getsize(result_path) > 0:
-                                                successful_downloads += 1
+                                                successful_downloads.append(os.path.relpath(result_path, geotiff_root))
                                             else:
                                                 raise ValueError("Local export failed")
-                                                
                                         except Exception as export_error:
                                             error_str = str(export_error)
-                                            if "Total request size" in error_str and "bytes" in error_str:
-                                                st.warning(f"⚠️ Image {i+1} too large for direct download")
-                                                if use_drive_for_large:
-                                                    try:
-                                                        # Note: Data type harmonization handled in exporter
-                                                        task_id = exporter.export_image_to_drive(
-                                                            image=image, filename=f"{filename}_{date_str}",
-                                                            folder=drive_folder, region=processing_geometry,
-                                                            scale=scale, wait=False
-                                                        )
-                                                        drive_exports += 1
-                                                    except Exception as drive_error:
-                                                        st.warning(f"⚠️ Drive export also failed for image {i+1}: {str(drive_error)}")
-                                                else:
-                                                    st.warning(f"⚠️ Skipping image {i+1}: {error_str}")
-                                            else:
-                                                if use_drive_for_large:
-                                                    # Note: Data type harmonization handled in exporter
+                                            if "Total request size" in error_str and "bytes" in error_str and use_drive_for_large:
+                                                try:
                                                     task_id = exporter.export_image_to_drive(
-                                                        image=image, filename=f"{filename}_{date_str}",
-                                                        folder=drive_folder, region=processing_geometry,
-                                                        scale=scale, wait=False
+                                                        image=image,
+                                                        filename=f"{filename}_{date_str}",
+                                                        folder=drive_folder,
+                                                        region=processing_geometry,
+                                                        scale=scale,
+                                                        wait=False
                                                     )
                                                     drive_exports += 1
-                                            
+                                                except Exception as drive_error:
+                                                    st.warning(f"⚠️ Drive export also failed for image {i+1}: {drive_error}")
+                                            else:
+                                                st.warning(f"⚠️ Skipping image {i+1}: {error_str}")
                                     except Exception as e:
-                                        st.warning(f"⚠️ Failed to process image {i+1}: {str(e)}")
-                                
-                                # Summary
-                                if successful_downloads > 0:
-                                    st.success(f"✅ {successful_downloads} images saved to `{geotiff_dir}`")
+                                        st.warning(f"⚠️ Failed to process image {i+1}: {e}")
 
-                                    # Zip the directory for convenient single download
-                                    import shutil
-                                    zip_path = f"{geotiff_dir}.zip"
+                                # Write manifest file
+                                if successful_downloads:
+                                    manifest_path = os.path.join(geotiff_root, "manifest.txt")
                                     try:
-                                        if not os.path.exists(zip_path):
-                                            st.info("📦 Creating ZIP archive for browser download …")
-                                            shutil.make_archive(base_name=geotiff_dir, format='zip', root_dir=geotiff_dir)
-                                        _offer_browser_download(zip_path, max_mb=500)
-                                    except Exception as _zip_e:
-                                        st.warning(f"Could not create/download ZIP: {_zip_e}")
+                                        with open(manifest_path, "w") as mf:
+                                            mf.write("# GeoClimate Fetcher Export Manifest\n")
+                                            mf.write(f"Export generated: {datetime.now().isoformat()}\n")
+                                            mf.write(f"Total images: {len(successful_downloads)}\n\n")
+                                            for rel_path in successful_downloads:
+                                                mf.write(f"{rel_path}\n")
+                                        successful_downloads.append(os.path.relpath(manifest_path, geotiff_root))
+                                    except Exception as mf_err:
+                                        st.warning(f"Could not create manifest: {mf_err}")
+
+                                # Chunk into ZIPs if large collection
+                                if successful_downloads:
+                                    MAX_FILES_PER_ZIP = 200
+                                    zip_paths = []
+                                    for chunk_idx in range(0, len(successful_downloads), MAX_FILES_PER_ZIP):
+                                        chunk_files = successful_downloads[chunk_idx:chunk_idx + MAX_FILES_PER_ZIP]
+                                        part_num = (chunk_idx // MAX_FILES_PER_ZIP) + 1
+                                        zip_base = f"{geotiff_root}_part{part_num}"
+                                        zip_path = f"{zip_base}.zip"
+                                        import zipfile
+                                        st.info(f"📦 Packaging ZIP {part_num} containing {len(chunk_files)} files …")
+                                        try:
+                                            with zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
+                                                for rel_path in chunk_files:
+                                                    zf.write(os.path.join(geotiff_root, rel_path), arcname=rel_path)
+                                            zip_paths.append(zip_path)
+                                        except Exception as zerr:
+                                            st.warning(f"Failed to create ZIP {part_num}: {zerr}")
+
+                                    # Offer downloads for each ZIP
+                                    for zp in zip_paths:
+                                        _offer_browser_download(zp, max_mb=500)
+
+                                    st.success(f"✅ {len(successful_downloads)} images saved in organized folders under `{geotiff_root}`")
 
                                 if drive_exports > 0:
                                     st.info(f"📤 {drive_exports} images sent to Google Drive folder '{drive_folder}'")
