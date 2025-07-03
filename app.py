@@ -24,8 +24,8 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
     menu_items={
-        'Get Help': 'https://github.com/sauravbhattarai/geoclimate-platform',
-        'Report a bug': "https://github.com/sauravbhattarai/geoclimate-platform/issues",
+        'Get Help': 'https://github.com/sauravbhattarai19/geoclimate-platform',
+        'Report a bug': "https://github.com/sauravbhattarai19/geoclimate-platform/issues",
         'About': "# GeoClimate Intelligence Platform\nA comprehensive platform for Earth Engine climate data analysis and intelligence!"
     }
 )
@@ -421,11 +421,11 @@ if st.session_state.app_mode is None:
     st.markdown("""
     <div class="author-section">
         <h3>👨‍💻 About the Developer</h3>
-        <p><strong>Saurav Bhattarai</strong></p>
+        <h3><strong>Saurav Bhattarai</strong></h3>
         <p>Climate Data Scientist & Geospatial Developer</p>
         <p>Under Supervision of Dr. Rocky Talchabhadeli</p>
         <p>📧 Email: <a href="mailto:saurav.bhattarai.1999@gmail.com">saurav.bhattarai.1999@gmail.com</a></p>
-        <p>🔗 <a href="https://github.com/Saurav-JSU">GitHub</a> | 
+        <p>🔗 <a href="https://github.com/sauravbhattarai19">GitHub</a> | 
            <a href="https://www.linkedin.com/in/saurav-bhattarai-7133a3176/">LinkedIn</a></p>
         <br>
         <small>Built with ❤️ using Google Earth Engine, Streamlit, and Python</small>
