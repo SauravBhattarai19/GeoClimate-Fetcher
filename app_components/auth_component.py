@@ -39,10 +39,10 @@ class AuthComponent:
             st.warning(f"Could not save credentials: {str(e)}")
             return False
     
-    def authenticate_gee(self, project_id, service_account=None, key_file=None, auth_token=None):
+    def authenticate_gee(self, project_id, service_account=None, key_file=None, credentials_content=None):
         """Authenticate with Google Earth Engine"""
         try:
-            auth = authenticate(project_id, service_account, key_file, auth_token)
+            auth = authenticate(project_id, service_account, key_file, credentials_content)
             if auth.is_initialized():
                 return True, "Authentication successful!"
             else:
@@ -73,14 +73,14 @@ class AuthComponent:
         
         st.markdown("""
         To use this application, you need to authenticate with Google Earth Engine.
-        You'll need a Google Cloud project with Earth Engine enabled.
+        Choose the authentication method that works best for your deployment environment.
         """)
         
         # Authentication method selection
         auth_method = st.radio(
             "Choose Authentication Method:",
-            ["Token-based (Recommended for Web Apps)", "Service Account", "Default (Local Only)"],
-            help="Token-based authentication works best for deployed web applications"
+            ["Service Account (Recommended for Web Apps)", "Credentials File Upload", "Default (Local Only)"],
+            help="Service account authentication is the most reliable method for deployed web applications"
         )
         
         # Main authentication form
@@ -98,41 +98,11 @@ class AuthComponent:
             # Different inputs based on auth method
             service_account = None
             key_file = None
-            auth_token = None
+            credentials_content = None
             
-            if auth_method == "Token-based (Recommended for Web Apps)":
-                st.markdown("### 🔑 Authentication Token")
-                
-                with st.expander("📋 How to Generate Your Authentication Token", expanded=True):
-                    st.markdown("""
-                    **Step-by-step instructions:**
-                    
-                    1. 🌐 Go to [Google Earth Engine Code Editor](https://code.earthengine.google.com/)
-                    2. 🔐 Sign in with your Google account (the one with Earth Engine access)
-                    3. 💻 In the Code Editor, run this command in the console:
-                       ```javascript
-                       print('Authentication Token:', ee.data.getAuthToken());
-                       ```
-                    4. 📋 Copy the token that appears in the console
-                    5. 📝 Paste it in the field below
-                    
-                    **Alternative method:**
-                    - Click on your profile picture in the Earth Engine Code Editor
-                    - Go to "Cloud project" settings
-                    - Look for authentication options
-                    """)
-                
-                auth_token = st.text_area(
-                    "Authentication Token *",
-                    value=saved_credentials.get("auth_token", ""),
-                    help="Paste the token generated from Earth Engine Code Editor",
-                    placeholder="Paste your authentication token here...",
-                    height=100
-                )
-                
-            elif auth_method == "Service Account":
-                st.markdown("### 🔧 Service Account Details")
-                st.info("💡 Service account authentication is ideal for automated deployments")
+            if auth_method == "Service Account (Recommended for Web Apps)":
+                st.markdown("### 🔧 Service Account Authentication")
+                st.info("💡 Service account authentication is ideal for deployed web applications")
                 
                 service_account = st.text_input(
                     "Service Account Email *",
@@ -147,6 +117,43 @@ class AuthComponent:
                     help="Path to service account JSON key file",
                     placeholder="/path/to/key.json"
                 )
+                
+            elif auth_method == "Credentials File Upload":
+                st.markdown("### 📁 Upload Earth Engine Credentials")
+                
+                with st.expander("📋 How to Get Your Credentials File", expanded=True):
+                    st.markdown("""
+                    **For users who have already authenticated locally:**
+                    
+                    1. 🖥️ On your local machine, run in terminal:
+                       ```bash
+                       earthengine authenticate
+                       ```
+                    2. 🌐 This will open a browser for Google OAuth authentication
+                    3. ✅ After successful authentication, find your credentials file at:
+                       - **Windows**: `C:\\Users\\[USERNAME]\\.config\\earthengine\\credentials`
+                       - **Mac/Linux**: `~/.config/earthengine/credentials`
+                    4. 📤 Upload that file using the file uploader below
+                    
+                    **For new users:**
+                    1. 🏠 Install Earth Engine API locally: `pip install earthengine-api`
+                    2. 🔐 Run `earthengine authenticate` and follow the prompts
+                    3. 📄 Upload the generated credentials file below
+                    """)
+                
+                uploaded_file = st.file_uploader(
+                    "Upload Earth Engine Credentials File",
+                    type=['json', 'txt'],
+                    help="Upload the credentials file from ~/.config/earthengine/credentials"
+                )
+                
+                if uploaded_file is not None:
+                    try:
+                        credentials_content = uploaded_file.read().decode('utf-8')
+                        st.success("✅ Credentials file uploaded successfully!")
+                    except Exception as e:
+                        st.error(f"❌ Error reading credentials file: {str(e)}")
+                        credentials_content = None
                 
             else:  # Default method
                 st.markdown("### ⚠️ Default Authentication")
@@ -171,18 +178,18 @@ class AuthComponent:
                     st.error("❌ Project ID is required!")
                     return False
                 
-                if auth_method == "Token-based (Recommended for Web Apps)" and not auth_token:
-                    st.error("❌ Authentication token is required for token-based authentication!")
+                if auth_method == "Service Account (Recommended for Web Apps)" and (not service_account or not key_file):
+                    st.error("❌ Both service account email and key file path are required!")
                     return False
                 
-                if auth_method == "Service Account" and (not service_account or not key_file):
-                    st.error("❌ Both service account email and key file path are required!")
+                if auth_method == "Credentials File Upload" and not credentials_content:
+                    st.error("❌ Please upload a credentials file!")
                     return False
                 
                 # Attempt authentication
                 with st.spinner("🔄 Authenticating with Google Earth Engine..."):
                     success, message = self.authenticate_gee(
-                        project_id, service_account, key_file, auth_token
+                        project_id, service_account, key_file, credentials_content
                     )
                     
                     if success:
@@ -195,8 +202,7 @@ class AuthComponent:
                                 credentials["service_account"] = service_account
                             if key_file:
                                 credentials["key_file"] = key_file
-                            if auth_token:
-                                credentials["auth_token"] = auth_token
+                            # Note: We don't save credentials_content for security
                             
                             if self.save_credentials(credentials):
                                 st.info("💾 Credentials saved for future use")
@@ -220,15 +226,15 @@ class AuthComponent:
                             st.markdown("""
                             **Common authentication issues:**
                             
-                            **Token-based authentication:**
-                            - Make sure you copied the complete token
-                            - Token might be expired - generate a new one
-                            - Ensure your Google account has Earth Engine access
-                            
                             **Service account authentication:**
                             - Check that the service account email is correct
                             - Ensure the key file path exists and is accessible
                             - Verify the service account has Earth Engine permissions
+                            
+                            **Credentials file upload:**
+                            - Make sure you uploaded the correct credentials file
+                            - File should be from ~/.config/earthengine/credentials
+                            - Try re-authenticating locally first: `earthengine authenticate`
                             
                             **General issues:**
                             - Project not found: Make sure your project ID is correct
@@ -239,6 +245,7 @@ class AuthComponent:
                             - Visit: https://earthengine.google.com/
                             - Sign up for Earth Engine access
                             - Create a Google Cloud project
+                            - For web apps: Set up service account authentication
                             """)
         
         return False 

@@ -18,7 +18,7 @@ class GEEAuth:
         self._initialized = False
         
     def initialize(self, project_id: str, service_account: Optional[str] = None, 
-                  key_file: Optional[str] = None, auth_token: Optional[str] = None) -> bool:
+                  key_file: Optional[str] = None, credentials_content: Optional[str] = None) -> bool:
         """
         Initialize the Earth Engine API with the provided credentials.
         
@@ -26,7 +26,7 @@ class GEEAuth:
             project_id: The Google Cloud project ID
             service_account: Optional service account email
             key_file: Optional path to service account key file
-            auth_token: Optional authentication token for web apps
+            credentials_content: Optional credentials file content for web apps
             
         Returns:
             bool: True if authentication was successful, False otherwise
@@ -40,26 +40,31 @@ class GEEAuth:
                 else:
                     raise Exception(f"Service account key file not found: {key_file}")
             
-            # Method 2: Token-based authentication (for web apps)
-            elif auth_token:
-                # Create a temporary credentials file with the token
-                token_data = {
-                    "type": "authorized_user",
-                    "refresh_token": auth_token
-                }
-                
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as temp_file:
-                    json.dump(token_data, temp_file)
-                    temp_credentials_path = temp_file.name
-                
+            # Method 2: Credentials file content (for web apps with file upload)
+            elif credentials_content:
+                # Create a temporary credentials file with the content
                 try:
-                    # Try to authenticate with the token
-                    ee.Authenticate(authorization_code=auth_token)
-                    ee.Initialize(project=project_id)
-                finally:
-                    # Clean up temp file
-                    if os.path.exists(temp_credentials_path):
-                        os.unlink(temp_credentials_path)
+                    # Parse the credentials content to validate it
+                    creds_data = json.loads(credentials_content)
+                    
+                    # Create temporary file with credentials
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as temp_file:
+                        temp_file.write(credentials_content)
+                        temp_credentials_path = temp_file.name
+                    
+                    try:
+                        # Set the environment variable to point to our temp credentials
+                        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = temp_credentials_path
+                        ee.Initialize(project=project_id)
+                    finally:
+                        # Clean up temp file and environment variable
+                        if os.path.exists(temp_credentials_path):
+                            os.unlink(temp_credentials_path)
+                        if 'GOOGLE_APPLICATION_CREDENTIALS' in os.environ:
+                            del os.environ['GOOGLE_APPLICATION_CREDENTIALS']
+                            
+                except json.JSONDecodeError:
+                    raise Exception("Invalid credentials file format. Please upload a valid Earth Engine credentials file.")
             
             # Method 3: Try default authentication (works if user has authenticated locally)
             else:
@@ -69,9 +74,9 @@ class GEEAuth:
                     # If default auth fails, provide helpful error message
                     raise Exception(
                         "Authentication failed. For web applications, please either:\n"
-                        "1. Use service account authentication, or\n"
-                        "2. Generate an authentication token at: https://code.earthengine.google.com/\n"
-                        "   Then click 'Generate Token' and copy the provided code."
+                        "1. Use service account authentication with a JSON key file, or\n"
+                        "2. Upload your Earth Engine credentials file (from ~/.config/earthengine/credentials)\n"
+                        "3. For local development: run 'earthengine authenticate' first"
                     )
                 
             # Test the connection
@@ -122,7 +127,7 @@ class GEEAuth:
 
 
 def authenticate(project_id: str, service_account: Optional[str] = None, 
-                key_file: Optional[str] = None, auth_token: Optional[str] = None) -> GEEAuth:
+                key_file: Optional[str] = None, credentials_content: Optional[str] = None) -> GEEAuth:
     """
     Authenticate with Google Earth Engine.
     
@@ -130,18 +135,18 @@ def authenticate(project_id: str, service_account: Optional[str] = None,
         project_id: The Google Cloud project ID
         service_account: Optional service account email
         key_file: Optional path to service account key file
-        auth_token: Optional authentication token for web apps
+        credentials_content: Optional credentials file content for web apps
         
     Returns:
         GEEAuth: An instance of the GEEAuth class
     """
     auth = GEEAuth()
-    auth.initialize(project_id, service_account, key_file, auth_token)
+    auth.initialize(project_id, service_account, key_file, credentials_content)
     return auth
 
 
 def save_credentials(project_id: str, service_account: Optional[str] = None, 
-                   key_file: Optional[str] = None, auth_token: Optional[str] = None,
+                   key_file: Optional[str] = None, credentials_content: Optional[str] = None,
                    remember: bool = True) -> None:
     """
     Save credentials to a file for future use.
@@ -150,7 +155,7 @@ def save_credentials(project_id: str, service_account: Optional[str] = None,
         project_id: The Google Cloud project ID
         service_account: Optional service account email
         key_file: Optional path to service account key file
-        auth_token: Optional authentication token
+        credentials_content: Optional credentials content (not saved for security)
         remember: Whether to save credentials or remove existing ones
     """
     if not remember:
@@ -165,14 +170,13 @@ def save_credentials(project_id: str, service_account: Optional[str] = None,
     # Create directory if it doesn't exist
     os.makedirs(os.path.dirname(CREDENTIALS_FILE), exist_ok=True)
     
-    # Store credentials
+    # Store credentials (excluding sensitive content)
     credentials = {"project_id": project_id}
     if service_account:
         credentials["service_account"] = service_account
     if key_file:
         credentials["key_file"] = key_file
-    if auth_token:
-        credentials["auth_token"] = auth_token
+    # Note: We don't save credentials_content for security reasons
         
     # Write to file
     try:
@@ -187,13 +191,13 @@ def load_credentials() -> Dict[str, str]:
     Load saved credentials from file.
     
     Returns:
-        Dict containing project_id, service_account, key_file, and auth_token
+        Dict containing project_id, service_account, key_file, and credentials_content
     """
     credentials = {
         "project_id": None,
         "service_account": None,
         "key_file": None,
-        "auth_token": None
+        "credentials_content": None
     }
     
     if os.path.exists(CREDENTIALS_FILE):
