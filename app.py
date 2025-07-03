@@ -1392,68 +1392,46 @@ elif st.session_state.app_mode == "data_explorer":
             with config_col2:
                 st.write("#### Output Location & Naming")
                 
-                # Output directory selection - FIXED for all formats including NetCDF
-                use_browser = st.checkbox("Use folder browser", value=True, help="Select output folder using a dialog")
+                # Output directory selection
+                st.write("Choose where to save your files:")
                 
-                if use_browser:
-                    # Initialize session state for output directory
-                    if 'output_dir' not in st.session_state:
-                        st.session_state.output_dir = os.path.abspath("data/downloads")
-                    
-                    col_browse, col_reset = st.columns([3, 1])
-                    with col_browse:
-                        if st.button("📁 Browse for Output Folder", use_container_width=True):
-                            try:
-                                import tkinter as tk
-                                from tkinter import filedialog
-                                
-                                # Create and hide the Tkinter root window
-                                root = tk.Tk()
-                                root.withdraw()
-                                root.attributes('-topmost', True)
-                                
-                                # Show the folder dialog
-                                folder_path = filedialog.askdirectory(
-                                    title="Select Output Directory",
-                                    initialdir=st.session_state.output_dir
-                                )
-                                
-                                # Update the session state if a folder was selected
-                                if folder_path:
-                                    st.session_state.output_dir = os.path.abspath(folder_path)
-                                    st.rerun()
-                            except Exception as e:
-                                st.error(f"Error opening folder dialog: {str(e)}")
-                                st.info("Please use manual input instead.")
-                    
-                    with col_reset:
-                        if st.button("🔄", help="Reset to default folder"):
-                            st.session_state.output_dir = os.path.abspath("data/downloads")
-                            st.rerun()
-                    
-                    # Display current directory
-                    output_dir = st.session_state.output_dir
-                    st.success(f"📂 **Selected:** `{output_dir}`")
-                    
-                    # Verify directory exists or can be created
-                    try:
-                        os.makedirs(output_dir, exist_ok=True)
-                        st.info("✅ Directory is accessible")
-                    except Exception as e:
-                        st.error(f"❌ Cannot access directory: {str(e)}")
-                        st.info("Please select a different directory or use manual input.")
+                # Default paths options
+                default_paths = {
+                    "Downloads folder": "~/Downloads/geoclimate_data",
+                    "Documents folder": "~/Documents/geoclimate_data",
+                    "Custom location": "custom"
+                }
+                
+                selected_path = st.radio("Select download location:", list(default_paths.keys()))
+                
+                if selected_path == "Custom location":
+                    output_dir = st.text_input(
+                        "Enter custom download path:",
+                        value=os.path.expanduser("~/geoclimate_data"),
+                        help="Enter a full path where you want to save the files"
+                    )
                 else:
-                    # Manual input
-                    default_dir = os.path.abspath("data/downloads")
-                    output_dir = st.text_input("Output directory:", value=default_dir)
-                    output_dir = os.path.abspath(output_dir)  # Convert to absolute path
+                    output_dir = os.path.expanduser(default_paths[selected_path])
+                
+                # Ensure the directory exists and is accessible
+                try:
+                    # Expand user path (converts ~ to actual home directory)
+                    output_dir = os.path.expanduser(output_dir)
+                    # Create directory if it doesn't exist
+                    os.makedirs(output_dir, exist_ok=True)
+                    st.success(f"📂 Files will be saved to: `{output_dir}`")
                     
-                    # Verify directory
-                    try:
-                        os.makedirs(output_dir, exist_ok=True)
-                        st.success("✅ Directory is accessible")
-                    except Exception as e:
-                        st.error(f"❌ Cannot access directory: {str(e)}")
+                    # Show some helpful information about the location
+                    st.info("""
+                    💡 **Note:**
+                    - Make sure you have write permissions for this location
+                    - The folder will be created if it doesn't exist
+                    - Use a location that's easily accessible on your computer
+                    """)
+                except Exception as e:
+                    st.error(f"❌ Cannot access or create directory: {str(e)}")
+                    st.warning("Please choose a different location where you have write permissions.")
+                    output_dir = None
                 
                 # Filename configuration
                 st.write("**Filename Options:**")
