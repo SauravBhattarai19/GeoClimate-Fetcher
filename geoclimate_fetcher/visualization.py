@@ -198,7 +198,7 @@ class DataVisualizer:
             
             # Update axes with actual coordinates
             if 'lon' in data_slice.coords and 'lat' in data_slice.coords:
-                fig.update_xaxis(
+                fig.update_xaxes(
                     tickmode='array',
                     tickvals=np.linspace(0, len(data_slice.lon) - 1, 5),
                     ticktext=[f"{v:.1f}" for v in np.linspace(
@@ -207,7 +207,7 @@ class DataVisualizer:
                         5
                     )]
                 )
-                fig.update_yaxis(
+                fig.update_yaxes(
                     tickmode='array',
                     tickvals=np.linspace(0, len(data_slice.lat) - 1, 5),
                     ticktext=[f"{v:.1f}" for v in np.linspace(
@@ -362,6 +362,9 @@ class DataVisualizer:
     def visualize_geotiff(self, file_path):
         """Visualize GeoTIFF file"""
         try:
+            # Show helpful info about visualization improvements
+            st.info("🎨 **Visualization Enhanced**: Fixed compatibility issues and improved coordinate display")
+            
             with rasterio.open(file_path) as src:
                 # Display metadata
                 st.write("### 📊 GeoTIFF Information")
@@ -419,17 +422,26 @@ class DataVisualizer:
     def _plot_raster(self, band_data, src, band_idx):
         """Plot raster data"""
         try:
-            # Determine colorscale based on data range
-            vmin, vmax = np.nanmin(band_data), np.nanmax(band_data)
-            
-            # Handle nodata values
+            # Handle nodata values first
             if src.nodata is not None:
                 band_data = np.ma.masked_equal(band_data, src.nodata)
+            
+            # Handle potential data type issues
+            if band_data.dtype == 'uint8':
+                band_data = band_data.astype(np.float32)
+            
+            # Determine colorscale based on data range
+            valid_data = band_data[~np.isnan(band_data) if isinstance(band_data, np.ma.MaskedArray) else ~np.isnan(band_data)]
+            if len(valid_data) == 0:
+                st.error("No valid data found in this band.")
+                return
+                
+            vmin, vmax = np.nanmin(valid_data), np.nanmax(valid_data)
             
             # Create the plot
             fig = px.imshow(
                 band_data,
-                title=f"Band {band_idx} Visualization",
+                title=f"Band {band_idx} Visualization (Range: {vmin:.2f} to {vmax:.2f})",
                 color_continuous_scale='viridis',
                 aspect='equal'
             )
@@ -438,23 +450,36 @@ class DataVisualizer:
             transform = src.transform
             height, width = band_data.shape
             
-            # Calculate extent
-            left = transform[2]
-            top = transform[5]
-            right = left + width * transform[0]
-            bottom = top + height * transform[4]
-            
-            fig.update_xaxis(
-                tickmode='array',
-                tickvals=np.linspace(0, width - 1, 5),
-                ticktext=[f"{v:.2f}" for v in np.linspace(left, right, 5)]
-            )
-            
-            fig.update_yaxis(
-                tickmode='array',
-                tickvals=np.linspace(0, height - 1, 5),
-                ticktext=[f"{v:.2f}" for v in np.linspace(top, bottom, 5)]
-            )
+            # Calculate extent more robustly
+            try:
+                left = transform[2]
+                top = transform[5]
+                right = left + width * transform[0]
+                bottom = top + height * transform[4]
+                
+                # Only update axes if we have valid coordinates
+                if not (np.isnan(left) or np.isnan(top) or np.isnan(right) or np.isnan(bottom)):
+                    fig.update_xaxes(
+                        tickmode='array',
+                        tickvals=np.linspace(0, width - 1, 5),
+                        ticktext=[f"{v:.4f}" for v in np.linspace(left, right, 5)],
+                        title="Longitude"
+                    )
+                    
+                    fig.update_yaxes(
+                        tickmode='array',
+                        tickvals=np.linspace(0, height - 1, 5),
+                        ticktext=[f"{v:.4f}" for v in np.linspace(top, bottom, 5)],
+                        title="Latitude"
+                    )
+                else:
+                    # Fallback to pixel coordinates
+                    fig.update_xaxes(title="Pixel X")
+                    fig.update_yaxes(title="Pixel Y")
+            except Exception as coord_error:
+                st.warning(f"Could not set geographic coordinates: {str(coord_error)}")
+                fig.update_xaxes(title="Pixel X")
+                fig.update_yaxes(title="Pixel Y")
             
             fig.update_layout(height=600)
             st.plotly_chart(fig, use_container_width=True)
@@ -472,12 +497,31 @@ class DataVisualizer:
                 
         except Exception as e:
             st.error(f"Error plotting raster: {str(e)}")
+            
+            # Provide helpful troubleshooting info
+            with st.expander("🔍 Troubleshooting Information"):
+                st.write("**Common solutions:**")
+                st.write("• Check if the GeoTIFF file is valid and not corrupted")
+                st.write("• Ensure the file has proper coordinate reference system")
+                st.write("• Try a different band if multiple bands are available")
+                st.write("• Verify the file has valid data (not all nodata values)")
+                
+                st.write("**Technical Details:**")
+                st.code(f"Error: {str(e)}", language="text")
     
     def _show_raster_statistics(self, band_data, band_idx):
         """Show statistics for raster band"""
         try:
-            # Remove nodata values
-            valid_data = band_data[~np.isnan(band_data)]
+            # Remove nodata values more robustly
+            if isinstance(band_data, np.ma.MaskedArray):
+                valid_data = band_data.compressed()  # Get unmasked data
+            else:
+                valid_data = band_data[~np.isnan(band_data)]
+            
+            # Ensure we have valid data
+            if len(valid_data) == 0:
+                st.warning(f"No valid data found in Band {band_idx}")
+                return
             
             st.write(f"#### Band {band_idx} Statistics")
             

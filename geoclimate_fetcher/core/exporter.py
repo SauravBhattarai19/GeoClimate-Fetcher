@@ -331,6 +331,28 @@ class GEEExporter:
             
         return description
 
+    def _harmonize_band_types(self, image: ee.Image) -> ee.Image:
+        """
+        Convert all bands in an image to compatible data types to prevent export errors.
+        
+        Args:
+            image: Earth Engine Image with potentially mixed data types
+            
+        Returns:
+            Image with all bands converted to Float32
+        """
+        try:
+            # Simple approach: convert entire image to float32
+            # This handles mixed data types (Int16, Byte, etc.) by converting all to Float32
+            harmonized_image = image.toFloat()
+            
+            print(f"📊 Converted image bands to Float32 to ensure compatibility")
+            return harmonized_image
+            
+        except Exception as e:
+            print(f"Warning: Could not harmonize band types ({str(e)}). Using original image.")
+            return image
+
     def export_image_to_drive(self, image: ee.Image, filename: str, 
                             folder: str, region: ee.Geometry, 
                             scale: float = 30.0, crs: str = 'EPSG:4326',
@@ -357,9 +379,17 @@ class GEEExporter:
         # Sanitize the filename for EE description
         safe_description = self._sanitize_description(filename)
         
+        # Harmonize band data types to prevent export errors
+        try:
+            harmonized_image = self._harmonize_band_types(image)
+            print("✅ Harmonized band data types for export")
+        except Exception as e:
+            print(f"⚠️ Warning: Could not harmonize band types: {str(e)}")
+            harmonized_image = image
+        
         # Start the export task
         task = ee.batch.Export.image.toDrive(
-            image=image,
+            image=harmonized_image,
             description=safe_description,
             folder=folder,
             fileNamePrefix=filename,
@@ -442,12 +472,20 @@ class GEEExporter:
         # Ensure directory exists
         output_path.parent.mkdir(parents=True, exist_ok=True)
         
+        # Harmonize band data types to prevent export errors
+        try:
+            harmonized_image = self._harmonize_band_types(image)
+            print("✅ Harmonized band data types for export")
+        except Exception as e:
+            print(f"⚠️ Warning: Could not harmonize band types: {str(e)}")
+            harmonized_image = image
+        
         try:
             # Use geemap's export function which is more reliable
             print(f"Exporting image using geemap to {output_path}...")
             
             # First ensure image is clipped to the region
-            clipped_image = image.clip(region)
+            clipped_image = harmonized_image.clip(region)
             
             # Use geemap to export
             geemap.ee_export_image(
@@ -477,9 +515,9 @@ class GEEExporter:
                         "Use export_to_drive instead."
                     )
                     
-                # Get image as numpy arrays
+                # Get image as numpy arrays using harmonized image
                 arrays = {}
-                band_names = image.bandNames().getInfo()
+                band_names = harmonized_image.bandNames().getInfo()
                 
                 if not band_names:
                     raise ValueError("No bands found in the image. Please check your band selection.")
@@ -494,12 +532,12 @@ class GEEExporter:
                 
                 rect_region = ee.Geometry.Rectangle([xmin, ymin, xmax, ymax])
                 
-                # Download bands
+                # Download bands using harmonized image
                 with tqdm(total=len(band_names), desc="Downloading bands") as pbar:
                     for band in band_names:
                         try:
                             # Get the data - but don't pass scale parameter to sampleRectangle
-                            pixels = image.select(band).sampleRectangle(
+                            pixels = harmonized_image.select(band).sampleRectangle(
                                 region=rect_region,
                                 properties=None,
                                 defaultValue=0

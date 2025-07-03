@@ -518,9 +518,9 @@ elif st.session_state.app_mode == "data_explorer":
         st.markdown('</div>', unsafe_allow_html=True)
 
     # Authentication step
-    def authenticate_gee(project_id, service_account=None, key_file=None):
+    def authenticate_gee(project_id, service_account=None, key_file=None, auth_token=None):
         try:
-            auth = authenticate(project_id, service_account, key_file)
+            auth = authenticate(project_id, service_account, key_file, auth_token)
             if auth.is_initialized():
                 st.session_state.auth_complete = True
                 return True, "Authentication successful!"
@@ -533,132 +533,12 @@ elif st.session_state.app_mode == "data_explorer":
     if not st.session_state.auth_complete:
         st.markdown('<div class="step-header"><h2>🔐 Step 1: Google Earth Engine Authentication</h2></div>', unsafe_allow_html=True)
         
-        # Authentication status and info
-        col_info, col_status = st.columns([3, 1])
+        # Use the updated AuthComponent
+        from app_components.auth_component import AuthComponent
         
-        with col_info:
-            st.info("🔑 **Required:** You need a Google Earth Engine account to use this app. "
-                    "[Sign up here](https://earthengine.google.com/signup/) if you don't have one.")
-        
-        with col_status:
-            if 'auth_attempts' not in st.session_state:
-                st.session_state.auth_attempts = 0
-            
-            if st.session_state.auth_attempts > 0:
-                st.warning(f"⚠️ {st.session_state.auth_attempts} failed attempts")
-        
-        # Load credentials from file if available
-        credentials_file = os.path.expanduser("~/.geoclimate-fetcher/credentials.json")
-        saved_project_id = ""
-        saved_service_account = ""
-        saved_key_file = ""
-        
-        if os.path.exists(credentials_file):
-            try:
-                with open(credentials_file, 'r') as f:
-                    saved_credentials = json.load(f)
-                    saved_project_id = saved_credentials.get("project_id", "")
-                    saved_service_account = saved_credentials.get("service_account", "")
-                    saved_key_file = saved_credentials.get("key_file", "")
-                st.success("💾 Found saved credentials!")
-            except Exception:
-                pass
-        
-        # Create authentication form
-        with st.form("auth_form"):
-            st.write("#### Authentication Details")
-            
-            # Project ID input
-            project_id = st.text_input(
-                "🏗️ Google Earth Engine Project ID *", 
-                value=saved_project_id,
-                help="Enter your Google Cloud project ID that has Earth Engine enabled",
-                placeholder="my-gee-project-123"
-            )
-            
-            # Advanced options expander
-            with st.expander("🔧 Advanced Authentication Options"):
-                service_account = st.text_input(
-                    "📧 Service Account Email (optional)", 
-                    value=saved_service_account,
-                    help="For service account authentication",
-                    placeholder="service-account@my-project.iam.gserviceaccount.com"
-                )
-                key_file = st.text_input(
-                    "🔑 Key File Path (optional)", 
-                    value=saved_key_file,
-                    help="Path to service account JSON key file",
-                    placeholder="/path/to/service-account-key.json"
-                )
-                remember = st.checkbox("💾 Remember credentials", value=True)
-                st.caption("Credentials will be saved locally for future use")
-            
-            # Submit button
-            col_auth, col_help = st.columns([2, 1])
-            
-            with col_auth:
-                auth_submitted = st.form_submit_button("🚀 Authenticate", type="primary", use_container_width=True)
-            
-            with col_help:
-                if st.form_submit_button("❓ Need Help?", use_container_width=True):
-                    st.info("""
-                    **Common Issues:**
-                    - Make sure your project has Earth Engine enabled
-                    - Check that you have the correct project ID
-                    - Ensure you're signed into the right Google account
-                    
-                    **Getting Started:**
-                    1. Go to [Google Earth Engine](https://earthengine.google.com/)
-                    2. Sign up with your Google account
-                    3. Create a new project or use existing one
-                    4. Copy the project ID and paste it above
-                    """)
-        
-        # Handle authentication
-        if auth_submitted:
-            if not project_id:
-                st.error("❌ Project ID is required")
-                st.session_state.auth_attempts += 1
-            else:
-                with st.spinner("🔄 Authenticating with Google Earth Engine..."):
-                    success, message = authenticate_gee(project_id, service_account, key_file)
-                    
-                    if success:
-                        st.success(f"✅ {message}")
-                        st.session_state.auth_attempts = 0  # Reset attempts on success
-                        
-                        # Save credentials if remember is checked
-                        if remember:
-                            try:
-                                os.makedirs(os.path.dirname(credentials_file), exist_ok=True)
-                                credentials = {"project_id": project_id}
-                                if service_account:
-                                    credentials["service_account"] = service_account
-                                if key_file:
-                                    credentials["key_file"] = key_file
-                                
-                                with open(credentials_file, 'w') as f:
-                                    json.dump(credentials, f, indent=2)
-                                st.info("💾 Credentials saved successfully!")
-                            except Exception as e:
-                                st.warning(f"⚠️ Could not save credentials: {str(e)}")
-                        
-                        time.sleep(1)  # Brief pause to show success message
-                        st.rerun()
-                    else:
-                        st.error(f"❌ {message}")
-                        st.session_state.auth_attempts += 1
-                        
-                        # Provide helpful suggestions
-                        if st.session_state.auth_attempts >= 3:
-                            st.warning("🔍 **Multiple failed attempts detected**")
-                            st.info("""
-                            **Try these solutions:**
-                            - Verify your project ID is correct
-                            - Check if Earth Engine is enabled for your project
-                            - Make sure you're using the right Google account
-                            - Try using a service account for automated access
-                            """)
+        auth_component = AuthComponent()
+        if auth_component.render():
+            st.rerun()
 
     else:
         # Step 2: Area of Interest Selection
@@ -692,8 +572,8 @@ elif st.session_state.app_mode == "data_explorer":
                 )
                 draw.add_to(m)
                 
-                # Display the map
-                folium_static(m, width=800, height=500)
+                # Display the map using st_folium instead of folium_static
+                st_folium(m, width=800, height=500, returned_objects=[])
                 
                 # Store the drawn features in session state
                 if st.button("Confirm Drawn Area"):
@@ -773,9 +653,9 @@ elif st.session_state.app_mode == "data_explorer":
                 # Fit the map to the bounding box
                 preview_map.fit_bounds(bbox)
                 
-                # Display the preview map
+                # Display the preview map using st_folium instead of folium_static
                 st.write("Preview of selected area:")
-                folium_static(preview_map, width=800, height=500)
+                st_folium(preview_map, width=800, height=500, returned_objects=[])
                 
                 if st.button("Confirm Coordinates"):
                     try:
@@ -1722,6 +1602,27 @@ elif st.session_state.app_mode == "data_explorer":
                             ys = [p[1] for p in bounds]
                             processing_geometry = ee.Geometry.Rectangle([min(xs), min(ys), max(xs), max(ys)])
                         
+                        # Estimate request size to prevent Google Earth Engine size limit errors
+                        def estimate_request_size(geometry, scale, num_bands=1, num_images=1):
+                            """Estimate the size of an Earth Engine request in bytes"""
+                            try:
+                                # Get geometry area in square meters
+                                area_sqm = geometry.area().getInfo()
+                                
+                                # Calculate number of pixels
+                                pixels_per_band = area_sqm / (scale * scale)
+                                
+                                # Estimate bytes per pixel (typically 4 bytes for float32)
+                                bytes_per_pixel = 4
+                                
+                                # Total size estimate
+                                total_size = pixels_per_band * num_bands * num_images * bytes_per_pixel
+                                
+                                return total_size
+                            except:
+                                # Return conservative estimate if calculation fails
+                                return 100 * 1024 * 1024  # 100MB
+                        
                         # Process based on dataset type
                         if snippet_type == 'ImageCollection':
                             # Get date range
@@ -1785,6 +1686,25 @@ elif st.session_state.app_mode == "data_explorer":
                                     st.error("❌ No images found in collection.")
                                     return
                                 
+                                # Estimate total request size for collection
+                                estimated_size_per_image = estimate_request_size(
+                                    processing_geometry, scale, len(selected_bands), 1
+                                )
+                                total_estimated_size = estimated_size_per_image * collection_size
+                                max_ee_size = 50 * 1024 * 1024  # 50MB limit
+                                
+                                if estimated_size_per_image > max_ee_size:
+                                    st.error(f"❌ Estimated size per image ({estimated_size_per_image/1024/1024:.1f} MB) exceeds Earth Engine limit (50 MB)")
+                                    st.info("💡 **Solutions:**")
+                                    st.info("• Increase the scale parameter (lower resolution)")
+                                    st.info("• Reduce the area of interest")
+                                    st.info("• Select fewer bands")
+                                    st.info("• Use CSV format for time series data")
+                                    return
+                                elif total_estimated_size > max_ee_size * 5:  # Warning if total is very large
+                                    st.warning(f"⚠️ Large download estimated ({total_estimated_size/1024/1024:.1f} MB total)")
+                                    st.info("💡 Consider using Google Drive backup for large downloads")
+                                
                                 # Create subdirectory for GeoTIFFs
                                 geotiff_dir = os.path.join(output_dir, f"{filename}_geotiffs")
                                 os.makedirs(geotiff_dir, exist_ok=True)
@@ -1813,6 +1733,7 @@ elif st.session_state.app_mode == "data_explorer":
                                         image_output_path = os.path.join(geotiff_dir, f"{date_str}.tif")
                                         
                                         try:
+                                            # Note: Data type harmonization is handled automatically in the exporter
                                             result_path = exporter.export_image_to_local(
                                                 image=image, output_path=image_output_path,
                                                 region=processing_geometry, scale=scale
@@ -1823,14 +1744,32 @@ elif st.session_state.app_mode == "data_explorer":
                                             else:
                                                 raise ValueError("Local export failed")
                                                 
-                                        except Exception:
-                                            if use_drive_for_large:
-                                                task_id = exporter.export_image_to_drive(
-                                                    image=image, filename=f"{filename}_{date_str}",
-                                                    folder=drive_folder, region=processing_geometry,
-                                                    scale=scale, wait=False
-                                                )
-                                                drive_exports += 1
+                                        except Exception as export_error:
+                                            error_str = str(export_error)
+                                            if "Total request size" in error_str and "bytes" in error_str:
+                                                st.warning(f"⚠️ Image {i+1} too large for direct download")
+                                                if use_drive_for_large:
+                                                    try:
+                                                        # Note: Data type harmonization handled in exporter
+                                                        task_id = exporter.export_image_to_drive(
+                                                            image=image, filename=f"{filename}_{date_str}",
+                                                            folder=drive_folder, region=processing_geometry,
+                                                            scale=scale, wait=False
+                                                        )
+                                                        drive_exports += 1
+                                                    except Exception as drive_error:
+                                                        st.warning(f"⚠️ Drive export also failed for image {i+1}: {str(drive_error)}")
+                                                else:
+                                                    st.warning(f"⚠️ Skipping image {i+1}: {error_str}")
+                                            else:
+                                                if use_drive_for_large:
+                                                    # Note: Data type harmonization handled in exporter
+                                                    task_id = exporter.export_image_to_drive(
+                                                        image=image, filename=f"{filename}_{date_str}",
+                                                        folder=drive_folder, region=processing_geometry,
+                                                        scale=scale, wait=False
+                                                    )
+                                                    drive_exports += 1
                                             
                                     except Exception as e:
                                         st.warning(f"⚠️ Failed to process image {i+1}: {str(e)}")
@@ -1894,6 +1833,39 @@ elif st.session_state.app_mode == "data_explorer":
                                     
                             else:  # GeoTIFF
                                 st.info("🖼️ Exporting GeoTIFF...")
+                                
+                                # Check estimated size before export
+                                estimated_size = estimate_request_size(
+                                    processing_geometry, scale, len(selected_bands), 1
+                                )
+                                max_ee_size = 50 * 1024 * 1024  # 50MB limit
+                                
+                                if estimated_size > max_ee_size:
+                                    st.error(f"❌ Estimated size ({estimated_size/1024/1024:.1f} MB) exceeds Earth Engine limit (50 MB)")
+                                    st.info("💡 **Solutions:**")
+                                    st.info("• Increase the scale parameter (lower resolution)")
+                                    st.info("• Reduce the area of interest")
+                                    st.info("• Select fewer bands")
+                                    st.info("• Use CSV format for statistics")
+                                    if use_drive_for_large:
+                                        st.info("🚀 Trying Google Drive export instead...")
+                                        st.info("📊 **Data Type Harmonization**: Converting all bands to Float32 to ensure compatibility")
+                                        try:
+                                            task_id = exporter.export_image_to_drive(
+                                                image=image, filename=filename, folder=drive_folder,
+                                                region=processing_geometry, scale=scale, wait=False
+                                            )
+                                            st.success(f"✅ Export started to Google Drive (Task ID: {task_id})")
+                                            st.info("🔗 Check status: https://code.earthengine.google.com/tasks")
+                                        except Exception as drive_e:
+                                            st.error(f"❌ Google Drive export also failed: {str(drive_e)}")
+                                    return
+                                elif estimated_size > max_ee_size * 0.8:  # Warning if approaching limit
+                                    st.warning(f"⚠️ Large download ({estimated_size/1024/1024:.1f} MB). May be slow.")
+                                
+                                # Add informational message about data type handling
+                                st.info("📊 **Data Type Harmonization**: Converting all bands to Float32 to ensure compatibility")
+                                
                                 try:
                                     result_path = exporter.export_image_to_local(
                                         image=image, output_path=output_path,
@@ -1905,17 +1877,30 @@ elif st.session_state.app_mode == "data_explorer":
                                     else:
                                         raise ValueError("Local export failed")
                                         
-                                except Exception:
-                                    if use_drive_for_large:
+                                except Exception as export_error:
+                                    error_str = str(export_error)
+                                    if "Total request size" in error_str and "bytes" in error_str:
+                                        st.error(f"❌ Export failed: Request too large ({error_str})")
+                                        st.info("💡 **Try these solutions:**")
+                                        st.info("• Increase scale parameter (reduce resolution)")
+                                        st.info("• Reduce area of interest size")
+                                        st.info("• Select fewer bands")
+                                        st.info("• Enable Google Drive for large files")
+                                    elif use_drive_for_large:
                                         st.warning("📤 Local export failed, trying Google Drive...")
-                                        task_id = exporter.export_image_to_drive(
-                                            image=image, filename=filename, folder=drive_folder,
-                                            region=processing_geometry, scale=scale, wait=False
-                                        )
-                                        st.success(f"✅ Export started to Google Drive (Task ID: {task_id})")
-                                        st.info("🔗 Check status: https://code.earthengine.google.com/tasks")
+                                        st.info("📊 **Data Type Harmonization**: Converting all bands to Float32 to ensure compatibility")
+                                        try:
+                                            task_id = exporter.export_image_to_drive(
+                                                image=image, filename=filename, folder=drive_folder,
+                                                region=processing_geometry, scale=scale, wait=False
+                                            )
+                                            st.success(f"✅ Export started to Google Drive (Task ID: {task_id})")
+                                            st.info("🔗 Check status: https://code.earthengine.google.com/tasks")
+                                        except Exception as drive_error:
+                                            st.error(f"❌ Both local and Drive export failed: {str(drive_error)}")
                                     else:
-                                        st.error("❌ Export failed. Try enabling Google Drive backup.")
+                                        st.error(f"❌ Export failed: {error_str}")
+                                        st.info("💡 Try enabling Google Drive backup or reducing data size.")
                         
                         # Final success message
                         st.balloons()
@@ -2042,9 +2027,18 @@ elif st.session_state.app_mode == "climate_analytics":
     st.markdown('<h1 class="main-title">🧠 Climate Intelligence Hub</h1>', unsafe_allow_html=True)
     st.markdown("### Calculate climate indices and analyze extreme events")
     
-    # Initialize Earth Engine if not already done
-    if not ee.data._initialized:
-        ee.Initialize()
+    # Check if authenticated, if not, redirect to authentication
+    if not st.session_state.get('auth_complete', False):
+        st.markdown('<div class="step-header"><h2>🔐 Step 1: Google Earth Engine Authentication</h2></div>', unsafe_allow_html=True)
+        
+        # Use the updated AuthComponent
+        from app_components.auth_component import AuthComponent
+        
+        auth_component = AuthComponent()
+        if auth_component.render():
+            st.rerun()
+        else:
+            st.stop()
       # Create tabs for different analysis types
     tab1, tab2, tab3 = st.tabs(["🌡️ Temperature Indices", "💧 Precipitation Indices", "📊 Analysis & Visualization"])
     
