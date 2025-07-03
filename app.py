@@ -3,7 +3,7 @@ import ee
 import geemap.foliumap as geemap
 import folium
 from folium.plugins import Draw
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import json
 from pathlib import Path
@@ -16,6 +16,44 @@ import plotly.express as px
 import numpy as np
 import xarray as xr
 from geoclimate_fetcher.climate_indices import ClimateIndicesCalculator
+import hashlib
+import extra_streamlit_components as stx
+
+# Create cookie manager
+cookie_manager = stx.CookieManager()
+
+# Function to create a secure token
+def create_auth_token(project_id, timestamp):
+    """Create a secure authentication token"""
+    secret = "geoclimate-fetcher-secret-key"  # Change this in production
+    token_string = f"{project_id}:{timestamp}:{secret}"
+    return hashlib.sha256(token_string.encode()).hexdigest()
+
+# Function to validate auth token
+def validate_auth_token(token, project_id):
+    """Validate if the auth token is valid and not expired"""
+    # Token expires after 30 days
+    expiry_days = 30
+    current_time = time.time()
+    
+    # Try to validate the token for the last 30 days
+    for days_ago in range(expiry_days):
+        timestamp = current_time - (days_ago * 86400)
+        expected_token = create_auth_token(project_id, int(timestamp // 86400))
+        if token == expected_token:
+            return True
+    return False
+
+# Function to check and load stored credentials
+def check_stored_auth():
+    """Check if user has valid stored authentication"""
+    auth_cookie = cookie_manager.get(cookie="gee_auth_token")
+    project_cookie = cookie_manager.get(cookie="gee_project_id")
+    
+    if auth_cookie and project_cookie:
+        if validate_auth_token(auth_cookie, project_cookie):
+            return project_cookie
+    return None
 
 # Configure Streamlit page
 st.set_page_config(
