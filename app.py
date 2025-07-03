@@ -1919,20 +1919,40 @@ elif st.session_state.app_mode == "data_explorer":
                         # After successful download
                         if os.path.exists(output_path):
                             file_size = os.path.getsize(output_path)
+                            
+                            # Read the file for download
+                            with open(output_path, 'rb') as file:
+                                file_bytes = file.read()
+                            
+                            # Create a download button for the user
+                            st.download_button(
+                                label="📥 Download File to Your Computer",
+                                data=file_bytes,
+                                file_name=final_filename,
+                                mime="application/octet-stream",
+                                help="Click to download the file to your computer"
+                            )
+                            
                             st.success(f"""
-                            ✅ Download completed successfully!
-                            📂 File saved to: {output_path}
+                            ✅ File processed successfully!
                             📊 File size: {file_size/1024/1024:.2f} MB
                             
-                            If you can't find the file:
-                            1. Check the exact path above
-                            2. Refresh your file explorer
-                            3. Make sure you have access to the location
+                            ⚠️ Important: Click the download button above to save the file to your computer.
+                            The file will be saved to your browser's default download location.
                             """)
+                            
+                            # Keep the visualization capability
+                            if file_format.lower() == 'geotiff':
+                                st.info("🎨 You can preview the file below before downloading:")
+                                try:
+                                    from geoclimate_fetcher.visualization import DataVisualizer
+                                    visualizer = DataVisualizer()
+                                    visualizer.visualize_geotiff(output_path)
+                                except Exception as viz_error:
+                                    st.error(f"Error visualizing file: {str(viz_error)}")
                         else:
-                            st.error(f"❌ File not found at {output_path}")
-                            st.info("Please try a different download location or check permissions.")
-                        
+                            st.error(f"❌ Error processing file")
+                            st.info("Please try again or choose a different configuration.")
                 except Exception as e:
                     st.error(f"❌ Download failed: {str(e)}")
                     with st.expander("🐛 Error Details", expanded=False):
