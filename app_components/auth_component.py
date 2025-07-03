@@ -133,18 +133,23 @@ class AuthComponent:
                     3. ✅ After successful authentication, find your credentials file at:
                        - **Windows**: `C:\\Users\\[USERNAME]\\.config\\earthengine\\credentials`
                        - **Mac/Linux**: `~/.config/earthengine/credentials`
-                    4. 📤 Upload that file using the file uploader below
+                    4. 📤 Upload that **exact file** (it's named `credentials` with **no file extension**)
+                    
+                    **Important Notes:**
+                    - The file is named just `credentials` (no .json or .txt extension)
+                    - It contains JSON content like: `{"redirect_uri": "...", "refresh_token": "...", "scopes": [...]}`
+                    - Don't rename the file - upload it as-is
                     
                     **For new users:**
                     1. 🏠 Install Earth Engine API locally: `pip install earthengine-api`
                     2. 🔐 Run `earthengine authenticate` and follow the prompts
-                    3. 📄 Upload the generated credentials file below
+                    3. 📄 Upload the generated `credentials` file (no extension) below
                     """)
                 
                 uploaded_file = st.file_uploader(
                     "Upload Earth Engine Credentials File",
-                    type=['json', 'txt'],
-                    help="Upload the credentials file from ~/.config/earthengine/credentials"
+                    type=None,  # Accept any file type since credentials file has no extension
+                    help="Upload the file named 'credentials' (no extension) from ~/.config/earthengine/ folder"
                 )
                 
                 if uploaded_file is not None:
