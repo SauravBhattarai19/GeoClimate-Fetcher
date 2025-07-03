@@ -1393,8 +1393,21 @@ elif st.session_state.app_mode == "data_explorer":
             with config_col2:
                 st.write("#### Output Location & Naming")
                 
-                # Output directory selection - FIXED for all formats including NetCDF
-                use_browser = st.checkbox("Use folder browser", value=True, help="Select output folder using a dialog")
+                # Detect if Tkinter is available for a native folder dialog. In headless or minimal
+                # environments (e.g. Docker containers without Tk libraries) this import will fail,
+                # so we disable the folder-browser option and fall back to manual path entry.
+                try:
+                    import tkinter as _tk  # noqa: F401
+                    _TKINTER_AVAILABLE = True
+                except Exception:
+                    _TKINTER_AVAILABLE = False
+                
+                use_browser = st.checkbox(
+                    "Use folder browser",
+                    value=_TKINTER_AVAILABLE,
+                    disabled=not _TKINTER_AVAILABLE,
+                    help="Select output folder using a native dialog (disabled if not supported in the current environment)"
+                )
                 
                 if use_browser:
                     # Initialize session state for output directory
