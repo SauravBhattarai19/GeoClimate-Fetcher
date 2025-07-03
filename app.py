@@ -423,6 +423,7 @@ if st.session_state.app_mode is None:
         <h3>👨‍💻 About the Developer</h3>
         <p><strong>Saurav Bhattarai</strong></p>
         <p>Climate Data Scientist & Geospatial Developer</p>
+        <p>Under Supervision of Dr. Rocky Talchabhadeli</p>
         <p>📧 Email: <a href="mailto:saurav.bhattarai.1999@gmail.com">saurav.bhattarai.1999@gmail.com</a></p>
         <p>🔗 <a href="https://github.com/Saurav-JSU">GitHub</a> | 
            <a href="https://www.linkedin.com/in/saurav-bhattarai-7133a3176/">LinkedIn</a></p>
