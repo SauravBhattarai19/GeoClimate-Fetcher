@@ -1816,6 +1816,18 @@ elif st.session_state.app_mode == "data_explorer":
                                 # Summary
                                 if successful_downloads > 0:
                                     st.success(f"✅ {successful_downloads} images saved to `{geotiff_dir}`")
+
+                                    # Zip the directory for convenient single download
+                                    import shutil
+                                    zip_path = f"{geotiff_dir}.zip"
+                                    try:
+                                        if not os.path.exists(zip_path):
+                                            st.info("📦 Creating ZIP archive for browser download …")
+                                            shutil.make_archive(base_name=geotiff_dir, format='zip', root_dir=geotiff_dir)
+                                        _offer_browser_download(zip_path, max_mb=500)
+                                    except Exception as _zip_e:
+                                        st.warning(f"Could not create/download ZIP: {_zip_e}")
+
                                 if drive_exports > 0:
                                     st.info(f"📤 {drive_exports} images sent to Google Drive folder '{drive_folder}'")
                         
