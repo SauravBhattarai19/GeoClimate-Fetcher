@@ -1392,8 +1392,19 @@ elif st.session_state.app_mode == "data_explorer":
             with config_col2:
                 st.write("#### Output Location & Naming")
                 
-                # Output directory selection - FIXED for all formats including NetCDF
-                use_browser = st.checkbox("Use folder browser", value=True, help="Select output folder using a dialog")
+                # Show the folder-browser checkbox only if Tkinter is available on the server.
+                if _TK_AVAILABLE:
+                    use_browser = st.checkbox(
+                        "Use folder browser",
+                        value=True,
+                        help="Select output folder using a native dialog (may not work on all deployments)",
+                    )
+                else:
+                    st.info(
+                        "📄 Folder-browser dialog isn't available in this environment. "
+                        "Please type the output directory path below."
+                    )
+                    use_browser = False
                 
                 if use_browser:
                     # Initialize session state for output directory
