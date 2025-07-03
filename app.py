@@ -3,7 +3,7 @@ import ee
 import geemap.foliumap as geemap
 import folium
 from folium.plugins import Draw
-from datetime import datetime, timedelta
+from datetime import datetime
 import os
 import json
 from pathlib import Path
@@ -16,8 +16,6 @@ import plotly.express as px
 import numpy as np
 import xarray as xr
 from geoclimate_fetcher.climate_indices import ClimateIndicesCalculator
-import hashlib
-import extra_streamlit_components as stx
 
 # Configure Streamlit page
 st.set_page_config(
@@ -541,15 +539,7 @@ elif st.session_state.app_mode == "data_explorer":
         
         auth_component = AuthComponent()
         if auth_component.render():
-            # Persist credentials in cookies for future browser sessions
-            if st.session_state.get('auth_complete', False):
-                project_id_cookie = st.session_state.get('auth_project_id', '')
-                if project_id_cookie:
-                    token = create_auth_token(project_id_cookie, int(time.time() // 86400))
-                    expiry = datetime.now() + timedelta(days=30)
-                    cookie_manager.set("gee_auth_token", token, expires_at=expiry)
-                    cookie_manager.set("gee_project_id", project_id_cookie, expires_at=expiry)
-            st.experimental_rerun()
+            st.rerun()
 
     else:
         # Step 2: Area of Interest Selection
@@ -1401,22 +1391,81 @@ elif st.session_state.app_mode == "data_explorer":
                     compression = False
             
             with config_col2:
-                st.write("#### Output Options & Naming")
-                st.info("📥 Files will be downloaded directly to your browser's default download folder")
-
-                # Placeholder output directory (used for UI preview only)
-                output_dir = "Browser download"
-
+                st.write("#### Output Location & Naming")
+                
+                # Output directory selection - FIXED for all formats including NetCDF
+                use_browser = st.checkbox("Use folder browser", value=True, help="Select output folder using a dialog")
+                
+                if use_browser:
+                    # Initialize session state for output directory
+                    if 'output_dir' not in st.session_state:
+                        st.session_state.output_dir = os.path.abspath("data/downloads")
+                    
+                    col_browse, col_reset = st.columns([3, 1])
+                    with col_browse:
+                        if st.button("📁 Browse for Output Folder", use_container_width=True):
+                            try:
+                                import tkinter as tk
+                                from tkinter import filedialog
+                                
+                                # Create and hide the Tkinter root window
+                                root = tk.Tk()
+                                root.withdraw()
+                                root.attributes('-topmost', True)
+                                
+                                # Show the folder dialog
+                                folder_path = filedialog.askdirectory(
+                                    title="Select Output Directory",
+                                    initialdir=st.session_state.output_dir
+                                )
+                                
+                                # Update the session state if a folder was selected
+                                if folder_path:
+                                    st.session_state.output_dir = os.path.abspath(folder_path)
+                                    st.rerun()
+                            except Exception as e:
+                                st.error(f"Error opening folder dialog: {str(e)}")
+                                st.info("Please use manual input instead.")
+                    
+                    with col_reset:
+                        if st.button("🔄", help="Reset to default folder"):
+                            st.session_state.output_dir = os.path.abspath("data/downloads")
+                            st.rerun()
+                    
+                    # Display current directory
+                    output_dir = st.session_state.output_dir
+                    st.success(f"📂 **Selected:** `{output_dir}`")
+                    
+                    # Verify directory exists or can be created
+                    try:
+                        os.makedirs(output_dir, exist_ok=True)
+                        st.info("✅ Directory is accessible")
+                    except Exception as e:
+                        st.error(f"❌ Cannot access directory: {str(e)}")
+                        st.info("Please select a different directory or use manual input.")
+                else:
+                    # Manual input
+                    default_dir = os.path.abspath("data/downloads")
+                    output_dir = st.text_input("Output directory:", value=default_dir)
+                    output_dir = os.path.abspath(output_dir)  # Convert to absolute path
+                    
+                    # Verify directory
+                    try:
+                        os.makedirs(output_dir, exist_ok=True)
+                        st.success("✅ Directory is accessible")
+                    except Exception as e:
+                        st.error(f"❌ Cannot access directory: {str(e)}")
+                
                 # Filename configuration
                 st.write("**Filename Options:**")
                 default_filename = f"{dataset_name.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-
+                
                 filename_option = st.radio(
                     "Filename type:",
                     ["Auto-generated", "Custom filename"],
                     help="Auto-generated includes dataset name and timestamp"
                 )
-
+                
                 if filename_option == "Custom filename":
                     filename = st.text_input(
                         "Enter filename (without extension):", 
@@ -1425,16 +1474,11 @@ elif st.session_state.app_mode == "data_explorer":
                     )
                 else:
                     filename = default_filename
-
-                # Determine final filename / ZIP handling for multiple GeoTIFFs
+                
+                # Show preview of final filename
                 file_ext = {'geotiff': '.tif', 'netcdf': '.nc', 'csv': '.csv'}[file_format.lower()]
-
-                if snippet_type == 'ImageCollection' and file_format.lower() == 'geotiff':
-                    final_filename = f"{filename}.zip"
-                    st.info(f"📄 Multiple GeoTIFF files will be downloaded as: `{final_filename}`")
-                else:
-                    final_filename = f"{filename}{file_ext}"
-                    st.info(f"📄 Final filename: `{final_filename}`")
+                final_filename = f"{filename}{file_ext}"
+                st.info(f"📄 Final filename: `{final_filename}`")
             
             # Advanced Options in expandable section
             with st.expander("🔧 Advanced Options", expanded=False):
@@ -1468,9 +1512,6 @@ elif st.session_state.app_mode == "data_explorer":
                         drive_folder = st.text_input("Google Drive folder name:", "GeoClimate_Downloads")
                     else:
                         drive_folder = "GeoClimate_Downloads"
-                
-                    # New option: allow user to force local ZIP download even for large collections
-                    force_local_zip = st.checkbox("Force local ZIP download even for large ImageCollections (may be slow)", value=False)
                 
                 # Export options specific to format
                 if file_format.lower() == 'netcdf':
@@ -1514,16 +1555,23 @@ elif st.session_state.app_mode == "data_explorer":
 
             # Download function with all the improvements
             def download_data():
-                """Process the user request and stream the result directly to the browser."""
+                """Enhanced download function with better error handling and flexibility"""
                 try:
-                    with st.spinner("🚀 Processing data... This may take a while."):
-                        # ----------------------------------------------------
-                        # Validation & common setup
-                        # ----------------------------------------------------
+                    with st.spinner("🚀 Downloading data... This may take a while."):
+                        # Show processing info
+                        if use_drive_for_large:
+                            st.info(f"📤 Large files (>50MB) will be exported to Google Drive folder: '{drive_folder}'")
+                        else:
+                            st.warning("⚠️ Large file handling disabled. Files >50MB may fail.")
+                        
+                        # Get the geometry from the geometry handler
                         geometry = st.session_state.geometry_handler.current_geometry
+                        
+                        # Get required parameters
                         ee_id = dataset.get('Earth Engine ID')
                         selected_bands = st.session_state.selected_bands
-
+                        
+                        # Validation
                         if not geometry:
                             st.error("❌ No geometry selected. Please go back to Step 2.")
                             return
@@ -1533,125 +1581,332 @@ elif st.session_state.app_mode == "data_explorer":
                         if not selected_bands:
                             st.error("❌ No bands selected. Please go back to Step 4.")
                             return
-
+                        
+                        # Ensure output directory exists
+                        try:
+                            os.makedirs(output_dir, exist_ok=True)
+                        except Exception as e:
+                            st.error(f"❌ Cannot create output directory: {str(e)}")
+                            return
+                        
+                        # Create output path
+                        output_path = os.path.join(output_dir, final_filename)
+                        st.info(f"📂 Output path: `{output_path}`")
+                        
+                        # Apply clipping if requested
                         if clip_to_region:
                             processing_geometry = geometry
                         else:
+                            # Use bounding box for faster processing
                             bounds = geometry.bounds().getInfo()['coordinates'][0]
-                            xs, ys = zip(*bounds)
+                            xs = [p[0] for p in bounds]
+                            ys = [p[1] for p in bounds]
                             processing_geometry = ee.Geometry.Rectangle([min(xs), min(ys), max(xs), max(ys)])
-
-                        # ----------------------------------------------------
-                        # ImageCollection workflow
-                        # ----------------------------------------------------
+                        
+                        # Estimate request size to prevent Google Earth Engine size limit errors
+                        def estimate_request_size(geometry, scale, num_bands=1, num_images=1):
+                            """Estimate the size of an Earth Engine request in bytes"""
+                            try:
+                                # Get geometry area in square meters
+                                area_sqm = geometry.area().getInfo()
+                                
+                                # Calculate number of pixels
+                                pixels_per_band = area_sqm / (scale * scale)
+                                
+                                # Estimate bytes per pixel (typically 4 bytes for float32)
+                                bytes_per_pixel = 4
+                                
+                                # Total size estimate
+                                total_size = pixels_per_band * num_bands * num_images * bytes_per_pixel
+                                
+                                return total_size
+                            except:
+                                # Return conservative estimate if calculation fails
+                                return 100 * 1024 * 1024  # 100MB
+                        
+                        # Process based on dataset type
                         if snippet_type == 'ImageCollection':
-                            start_date, end_date = st.session_state.start_date, st.session_state.end_date
+                            # Get date range
+                            start_date = st.session_state.start_date
+                            end_date = st.session_state.end_date
+                            
                             if not start_date or not end_date:
                                 st.error("❌ No date range selected. Please go back to Step 5.")
                                 return
-
+                            
+                            # Create fetcher
                             fetcher = ImageCollectionFetcher(ee_id=ee_id, bands=selected_bands, geometry=processing_geometry)
                             fetcher = fetcher.filter_dates(start_date=start_date, end_date=end_date)
-
-                            # ---- CSV ----
+                            
+                            # Process based on format
                             if file_format.lower() == 'csv':
-                                st.info("📊 Extracting time series ...")
-                                df = (fetcher.get_time_series_average_chunked(chunk_months=3)
-                                      if use_chunking else fetcher.get_time_series_average())
-                                if df.empty:
+                                st.info("📊 Extracting time series data...")
+                                if use_chunking:
+                                    df = fetcher.get_time_series_average_chunked(chunk_months=3)
+                                else:
+                                    df = fetcher.get_time_series_average()
+                                
+                                if not df.empty:
+                                    exporter.export_time_series_to_csv(df, output_path)
+                                    st.success(f"✅ CSV exported successfully to `{output_path}`")
+                                else:
                                     st.error("❌ No data retrieved for the time series.")
-                                    return
-                                st.download_button("📥 Download CSV", df.to_csv(index=False), file_name=final_filename, mime='text/csv')
-                                st.success("✅ CSV ready for download!")
-
-                            # ---- NetCDF ----
+                                    
                             elif file_format.lower() == 'netcdf':
-                                st.info("🌐 Building NetCDF ...")
-                                ds = fetcher.get_gridded_data(scale=scale, crs=crs)
-                                if ds is None or len(ds.data_vars) == 0:
-                                    st.error("❌ No gridded data retrieved.")
-                                    return
-                                import io
-                                if 'include_metadata' in locals() and include_metadata:
-                                    ds.attrs.update({'processing_date': datetime.now().isoformat(),
-                                                     'source_dataset': ee_id,
-                                                     'bands': ', '.join(selected_bands),
-                                                     'time_range': f"{start_date} to {end_date}",
-                                                     'scale_meters': scale,
-                                                     'coordinate_system': crs,
-                                                     'created_by': 'GeoClimate Fetcher'})
-                                buf = io.BytesIO()
-                                ds.to_netcdf(buf)
-                                buf.seek(0)
-                                st.download_button("📥 Download NetCDF", buf, file_name=final_filename, mime='application/x-netcdf')
-                                st.success("✅ NetCDF ready for download!")
-
-                            # ---- GeoTIFF (collection -> ZIP) ----
-                            else:
+                                st.info("🌐 Creating NetCDF file...")
+                                try:
+                                    ds = fetcher.get_gridded_data(scale=scale, crs=crs)
+                                    if ds and len(ds.data_vars) > 0:
+                                        # Add extra metadata if requested
+                                        if 'include_metadata' in locals() and include_metadata:
+                                            ds.attrs.update({
+                                                'processing_date': datetime.now().isoformat(),
+                                                'source_dataset': ee_id,
+                                                'bands': ', '.join(selected_bands),
+                                                'time_range': f"{start_date} to {end_date}",
+                                                'scale_meters': scale,
+                                                'coordinate_system': crs,
+                                                'created_by': 'GeoClimate Fetcher'
+                                            })
+                                        
+                                        exporter.export_gridded_data_to_netcdf(ds, output_path)
+                                        st.success(f"✅ NetCDF exported successfully to `{output_path}`")
+                                    else:
+                                        st.error("❌ No gridded data retrieved.")
+                                        st.info("💡 Try: smaller time range, larger scale, or CSV format")
+                                except Exception as e:
+                                    st.error(f"❌ NetCDF export failed: {str(e)}")
+                                    st.info("💡 Try: CSV format or different time range")
+                                    
+                            else:  # GeoTIFF
+                                st.info("🖼️ Exporting individual GeoTIFF files...")
                                 collection = fetcher.collection
-                                count = collection.size().getInfo()
-                                if count == 0:
+                                collection_size = collection.size().getInfo()
+                                
+                                if collection_size == 0:
                                     st.error("❌ No images found in collection.")
                                     return
-                                max_direct = 30  # threshold for automatic Drive export
-                                if count > max_direct and use_drive_for_large and not force_local_zip:
-                                    st.warning(f"⚠️ {count} images detected (> {max_direct}). Exporting to Google Drive instead.")
-                                    images = collection.toList(collection.size())
-                                    for i in range(count):
-                                        img = ee.Image(images.get(i))
-                                        ts = datetime.fromtimestamp(img.get('system:time_start').getInfo() / 1000).strftime('%Y%m%d')
-                                        if selected_bands:
-                                            img = img.select(selected_bands)
-                                        exporter.export_image_to_drive(image=img, filename=f"{filename}_{ts}", folder=drive_folder,
-                                                                       region=processing_geometry, scale=scale, wait=False)
-                                    st.success(f"✅ Export tasks created! Check Google Drive folder '{drive_folder}'.")
+                                
+                                # Estimate total request size for collection
+                                estimated_size_per_image = estimate_request_size(
+                                    processing_geometry, scale, len(selected_bands), 1
+                                )
+                                total_estimated_size = estimated_size_per_image * collection_size
+                                max_ee_size = 50 * 1024 * 1024  # 50MB limit
+                                
+                                if estimated_size_per_image > max_ee_size:
+                                    st.error(f"❌ Estimated size per image ({estimated_size_per_image/1024/1024:.1f} MB) exceeds Earth Engine limit (50 MB)")
+                                    st.info("💡 **Solutions:**")
+                                    st.info("• Increase the scale parameter (lower resolution)")
+                                    st.info("• Reduce the area of interest")
+                                    st.info("• Select fewer bands")
+                                    st.info("• Use CSV format for time series data")
                                     return
-
-                                import zipfile, io, requests
-                                buf_zip = io.BytesIO()
-                                with zipfile.ZipFile(buf_zip, 'w', zipfile.ZIP_DEFLATED) as zf:
-                                    imgs = collection.toList(collection.size())
-                                    pbar = st.progress(0.0)
-                                    for i in range(count):
-                                        pbar.progress((i + 1) / count)
-                                        img = ee.Image(imgs.get(i))
-                                        ts = datetime.fromtimestamp(img.get('system:time_start').getInfo() / 1000).strftime('%Y%m%d')
+                                elif total_estimated_size > max_ee_size * 5:  # Warning if total is very large
+                                    st.warning(f"⚠️ Large download estimated ({total_estimated_size/1024/1024:.1f} MB total)")
+                                    st.info("💡 Consider using Google Drive backup for large downloads")
+                                
+                                # Create subdirectory for GeoTIFFs
+                                geotiff_dir = os.path.join(output_dir, f"{filename}_geotiffs")
+                                os.makedirs(geotiff_dir, exist_ok=True)
+                                
+                                st.info(f"📸 Processing {collection_size} images...")
+                                progress_bar = st.progress(0)
+                                status_text = st.empty()
+                                
+                                # Process images
+                                image_list = collection.toList(collection.size())
+                                successful_downloads = 0
+                                drive_exports = 0
+                                
+                                for i in range(collection_size):
+                                    progress_bar.progress((i + 1) / collection_size)
+                                    status_text.text(f"Processing image {i+1}/{collection_size}")
+                                    
+                                    try:
+                                        image = ee.Image(image_list.get(i))
+                                        date_millis = image.get('system:time_start').getInfo()
+                                        date_str = datetime.fromtimestamp(date_millis / 1000).strftime('%Y%m%d')
+                                        
                                         if selected_bands:
-                                            img = img.select(selected_bands)
-                                        url = img.getDownloadURL({'scale': scale, 'crs': crs, 'region': processing_geometry, 'format': 'GEO_TIFF'})
-                                        r = requests.get(url)
-                                        if r.status_code == 200:
-                                            zf.writestr(f"{filename}_{ts}.tif", r.content)
-                                buf_zip.seek(0)
-                                st.download_button("📥 Download GeoTIFF Collection (ZIP)", buf_zip, file_name=final_filename, mime='application/zip')
-                                st.success("✅ GeoTIFF collection ready for download!")
-
-                        # ----------------------------------------------------
-                        # Static raster workflow
-                        # ----------------------------------------------------
-                        else:
+                                            image = image.select(selected_bands)
+                                        
+                                        image_output_path = os.path.join(geotiff_dir, f"{date_str}.tif")
+                                        
+                                        try:
+                                            # Note: Data type harmonization is handled automatically in the exporter
+                                            result_path = exporter.export_image_to_local(
+                                                image=image, output_path=image_output_path,
+                                                region=processing_geometry, scale=scale
+                                            )
+                                            
+                                            if os.path.exists(result_path) and os.path.getsize(result_path) > 0:
+                                                successful_downloads += 1
+                                            else:
+                                                raise ValueError("Local export failed")
+                                                
+                                        except Exception as export_error:
+                                            error_str = str(export_error)
+                                            if "Total request size" in error_str and "bytes" in error_str:
+                                                st.warning(f"⚠️ Image {i+1} too large for direct download")
+                                                if use_drive_for_large:
+                                                    try:
+                                                        # Note: Data type harmonization handled in exporter
+                                                        task_id = exporter.export_image_to_drive(
+                                                            image=image, filename=f"{filename}_{date_str}",
+                                                            folder=drive_folder, region=processing_geometry,
+                                                            scale=scale, wait=False
+                                                        )
+                                                        drive_exports += 1
+                                                    except Exception as drive_error:
+                                                        st.warning(f"⚠️ Drive export also failed for image {i+1}: {str(drive_error)}")
+                                                else:
+                                                    st.warning(f"⚠️ Skipping image {i+1}: {error_str}")
+                                            else:
+                                                if use_drive_for_large:
+                                                    # Note: Data type harmonization handled in exporter
+                                                    task_id = exporter.export_image_to_drive(
+                                                        image=image, filename=f"{filename}_{date_str}",
+                                                        folder=drive_folder, region=processing_geometry,
+                                                        scale=scale, wait=False
+                                                    )
+                                                    drive_exports += 1
+                                            
+                                    except Exception as e:
+                                        st.warning(f"⚠️ Failed to process image {i+1}: {str(e)}")
+                                
+                                # Summary
+                                if successful_downloads > 0:
+                                    st.success(f"✅ {successful_downloads} images saved to `{geotiff_dir}`")
+                                if drive_exports > 0:
+                                    st.info(f"📤 {drive_exports} images sent to Google Drive folder '{drive_folder}'")
+                        
+                        else:  # Static Image
                             fetcher = StaticRasterFetcher(ee_id=ee_id, bands=selected_bands, geometry=processing_geometry)
                             image = fetcher.image
-
+                            
                             if file_format.lower() == 'csv':
+                                st.info("📊 Extracting zonal statistics...")
                                 stats = fetcher.get_zonal_statistics()
-                                df = pd.DataFrame([{'band': b, **s} for b, s in stats.items()])
-                                st.download_button("📥 Download Statistics CSV", df.to_csv(index=False), file_name=final_filename, mime='text/csv')
-                                st.success("✅ Statistics CSV ready for download!")
-
-                            elif file_format.lower() == 'geotiff':
-                                import requests
-                                url = image.getDownloadURL({'scale': scale, 'crs': crs, 'region': processing_geometry, 'format': 'GEO_TIFF'})
-                                resp = requests.get(url)
-                                if resp.status_code == 200:
-                                    st.download_button("📥 Download GeoTIFF", resp.content, file_name=final_filename, mime='image/tiff')
-                                    st.success("✅ GeoTIFF ready for download!")
+                                rows = [{'band': band, **band_stats} for band, band_stats in stats.items()]
+                                df = pd.DataFrame(rows)
+                                exporter.export_time_series_to_csv(df, output_path)
+                                st.success(f"✅ Statistics exported to `{output_path}`")
+                                
+                            elif file_format.lower() == 'netcdf':
+                                st.info("🌐 Creating NetCDF from static image...")
+                                pixel_data = fetcher.get_pixel_values(scale=scale)
+                                
+                                if pixel_data:
+                                    import xarray as xr
+                                    import numpy as np
+                                    
+                                    # Get bounds and create coordinates
+                                    bounds = processing_geometry.bounds().getInfo()['coordinates'][0]
+                                    xs, ys = [p[0] for p in bounds], [p[1] for p in bounds]
+                                    xmin, xmax, ymin, ymax = min(xs), max(xs), min(ys), max(ys)
+                                    
+                                    first_band_data = next(iter(pixel_data.values()))
+                                    height, width = first_band_data.shape
+                                    
+                                    coords = {
+                                        'lat': np.linspace(ymax, ymin, height),
+                                        'lon': np.linspace(xmin, xmax, width)
+                                    }
+                                    
+                                    data_vars = {band: (['lat', 'lon'], array) for band, array in pixel_data.items()}
+                                    ds = xr.Dataset(data_vars=data_vars, coords=coords)
+                                    
+                                    # Add metadata
+                                    ds.attrs.update({
+                                        'description': f"Data from {ee_id}",
+                                        'created': datetime.now().isoformat(),
+                                        'scale_meters': scale,
+                                        'coordinate_system': crs,
+                                        'bounds': f"[{xmin}, {ymin}, {xmax}, {ymax}]",
+                                        'created_by': 'GeoClimate Fetcher'
+                                    })
+                                    
+                                    exporter.export_gridded_data_to_netcdf(ds, output_path)
+                                    st.success(f"✅ NetCDF exported to `{output_path}`")
                                 else:
-                                    st.error(f"❌ Download failed with status {resp.status_code}")
-                            else:
-                                st.info("🌐 NetCDF export for static rasters coming soon…")
-
+                                    st.error("❌ No pixel data retrieved")
+                                    
+                            else:  # GeoTIFF
+                                st.info("🖼️ Exporting GeoTIFF...")
+                                
+                                # Check estimated size before export
+                                estimated_size = estimate_request_size(
+                                    processing_geometry, scale, len(selected_bands), 1
+                                )
+                                max_ee_size = 50 * 1024 * 1024  # 50MB limit
+                                
+                                if estimated_size > max_ee_size:
+                                    st.error(f"❌ Estimated size ({estimated_size/1024/1024:.1f} MB) exceeds Earth Engine limit (50 MB)")
+                                    st.info("💡 **Solutions:**")
+                                    st.info("• Increase the scale parameter (lower resolution)")
+                                    st.info("• Reduce the area of interest")
+                                    st.info("• Select fewer bands")
+                                    st.info("• Use CSV format for statistics")
+                                    if use_drive_for_large:
+                                        st.info("🚀 Trying Google Drive export instead...")
+                                        st.info("📊 **Data Type Harmonization**: Converting all bands to Float32 to ensure compatibility")
+                                        try:
+                                            task_id = exporter.export_image_to_drive(
+                                                image=image, filename=filename, folder=drive_folder,
+                                                region=processing_geometry, scale=scale, wait=False
+                                            )
+                                            st.success(f"✅ Export started to Google Drive (Task ID: {task_id})")
+                                            st.info("🔗 Check status: https://code.earthengine.google.com/tasks")
+                                        except Exception as drive_e:
+                                            st.error(f"❌ Google Drive export also failed: {str(drive_e)}")
+                                    return
+                                elif estimated_size > max_ee_size * 0.8:  # Warning if approaching limit
+                                    st.warning(f"⚠️ Large download ({estimated_size/1024/1024:.1f} MB). May be slow.")
+                                
+                                # Add informational message about data type handling
+                                st.info("📊 **Data Type Harmonization**: Converting all bands to Float32 to ensure compatibility")
+                                
+                                try:
+                                    result_path = exporter.export_image_to_local(
+                                        image=image, output_path=output_path,
+                                        region=processing_geometry, scale=scale
+                                    )
+                                    
+                                    if os.path.exists(result_path) and os.path.getsize(result_path) > 0:
+                                        st.success(f"✅ GeoTIFF exported to `{output_path}`")
+                                    else:
+                                        raise ValueError("Local export failed")
+                                        
+                                except Exception as export_error:
+                                    error_str = str(export_error)
+                                    if "Total request size" in error_str and "bytes" in error_str:
+                                        st.error(f"❌ Export failed: Request too large ({error_str})")
+                                        st.info("💡 **Try these solutions:**")
+                                        st.info("• Increase scale parameter (reduce resolution)")
+                                        st.info("• Reduce area of interest size")
+                                        st.info("• Select fewer bands")
+                                        st.info("• Enable Google Drive for large files")
+                                    elif use_drive_for_large:
+                                        st.warning("📤 Local export failed, trying Google Drive...")
+                                        st.info("📊 **Data Type Harmonization**: Converting all bands to Float32 to ensure compatibility")
+                                        try:
+                                            task_id = exporter.export_image_to_drive(
+                                                image=image, filename=filename, folder=drive_folder,
+                                                region=processing_geometry, scale=scale, wait=False
+                                            )
+                                            st.success(f"✅ Export started to Google Drive (Task ID: {task_id})")
+                                            st.info("🔗 Check status: https://code.earthengine.google.com/tasks")
+                                        except Exception as drive_error:
+                                            st.error(f"❌ Both local and Drive export failed: {str(drive_error)}")
+                                    else:
+                                        st.error(f"❌ Export failed: {error_str}")
+                                        st.info("💡 Try enabling Google Drive backup or reducing data size.")
+                        
+                        # Final success message
                         st.balloons()
+                        st.success("🎉 Download completed successfully!")
+                        
                 except Exception as e:
                     st.error(f"❌ Download failed: {str(e)}")
                     with st.expander("🐛 Error Details", expanded=False):
@@ -1782,15 +2037,7 @@ elif st.session_state.app_mode == "climate_analytics":
         
         auth_component = AuthComponent()
         if auth_component.render():
-            # Persist credentials in cookies for future browser sessions
-            if st.session_state.get('auth_complete', False):
-                project_id_cookie = st.session_state.get('auth_project_id', '')
-                if project_id_cookie:
-                    token = create_auth_token(project_id_cookie, int(time.time() // 86400))
-                    expiry = datetime.now() + timedelta(days=30)
-                    cookie_manager.set("gee_auth_token", token, expires_at=expiry)
-                    cookie_manager.set("gee_project_id", project_id_cookie, expires_at=expiry)
-            st.experimental_rerun()
+            st.rerun()
         else:
             st.stop()
       # Create tabs for different analysis types
@@ -2278,35 +2525,45 @@ elif st.session_state.app_mode == "climate_analytics":
         st.markdown("### Analysis & Visualization")
         st.info("🚧 Advanced analysis and visualization features coming soon!")
 
-# -----------------------------------------------------------------------------
-# Cookie-based authentication persistence helpers
-# -----------------------------------------------------------------------------
-
-cookie_manager = stx.CookieManager()
-
-
-def create_auth_token(project_id: str, timestamp: int) -> str:
-    """Create a secure authentication token valid for a single day."""
-    secret = "your-secret-key-here"  # TODO: replace with a real secret in prod
-    token_string = f"{project_id}:{timestamp}:{secret}"
-    return hashlib.sha256(token_string.encode()).hexdigest()
-
-
-def validate_auth_token(token: str, project_id: str) -> bool:
-    """Validate a stored auth token (valid for up to 30 days)."""
-    expiry_days = 30
-    now = time.time()
-    for days_ago in range(expiry_days):
-        ts = int((now - days_ago * 86400) // 86400)
-        if token == create_auth_token(project_id, ts):
-            return True
-    return False
-
-
-def check_stored_auth() -> str | None:
-    """Return the project-id if valid auth cookies exist, else None."""
-    auth_cookie = cookie_manager.get(cookie="gee_auth_token")
-    project_cookie = cookie_manager.get(cookie="gee_project_id")
-    if auth_cookie and project_cookie and validate_auth_token(auth_cookie, project_cookie):
-        return project_cookie
-    return None
+# Function to get bands directly from the dataset name
+def get_bands_for_dataset(dataset_name):
+    """Get bands for a dataset directly from the CSV files"""
+    import os
+    import pandas as pd
+    from pathlib import Path
+    
+    # Look in the data directory for CSV files
+    data_dir = Path('data')
+    if not data_dir.exists():
+        return []
+    
+    # Try to find the dataset in any CSV file
+    for csv_file in data_dir.glob('*.csv'):
+        try:
+            df = pd.read_csv(csv_file)
+            if 'Dataset Name' not in df.columns or 'Band Names' not in df.columns:
+                continue
+                
+            # Find the dataset
+            dataset_row = df[df['Dataset Name'] == dataset_name]
+            if not dataset_row.empty:
+                bands_str = dataset_row.iloc[0].get('Band Names', '')
+                if isinstance(bands_str, str) and bands_str:
+                    return [band.strip() for band in bands_str.split(',')]
+        except Exception as e:
+            print(f"Error reading {csv_file}: {e}")
+    
+    # If not found, try the Datasets.csv file specifically
+    datasets_file = data_dir / 'Datasets.csv'
+    if datasets_file.exists():
+        try:
+            df = pd.read_csv(datasets_file)
+            dataset_row = df[df['Dataset Name'] == dataset_name]
+            if not dataset_row.empty:
+                bands_str = dataset_row.iloc[0].get('Band Names', '')
+                if isinstance(bands_str, str) and bands_str:
+                    return [band.strip() for band in bands_str.split(',')]
+        except Exception as e:
+            print(f"Error reading Datasets.csv: {e}")
+    
+    return []
