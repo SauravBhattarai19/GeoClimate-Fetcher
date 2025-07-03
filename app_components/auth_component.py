@@ -217,40 +217,6 @@ class AuthComponent:
                         
                         # Show success message and continue button
                         st.balloons()
-                        st.success("🎉 Ready to proceed to area selection!")
-                        
-                        # Auto-advance after a short delay
-                        if st.button("Continue to Area Selection", type="primary"):
-                            return True
-                        
-                    else:
-                        st.error(f"❌ {message}")
-                        
-                        # Provide help for common issues
-                        with st.expander("🔍 Troubleshooting"):
-                            st.markdown("""
-                            **Common authentication issues:**
-                            
-                            **Service account authentication:**
-                            - Check that the service account email is correct
-                            - Ensure the key file path exists and is accessible
-                            - Verify the service account has Earth Engine permissions
-                            
-                            **Credentials file upload:**
-                            - Make sure you uploaded the correct credentials file
-                            - File should be from ~/.config/earthengine/credentials
-                            - Try re-authenticating locally first: `earthengine authenticate`
-                            
-                            **General issues:**
-                            - Project not found: Make sure your project ID is correct
-                            - Earth Engine not enabled: Enable Earth Engine API in Google Cloud Console
-                            - Insufficient permissions: Ensure your account has Earth Engine access
-                            
-                            **Need help setting up Earth Engine?**
-                            - Visit: https://earthengine.google.com/
-                            - Sign up for Earth Engine access
-                            - Create a Google Cloud project
-                            - For web apps: Set up service account authentication
-                            """)
+                        st.success("🎉 Authentication complete! Use the button below to proceed.")
         
         return False 

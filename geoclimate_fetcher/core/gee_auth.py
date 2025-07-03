@@ -6,7 +6,6 @@ from typing import Optional, Dict, Any, Callable
 import json
 import ee
 import tempfile
-from ee.oauth import OAuth2Credentials  # Local import to avoid hard dep if unused
 
 # Define path for storing credentials
 CREDENTIALS_FILE = os.path.expanduser("~/.geoclimate-fetcher/credentials.json")
@@ -85,9 +84,8 @@ class GEEAuth:
                         except Exception as write_err:
                             raise Exception(f"Unable to write credentials file: {write_err}")
 
-                        # Explicitly initialize using an OAuth2Credentials instance (includes project ID)
-                        oauth_creds = OAuth2Credentials.from_json(credentials_content)
-                        ee.Initialize(credentials=oauth_creds, project=project_id)
+                        # Finally, initialize EE; it will discover the credentials file we just wrote.
+                        ee.Initialize(project=project_id)
 
                 except json.JSONDecodeError:
                     raise Exception("Invalid credentials file format. Please upload a valid Earth Engine credentials file.")
