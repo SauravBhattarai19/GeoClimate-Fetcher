@@ -1469,6 +1469,9 @@ elif st.session_state.app_mode == "data_explorer":
                     else:
                         drive_folder = "GeoClimate_Downloads"
                 
+                    # New option: allow user to force local ZIP download even for large collections
+                    force_local_zip = st.checkbox("Force local ZIP download even for large ImageCollections (may be slow)", value=False)
+                
                 # Export options specific to format
                 if file_format.lower() == 'netcdf':
                     st.write("#### NetCDF Specific Options")
@@ -1590,9 +1593,9 @@ elif st.session_state.app_mode == "data_explorer":
                                 if count == 0:
                                     st.error("❌ No images found in collection.")
                                     return
-                                max_direct = 10
-                                if count > max_direct and use_drive_for_large:
-                                    st.warning(f"⚠️ {count} images detected. Exporting to Google Drive instead…")
+                                max_direct = 30  # threshold for automatic Drive export
+                                if count > max_direct and use_drive_for_large and not force_local_zip:
+                                    st.warning(f"⚠️ {count} images detected (> {max_direct}). Exporting to Google Drive instead.")
                                     images = collection.toList(collection.size())
                                     for i in range(count):
                                         img = ee.Image(images.get(i))
