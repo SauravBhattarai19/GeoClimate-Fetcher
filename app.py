@@ -354,6 +354,8 @@ if 'download_path' not in st.session_state:
     st.session_state.download_path = None
 if 'drawn_features' not in st.session_state:
     st.session_state.drawn_features = None
+if 'project_id' not in st.session_state:
+    st.session_state.project_id = None
 
 # Function to go back to a previous step
 def go_back_to_step(step):
@@ -365,6 +367,9 @@ def go_back_to_step(step):
         st.session_state.dataset_selected = False
         st.session_state.bands_selected = False
         st.session_state.dates_selected = False
+        # Clear stored auth when going back to home
+        cookie_manager.delete("gee_auth_token")
+        cookie_manager.delete("gee_project_id")
     elif step == "geometry":
         st.session_state.geometry_complete = False
         st.session_state.dataset_selected = False
@@ -380,6 +385,24 @@ def go_back_to_step(step):
     elif step == "dates":
         st.session_state.dates_selected = False
     st.rerun()
+
+# Function to authenticate GEE
+def authenticate_gee(project_id, service_account=None, key_file=None, auth_token=None):
+    """Authenticate with Google Earth Engine and store credentials"""
+    try:
+        auth = authenticate(project_id, service_account, key_file, auth_token)
+        if auth.is_initialized():
+            st.session_state.auth_complete = True
+            st.session_state.project_id = project_id
+            # Store authentication in cookies
+            auth_token = create_auth_token(project_id, int(time.time() // 86400))
+            cookie_manager.set("gee_auth_token", auth_token, expires_at=datetime.now() + timedelta(days=30))
+            cookie_manager.set("gee_project_id", project_id, expires_at=datetime.now() + timedelta(days=30))
+            return True, "Authentication successful!"
+        else:
+            return False, "Authentication failed. Please check your credentials."
+    except Exception as e:
+        return False, f"Authentication failed: {str(e)}"
 
 # Landing Page
 if st.session_state.app_mode is None:
@@ -556,20 +579,24 @@ elif st.session_state.app_mode == "data_explorer":
         show_progress_indicator()
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # Authentication step
-    def authenticate_gee(project_id, service_account=None, key_file=None, auth_token=None):
-        try:
-            auth = authenticate(project_id, service_account, key_file, auth_token)
-            if auth.is_initialized():
-                st.session_state.auth_complete = True
-                return True, "Authentication successful!"
-            else:
-                return False, "Authentication failed. Please check your credentials."
-        except Exception as e:
-            return False, f"Authentication failed: {str(e)}"
-
     # Step 1: Authentication
     if not st.session_state.auth_complete:
+        # First check for stored authentication
+        stored_project_id = check_stored_auth()
+        
+        if stored_project_id:
+            # Try to authenticate with stored credentials
+            try:
+                success, message = authenticate_gee(stored_project_id)
+                if success:
+                    st.success("✅ Authenticated using stored credentials!")
+                    time.sleep(1)
+                    st.rerun()
+            except:
+                # Stored auth failed, proceed with manual auth
+                pass
+        
+        # If no stored auth or it failed, show authentication form
         st.markdown('<div class="step-header"><h2>🔐 Step 1: Google Earth Engine Authentication</h2></div>', unsafe_allow_html=True)
         
         # Use the updated AuthComponent
@@ -2068,6 +2095,22 @@ elif st.session_state.app_mode == "climate_analytics":
     
     # Check if authenticated, if not, redirect to authentication
     if not st.session_state.get('auth_complete', False):
+        # First check for stored authentication
+        stored_project_id = check_stored_auth()
+        
+        if stored_project_id:
+            # Try to authenticate with stored credentials
+            try:
+                success, message = authenticate_gee(stored_project_id)
+                if success:
+                    st.success("✅ Authenticated using stored credentials!")
+                    time.sleep(1)
+                    st.rerun()
+            except:
+                # Stored auth failed, proceed with manual auth
+                pass
+        
+        # If no stored auth or it failed, show authentication form
         st.markdown('<div class="step-header"><h2>🔐 Step 1: Google Earth Engine Authentication</h2></div>', unsafe_allow_html=True)
         
         # Use the updated AuthComponent
