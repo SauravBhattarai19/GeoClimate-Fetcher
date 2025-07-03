@@ -79,7 +79,7 @@ class AuthComponent:
         # Authentication method selection
         auth_method = st.radio(
             "Choose Authentication Method:",
-            ["Service Account (Recommended for Web Apps)", "Credentials File Upload", "Default (Local Only)"],
+            ["Credentials File Upload", "Service Account (Recommended for Web Apps)", "Default (Local Only)"],
             help="Service account authentication is the most reliable method for deployed web applications"
         )
         
