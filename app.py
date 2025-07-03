@@ -1572,10 +1572,17 @@ elif st.session_state.app_mode == "data_explorer":
                 try:
                     with st.spinner("🚀 Downloading data... This may take a while."):
                         # -----------------------------------------------
+                        # Initialise trackers for summary
+                        # -----------------------------------------------
+                        browser_downloads: list[str] = []
+                        local_saved_paths: list[str] = []
+                        drive_exports_desc: list[str] = []
+
+                        # -----------------------------------------------
                         # Helper: Offer browser download for small files
                         # -----------------------------------------------
                         def _offer_browser_download(file_path: str, max_mb: int = 50):
-                            """Show a Streamlit download button if the file is small enough."""
+                            """Show a Streamlit download button if the file is small enough and log it."""
                             try:
                                 if os.path.isfile(file_path):
                                     size_bytes = os.path.getsize(file_path)
@@ -1588,8 +1595,8 @@ elif st.session_state.app_mode == "data_explorer":
                                                 file_name=os.path.basename(file_path),
                                                 mime="application/octet-stream"
                                             )
+                                        browser_downloads.append(os.path.abspath(file_path))
                                     else:
-                                        # Too large to pipe through Streamlit comfortably
                                         st.info("📁 File is large; please retrieve it from the output folder or Google Drive.")
                             except Exception as _e:
                                 st.warning(f"Could not prepare browser download: {_e}")
@@ -1628,6 +1635,7 @@ elif st.session_state.app_mode == "data_explorer":
                         # Create output path
                         output_path = os.path.join(output_dir, final_filename)
                         st.info(f"📂 Output path: `{output_path}`")
+                        local_saved_paths.append(output_path)  # track intended local save
                         
                         # Apply clipping if requested
                         if clip_to_region:
@@ -1782,6 +1790,8 @@ elif st.session_state.app_mode == "data_explorer":
                                             )
                                             if os.path.exists(result_path) and os.path.getsize(result_path) > 0:
                                                 successful_downloads.append(os.path.relpath(result_path, geotiff_root))
+                                                # record absolute local path
+                                                local_saved_paths.append(os.path.abspath(result_path))
                                             else:
                                                 raise ValueError("Local export failed")
                                         except Exception as export_error:
@@ -1815,6 +1825,8 @@ elif st.session_state.app_mode == "data_explorer":
                                             for rel_path in successful_downloads:
                                                 mf.write(f"{rel_path}\n")
                                         successful_downloads.append(os.path.relpath(manifest_path, geotiff_root))
+                                        manifest_abs = os.path.abspath(manifest_path)
+                                        local_saved_paths.append(manifest_abs)
                                     except Exception as mf_err:
                                         st.warning(f"Could not create manifest: {mf_err}")
 
@@ -1834,6 +1846,7 @@ elif st.session_state.app_mode == "data_explorer":
                                                 for rel_path in chunk_files:
                                                     zf.write(os.path.join(geotiff_root, rel_path), arcname=rel_path)
                                             zip_paths.append(zip_path)
+                                            browser_downloads.append(os.path.abspath(zip_path))
                                         except Exception as zerr:
                                             st.warning(f"Failed to create ZIP {part_num}: {zerr}")
 
@@ -1845,6 +1858,7 @@ elif st.session_state.app_mode == "data_explorer":
 
                                 if drive_exports > 0:
                                     st.info(f"📤 {drive_exports} images sent to Google Drive folder '{drive_folder}'")
+                                    drive_exports_desc.append(f"Google Drive /{drive_folder}/{filename}.tif")
                         
                         else:  # Static Image
                             fetcher = StaticRasterFetcher(ee_id=ee_id, bands=selected_bands, geometry=processing_geometry)
@@ -1974,6 +1988,26 @@ elif st.session_state.app_mode == "data_explorer":
                         # Final success message
                         st.balloons()
                         st.success("🎉 Download completed successfully!")
+                        
+                        # -------------------- SUMMARY --------------------
+                        st.write("## 📑 Download Summary")
+
+                        if browser_downloads:
+                            st.write("### 🔽 Files ready for browser download:")
+                            for p in browser_downloads:
+                                st.markdown(f"• `{p}`")
+
+                        if local_saved_paths:
+                            st.write("### 💾 Files saved locally on the Streamlit server:")
+                            for p in sorted(set(local_saved_paths)):
+                                st.markdown(f"• `{p}`")
+
+                        if drive_exports_desc:
+                            st.write("### ☁️ Files exported to Google Drive:")
+                            for d in drive_exports_desc:
+                                st.markdown(f"• {d}")
+
+                        st.success("🎉 Download completed successfully! Review the summary above for file locations.")
                         
                 except Exception as e:
                     st.error(f"❌ Download failed: {str(e)}")
