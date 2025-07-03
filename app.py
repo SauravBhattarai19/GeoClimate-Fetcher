@@ -368,8 +368,17 @@ def go_back_to_step(step):
         st.session_state.bands_selected = False
         st.session_state.dates_selected = False
         # Clear stored auth when going back to home
-        cookie_manager.delete("gee_auth_token")
-        cookie_manager.delete("gee_project_id")
+        try:
+            # Get all cookies first
+            all_cookies = cookie_manager.get_all()
+            # Only delete if cookies exist
+            if 'gee_auth_token' in all_cookies:
+                cookie_manager.delete('gee_auth_token')
+            if 'gee_project_id' in all_cookies:
+                cookie_manager.delete('gee_project_id')
+        except Exception as e:
+            # Log error but don't stop execution
+            print(f"Error clearing cookies: {str(e)}")
     elif step == "geometry":
         st.session_state.geometry_complete = False
         st.session_state.dataset_selected = False
@@ -2152,13 +2161,13 @@ elif st.session_state.app_mode == "climate_analytics":
                   # Create the map
                 m = folium.Map(location=[39.8283, -98.5795], zoom_start=4)
                 folium.TileLayer( 
-                    tiles='Stamen Terrain',
-                    attr='Map tiles by Stamen Design, under CC BY 3.0. Data by OpenStreetMap, under ODbL.',
-                    name='Terrain'
+                    tiles='OpenStreetMap',
+                    attr='© OpenStreetMap contributors',
+                    name='OpenStreetMap'
                 ).add_to(m)
                 folium.TileLayer(
                     tiles='CartoDB positron',
-                    attr='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+                    attr='© OpenStreetMap contributors © CARTO',
                     name='Light'
                 ).add_to(m)
                 
