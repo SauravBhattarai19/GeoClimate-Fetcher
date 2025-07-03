@@ -1392,59 +1392,68 @@ elif st.session_state.app_mode == "data_explorer":
             with config_col2:
                 st.write("#### Output Location & Naming")
                 
-                # Output directory selection
-                st.write("Choose where to save your files:")
+                # Output directory selection - FIXED for all formats including NetCDF
+                use_browser = st.checkbox("Use folder browser", value=True, help="Select output folder using a dialog")
                 
-                # Default paths options
-                default_paths = {
-                    "Downloads folder": "~/Downloads/geoclimate_data",
-                    "Documents folder": "~/Documents/geoclimate_data",
-                    "Custom location": "custom"
-                }
-                
-                selected_path = st.radio("Select download location:", list(default_paths.keys()))
-                
-                if selected_path == "Custom location":
-                    output_dir = st.text_input(
-                        "Enter custom download path:",
-                        value=os.path.expanduser("~/geoclimate_data"),
-                        help="Enter a full path where you want to save the files"
-                    )
-                else:
-                    output_dir = os.path.expanduser(default_paths[selected_path])
-                
-                # Ensure the directory exists and is accessible
-                try:
-                    # Clean and normalize the path for Windows
-                    output_dir = os.path.normpath(output_dir.strip())
+                if use_browser:
+                    # Initialize session state for output directory
+                    if 'output_dir' not in st.session_state:
+                        st.session_state.output_dir = os.path.abspath("data/downloads")
                     
-                    # Create directory if it doesn't exist
-                    os.makedirs(output_dir, exist_ok=True)
+                    col_browse, col_reset = st.columns([3, 1])
+                    with col_browse:
+                        if st.button("📁 Browse for Output Folder", use_container_width=True):
+                            try:
+                                import tkinter as tk
+                                from tkinter import filedialog
+                                
+                                # Create and hide the Tkinter root window
+                                root = tk.Tk()
+                                root.withdraw()
+                                root.attributes('-topmost', True)
+                                
+                                # Show the folder dialog
+                                folder_path = filedialog.askdirectory(
+                                    title="Select Output Directory",
+                                    initialdir=st.session_state.output_dir
+                                )
+                                
+                                # Update the session state if a folder was selected
+                                if folder_path:
+                                    st.session_state.output_dir = os.path.abspath(folder_path)
+                                    st.rerun()
+                            except Exception as e:
+                                st.error(f"Error opening folder dialog: {str(e)}")
+                                st.info("Please use manual input instead.")
                     
-                    # Verify write permissions by attempting to create a test file
-                    test_file_path = os.path.join(output_dir, 'test_write_permission.txt')
+                    with col_reset:
+                        if st.button("🔄", help="Reset to default folder"):
+                            st.session_state.output_dir = os.path.abspath("data/downloads")
+                            st.rerun()
+                    
+                    # Display current directory
+                    output_dir = st.session_state.output_dir
+                    st.success(f"📂 **Selected:** `{output_dir}`")
+                    
+                    # Verify directory exists or can be created
                     try:
-                        with open(test_file_path, 'w') as f:
-                            f.write('test')
-                        os.remove(test_file_path)
-                        st.success(f"📂 Files will be saved to: `{output_dir}`")
-                        st.success("✅ Write permission verified!")
-                    except Exception as write_error:
-                        st.error(f"❌ Cannot write to directory: {str(write_error)}")
-                        st.warning("Please choose a location where you have write permissions.")
-                        output_dir = None
-                        
-                    # Show some helpful information about the location
-                    st.info("""
-                    💡 **Note:**
-                    - Make sure you have write permissions for this location
-                    - The folder will be created if it doesn't exist
-                    - Use a location that's easily accessible on your computer
-                    """)
-                except Exception as e:
-                    st.error(f"❌ Cannot access or create directory: {str(e)}")
-                    st.warning("Please choose a different location where you have write permissions.")
-                    output_dir = None
+                        os.makedirs(output_dir, exist_ok=True)
+                        st.info("✅ Directory is accessible")
+                    except Exception as e:
+                        st.error(f"❌ Cannot access directory: {str(e)}")
+                        st.info("Please select a different directory or use manual input.")
+                else:
+                    # Manual input
+                    default_dir = os.path.abspath("data/downloads")
+                    output_dir = st.text_input("Output directory:", value=default_dir)
+                    output_dir = os.path.abspath(output_dir)  # Convert to absolute path
+                    
+                    # Verify directory
+                    try:
+                        os.makedirs(output_dir, exist_ok=True)
+                        st.success("✅ Directory is accessible")
+                    except Exception as e:
+                        st.error(f"❌ Cannot access directory: {str(e)}")
                 
                 # Filename configuration
                 st.write("**Filename Options:**")
@@ -1553,25 +1562,6 @@ elif st.session_state.app_mode == "data_explorer":
                             st.info(f"📤 Large files (>50MB) will be exported to Google Drive folder: '{drive_folder}'")
                         else:
                             st.warning("⚠️ Large file handling disabled. Files >50MB may fail.")
-                        
-                        # Verify output directory again before proceeding
-                        if not output_dir:
-                            st.error("❌ No valid output directory selected.")
-                            return
-                            
-                        st.info(f"📂 Attempting to save to: {output_dir}")
-                        
-                        # Create output path and verify
-                        try:
-                            os.makedirs(output_dir, exist_ok=True)
-                            test_file_path = os.path.join(output_dir, 'test_write_permission.txt')
-                            with open(test_file_path, 'w') as f:
-                                f.write('test')
-                            os.remove(test_file_path)
-                        except Exception as e:
-                            st.error(f"❌ Cannot write to output directory: {str(e)}")
-                            st.warning("Please select a different download location.")
-                            return
                         
                         # Get the geometry from the geometry handler
                         geometry = st.session_state.geometry_handler.current_geometry
@@ -1916,43 +1906,6 @@ elif st.session_state.app_mode == "data_explorer":
                         st.balloons()
                         st.success("🎉 Download completed successfully!")
                         
-                        # After successful download
-                        if os.path.exists(output_path):
-                            file_size = os.path.getsize(output_path)
-                            
-                            # Read the file for download
-                            with open(output_path, 'rb') as file:
-                                file_bytes = file.read()
-                            
-                            # Create a download button for the user
-                            st.download_button(
-                                label="📥 Download File to Your Computer",
-                                data=file_bytes,
-                                file_name=final_filename,
-                                mime="application/octet-stream",
-                                help="Click to download the file to your computer"
-                            )
-                            
-                            st.success(f"""
-                            ✅ File processed successfully!
-                            📊 File size: {file_size/1024/1024:.2f} MB
-                            
-                            ⚠️ Important: Click the download button above to save the file to your computer.
-                            The file will be saved to your browser's default download location.
-                            """)
-                            
-                            # Keep the visualization capability
-                            if file_format.lower() == 'geotiff':
-                                st.info("🎨 You can preview the file below before downloading:")
-                                try:
-                                    from geoclimate_fetcher.visualization import DataVisualizer
-                                    visualizer = DataVisualizer()
-                                    visualizer.visualize_geotiff(output_path)
-                                except Exception as viz_error:
-                                    st.error(f"Error visualizing file: {str(viz_error)}")
-                        else:
-                            st.error(f"❌ Error processing file")
-                            st.info("Please try again or choose a different configuration.")
                 except Exception as e:
                     st.error(f"❌ Download failed: {str(e)}")
                     with st.expander("🐛 Error Details", expanded=False):
