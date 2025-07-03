@@ -27,8 +27,6 @@ RUN apt-get update && apt-get install -y \
     libxext6 \
     libxrender-dev \
     libgomp1 \
-    # Tkinter dependencies for folder browser functionality
-    python3-tk \
     # Network and security
     ca-certificates \
     curl \

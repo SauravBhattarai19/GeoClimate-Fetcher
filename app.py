@@ -1393,21 +1393,8 @@ elif st.session_state.app_mode == "data_explorer":
             with config_col2:
                 st.write("#### Output Location & Naming")
                 
-                # Detect if Tkinter is available for a native folder dialog. In headless or minimal
-                # environments (e.g. Docker containers without Tk libraries) this import will fail,
-                # so we disable the folder-browser option and fall back to manual path entry.
-                try:
-                    import tkinter as _tk  # noqa: F401
-                    _TKINTER_AVAILABLE = True
-                except Exception:
-                    _TKINTER_AVAILABLE = False
-                
-                use_browser = st.checkbox(
-                    "Use folder browser",
-                    value=_TKINTER_AVAILABLE,
-                    disabled=not _TKINTER_AVAILABLE,
-                    help="Select output folder using a native dialog (disabled if not supported in the current environment)"
-                )
+                # Output directory selection - FIXED for all formats including NetCDF
+                use_browser = st.checkbox("Use folder browser", value=True, help="Select output folder using a dialog")
                 
                 if use_browser:
                     # Initialize session state for output directory
@@ -1571,29 +1558,6 @@ elif st.session_state.app_mode == "data_explorer":
                 """Enhanced download function with better error handling and flexibility"""
                 try:
                     with st.spinner("🚀 Downloading data... This may take a while."):
-                        # -----------------------------------------------
-                        # Helper: Offer browser download for small files
-                        # -----------------------------------------------
-                        def _offer_browser_download(file_path: str, max_mb: int = 50):
-                            """Show a Streamlit download button if the file is small enough."""
-                            try:
-                                if os.path.isfile(file_path):
-                                    size_bytes = os.path.getsize(file_path)
-                                    size_mb = size_bytes / (1024 * 1024)
-                                    if size_mb <= max_mb:
-                                        with open(file_path, "rb") as _f:
-                                            st.download_button(
-                                                label=f"⬇️ Download {os.path.basename(file_path)} ({size_mb:.1f} MB)",
-                                                data=_f.read(),
-                                                file_name=os.path.basename(file_path),
-                                                mime="application/octet-stream"
-                                            )
-                                    else:
-                                        # Too large to pipe through Streamlit comfortably
-                                        st.info("📁 File is large; please retrieve it from the output folder or Google Drive.")
-                            except Exception as _e:
-                                st.warning(f"Could not prepare browser download: {_e}")
-
                         # Show processing info
                         if use_drive_for_large:
                             st.info(f"📤 Large files (>50MB) will be exported to Google Drive folder: '{drive_folder}'")
@@ -1685,7 +1649,6 @@ elif st.session_state.app_mode == "data_explorer":
                                 if not df.empty:
                                     exporter.export_time_series_to_csv(df, output_path)
                                     st.success(f"✅ CSV exported successfully to `{output_path}`")
-                                    _offer_browser_download(output_path)
                                 else:
                                     st.error("❌ No data retrieved for the time series.")
                                     
@@ -1708,7 +1671,6 @@ elif st.session_state.app_mode == "data_explorer":
                                         
                                         exporter.export_gridded_data_to_netcdf(ds, output_path)
                                         st.success(f"✅ NetCDF exported successfully to `{output_path}`")
-                                        _offer_browser_download(output_path)
                                     else:
                                         st.error("❌ No gridded data retrieved.")
                                         st.info("💡 Try: smaller time range, larger scale, or CSV format")
@@ -1830,7 +1792,6 @@ elif st.session_state.app_mode == "data_explorer":
                                 df = pd.DataFrame(rows)
                                 exporter.export_time_series_to_csv(df, output_path)
                                 st.success(f"✅ Statistics exported to `{output_path}`")
-                                _offer_browser_download(output_path)
                                 
                             elif file_format.lower() == 'netcdf':
                                 st.info("🌐 Creating NetCDF from static image...")
@@ -1868,7 +1829,6 @@ elif st.session_state.app_mode == "data_explorer":
                                     
                                     exporter.export_gridded_data_to_netcdf(ds, output_path)
                                     st.success(f"✅ NetCDF exported to `{output_path}`")
-                                    _offer_browser_download(output_path)
                                 else:
                                     st.error("❌ No pixel data retrieved")
                                     
@@ -1915,7 +1875,6 @@ elif st.session_state.app_mode == "data_explorer":
                                     
                                     if os.path.exists(result_path) and os.path.getsize(result_path) > 0:
                                         st.success(f"✅ GeoTIFF exported to `{output_path}`")
-                                        _offer_browser_download(output_path)
                                     else:
                                         raise ValueError("Local export failed")
                                         
