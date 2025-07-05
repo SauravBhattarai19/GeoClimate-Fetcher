@@ -208,6 +208,243 @@ class DownloadHelper:
         """Cleanup when object is destroyed"""
         self.cleanup()
 
+    def create_auto_download_button(self, file_path, download_name=None, mime_type=None):
+        """Create an enhanced download button that triggers browser download dialog automatically"""
+        if not os.path.exists(file_path):
+            st.error(f"❌ File not found: {file_path}")
+            return False
+            
+        if download_name is None:
+            download_name = os.path.basename(file_path)
+            
+        file_size = os.path.getsize(file_path)
+        file_size_mb = file_size / (1024 * 1024)
+        
+        # Read file content
+        try:
+            with open(file_path, 'rb') as f:
+                file_data = f.read()
+            
+            # Determine MIME type if not provided
+            if mime_type is None:
+                ext = os.path.splitext(file_path)[1].lower()
+                mime_types = {
+                    '.tif': 'image/tiff',
+                    '.tiff': 'image/tiff',
+                    '.nc': 'application/x-netcdf',
+                    '.csv': 'text/csv',
+                    '.zip': 'application/zip',
+                    '.json': 'application/json'
+                }
+                mime_type = mime_types.get(ext, 'application/octet-stream')
+            
+            # Create enhanced download interface with auto-download
+            import base64
+            
+            # Encode file data for download
+            b64 = base64.b64encode(file_data).decode()
+            
+            # Create download link with JavaScript to trigger save dialog
+            download_id = f"download_{abs(hash(file_path))}"
+            
+            st.markdown(f"""
+            <div style="text-align: center; margin: 1rem 0;">
+                <p style="margin-bottom: 1rem;">
+                    📄 <strong>{download_name}</strong> ({file_size_mb:.1f} MB) is ready for download
+                </p>
+                <a id="{download_id}" 
+                   href="data:{mime_type};base64,{b64}" 
+                   download="{download_name}"
+                   style="display: inline-block; 
+                          background: #1f77b4; 
+                          color: white; 
+                          padding: 0.5rem 1rem; 
+                          text-decoration: none; 
+                          border-radius: 5px; 
+                          font-weight: bold;
+                          margin: 0.5rem;">
+                    📥 Download {download_name}
+                </a>
+            </div>
+            
+            <script>
+                // Auto-trigger download when button is clicked
+                document.getElementById('{download_id}').addEventListener('click', function() {{
+                    setTimeout(function() {{
+                        // Show success message after a short delay
+                        const successMsg = document.createElement('div');
+                        successMsg.innerHTML = '✅ Download started! Check your browser\'s download location.';
+                        successMsg.style.cssText = 'background: #d4edda; color: #155724; padding: 1rem; margin: 1rem 0; border-radius: 5px; text-align: center; font-weight: bold;';
+                        document.getElementById('{download_id}').parentNode.appendChild(successMsg);
+                    }}, 500);
+                }});
+            </script>
+            """, unsafe_allow_html=True)
+            
+            # Also provide fallback Streamlit download button
+            st.markdown("---")
+            st.markdown("**Alternative download method:**")
+            st.download_button(
+                label=f"📥 Fallback Download {download_name}",
+                data=file_data,
+                file_name=download_name,
+                mime=mime_type,
+                help="Use this if the main download button doesn't work"
+            )
+            
+            return True
+            
+        except Exception as e:
+            st.error(f"❌ Error preparing download: {str(e)}")
+            return False
+    
+    def create_instant_download(self, file_path, download_name=None, show_success=True):
+        """Create an instant download that immediately triggers browser save dialog"""
+        if not os.path.exists(file_path):
+            st.error(f"❌ File not found: {file_path}")
+            return False
+            
+        if download_name is None:
+            download_name = os.path.basename(file_path)
+            
+        file_size = os.path.getsize(file_path)
+        file_size_mb = file_size / (1024 * 1024)
+        
+        try:
+            with open(file_path, 'rb') as f:
+                file_data = f.read()
+            
+            # Determine MIME type
+            ext = os.path.splitext(file_path)[1].lower()
+            mime_types = {
+                '.tif': 'image/tiff',
+                '.tiff': 'image/tiff',
+                '.nc': 'application/x-netcdf',
+                '.csv': 'text/csv',
+                '.zip': 'application/zip',
+                '.json': 'application/json'
+            }
+            mime_type = mime_types.get(ext, 'application/octet-stream')
+            
+            # Create immediate download
+            import base64
+            b64 = base64.b64encode(file_data).decode()
+            
+            # Generate unique ID for this download
+            download_id = f"instant_download_{abs(hash(file_path + str(file_size)))}"
+            
+            # Create auto-downloading link with JavaScript
+            st.markdown(f"""
+            <div id="download_container_{download_id}" style="text-align: center; margin: 2rem 0; padding: 1rem; border: 2px solid #1f77b4; border-radius: 10px; background: linear-gradient(135deg, #f0f8ff 0%, #e6f3ff 100%);">
+                <h3 style="color: #1f77b4; margin-bottom: 1rem;">📥 Your Download is Ready!</h3>
+                <p style="margin-bottom: 1rem; font-size: 1.1em;">
+                    <strong>{download_name}</strong> ({file_size_mb:.1f} MB)
+                </p>
+                <div id="download_status_{download_id}" style="margin: 1rem 0;">
+                    <button id="download_btn_{download_id}" 
+                            onclick="startDownload_{download_id}()" 
+                            style="background: #1f77b4; 
+                                   color: white; 
+                                   border: none; 
+                                   padding: 1rem 2rem; 
+                                   font-size: 1.1em; 
+                                   border-radius: 8px; 
+                                   cursor: pointer; 
+                                   font-weight: bold;
+                                   box-shadow: 0 2px 4px rgba(0,0,0,0.2);">
+                        📥 Download Now
+                    </button>
+                </div>
+                <p style="font-size: 0.9em; color: #666; margin-top: 1rem;">
+                    Click the button above to save the file to your computer
+                </p>
+            </div>
+            
+            <script>
+                function startDownload_{download_id}() {{
+                    // Create download link
+                    const link = document.createElement('a');
+                    link.href = 'data:{mime_type};base64,{b64}';
+                    link.download = '{download_name}';
+                    link.style.display = 'none';
+                    
+                    // Add to DOM and trigger click
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    
+                    // Update UI to show download started
+                    const statusDiv = document.getElementById('download_status_{download_id}');
+                    statusDiv.innerHTML = `
+                        <div style="background: #d4edda; color: #155724; padding: 1rem; border-radius: 5px; margin: 1rem 0;">
+                            ✅ <strong>Download Started!</strong><br>
+                            <small>Check your browser's Downloads folder or the location you selected.</small>
+                        </div>
+                        <button onclick="startDownload_{download_id}()" 
+                                style="background: #28a745; color: white; border: none; padding: 0.5rem 1rem; border-radius: 5px; cursor: pointer; margin-top: 0.5rem;">
+                            📥 Download Again
+                        </button>
+                    `;
+                }}
+            </script>
+            """, unsafe_allow_html=True)
+            
+            if show_success:
+                st.success("🎉 File processed successfully and ready for download!")
+                
+            return True
+            
+        except Exception as e:
+            st.error(f"❌ Error preparing download: {str(e)}")
+            return False
+
+    def create_automatic_download(self, file_path, download_name=None, show_success=True):
+        """Create an automatic download that immediately triggers browser save dialog without UI"""
+        if not os.path.exists(file_path):
+            st.error(f"❌ File not found: {file_path}")
+            return False
+            
+        if download_name is None:
+            download_name = os.path.basename(file_path)
+            
+        file_size = os.path.getsize(file_path)
+        file_size_mb = file_size / (1024 * 1024)
+        
+        try:
+            with open(file_path, 'rb') as f:
+                file_data = f.read()
+            
+            # Determine MIME type
+            ext = os.path.splitext(file_path)[1].lower()
+            mime_types = {
+                '.tif': 'image/tiff',
+                '.tiff': 'image/tiff',
+                '.nc': 'application/x-netcdf',
+                '.csv': 'text/csv',
+                '.zip': 'application/zip',
+                '.json': 'application/json'
+            }
+            mime_type = mime_types.get(ext, 'application/octet-stream')
+            
+            # Use Streamlit's built-in download_button for immediate download
+            st.download_button(
+                label=f"📥 Download {download_name} ({file_size_mb:.1f} MB)",
+                data=file_data,
+                file_name=download_name,
+                mime=mime_type,
+                type="primary",
+                help="Click to save the file to your computer"
+            )
+            
+            if show_success:
+                st.success(f"🎉 {download_name} is ready for download!")
+                
+            return True
+            
+        except Exception as e:
+            st.error(f"❌ Error preparing download: {str(e)}")
+            return False
+
 class DownloadComponent:
     """Component for download configuration and execution"""
     

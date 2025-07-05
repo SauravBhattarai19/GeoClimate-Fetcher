@@ -1870,7 +1870,15 @@ elif st.session_state.app_mode == "data_explorer":
                                 
                                 if not df.empty:
                                     exporter.export_time_series_to_csv(df, output_path)
-                                    st.success(f"✅ CSV exported successfully to `{output_path}`")
+                                    
+                                    # Show success and automatic download for CSV
+                                    from app_components.download_component import DownloadHelper
+                                    download_helper = DownloadHelper()
+                                    download_helper.create_automatic_download(
+                                        output_path, 
+                                        download_name=os.path.basename(output_path),
+                                        show_success=True
+                                    )
                                 else:
                                     st.error("❌ No data retrieved for the time series.")
                                     
@@ -1892,7 +1900,15 @@ elif st.session_state.app_mode == "data_explorer":
                                             })
                                         
                                         exporter.export_gridded_data_to_netcdf(ds, output_path)
-                                        st.success(f"✅ NetCDF exported successfully to `{output_path}`")
+                                        
+                                        # Show success and automatic download for NetCDF
+                                        from app_components.download_component import DownloadHelper
+                                        download_helper = DownloadHelper()
+                                        download_helper.create_automatic_download(
+                                            output_path, 
+                                            download_name=os.path.basename(output_path),
+                                            show_success=True
+                                        )
                                     else:
                                         st.error("❌ No gridded data retrieved.")
                                         st.info("💡 Try: smaller time range, larger scale, or CSV format")
@@ -2021,13 +2037,15 @@ elif st.session_state.app_mode == "data_explorer":
                                 df = pd.DataFrame(rows)
                                 exporter.export_time_series_to_csv(df, output_path)
                                 
-                                # Show success and download option
+                                # Show success and automatic download for CSV
                                 from app_components.download_component import DownloadHelper
                                 download_helper = DownloadHelper()
                                 
-                                st.success(f"✅ Statistics exported successfully!")
-                                st.markdown("### 📥 Download Your Data")
-                                download_helper.create_download_button(output_path)
+                                download_helper.create_automatic_download(
+                                    output_path, 
+                                    download_name=os.path.basename(output_path),
+                                    show_success=False
+                                )
                                 
                             elif file_format.lower() == 'netcdf':
                                 st.info("🌐 Creating NetCDF from static image...")
@@ -2065,13 +2083,15 @@ elif st.session_state.app_mode == "data_explorer":
                                     
                                     exporter.export_gridded_data_to_netcdf(ds, output_path)
                                     
-                                    # Show success and download option
+                                    # Show success and automatic download for NetCDF
                                     from app_components.download_component import DownloadHelper
                                     download_helper = DownloadHelper()
                                     
-                                    st.success(f"✅ NetCDF exported successfully!")
-                                    st.markdown("### 📥 Download Your Data")
-                                    download_helper.create_download_button(output_path)
+                                    download_helper.create_automatic_download(
+                                        output_path, 
+                                        download_name=os.path.basename(output_path),
+                                        show_success=False
+                                    )
                                 else:
                                     st.error("❌ No pixel data retrieved")
                                     
@@ -2117,13 +2137,15 @@ elif st.session_state.app_mode == "data_explorer":
                                     )
                                     
                                     if os.path.exists(result_path) and os.path.getsize(result_path) > 0:
-                                        # Show success and download option
+                                        # Show success and instant download for single GeoTIFF
                                         from app_components.download_component import DownloadHelper
                                         download_helper = DownloadHelper()
                                         
-                                        st.success(f"✅ GeoTIFF exported successfully!")
-                                        st.markdown("### 📥 Download Your Data")
-                                        download_helper.create_download_button(result_path)
+                                        download_helper.create_instant_download(
+                                            result_path, 
+                                            download_name=os.path.basename(result_path),
+                                            show_success=False
+                                        )
                                     else:
                                         raise ValueError("Local export failed")
                                         

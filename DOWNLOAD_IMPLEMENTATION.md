@@ -42,6 +42,8 @@ class DownloadHelper:
     def create_download_button(file_path, download_name=None, mime_type=None)
     def create_zip_download(source_dir, zip_name=None, include_subdirs=True)
     def create_multi_file_download(file_paths, zip_name=None)
+    def create_instant_download(file_path, download_name=None, show_success=True)
+    def create_automatic_download(file_path, download_name=None, show_success=True)
 ```
 
 **Key Features:**
@@ -49,6 +51,8 @@ class DownloadHelper:
 - **ZIP creation** with compression for multiple files
 - **Temporary file management** with automatic cleanup
 - **Error handling** and user feedback
+- **Instant download** capability for single files
+- **Automatic download** for seamless user experience
 
 ##### `DownloadComponent` (Enhanced)
 - **Added**: `show_download_summary()` method
@@ -119,6 +123,58 @@ mime_types = {
     '.json': 'application/json'
 }
 ```
+
+#### Instant Download Implementation
+```python
+def create_instant_download(self, file_path, download_name=None, show_success=True):
+    """Create an instant download that immediately triggers browser save dialog"""
+    
+    # Encode file as base64 data URI
+    with open(file_path, 'rb') as f:
+        file_data = f.read()
+    b64 = base64.b64encode(file_data).decode()
+    
+    # Create HTML with JavaScript download trigger
+    st.markdown(f"""
+    <script>
+        function startDownload() {{
+            const link = document.createElement('a');
+            link.href = 'data:{mime_type};base64,{b64}';
+            link.download = '{download_name}';
+            link.click(); // Triggers browser save dialog
+        }}
+    </script>
+    """, unsafe_allow_html=True)
+```
+
+#### New: Automatic Download Method
+
+##### `create_automatic_download()`
+A new method specifically designed for single files (CSV/NetCDF) that immediately triggers the browser's save dialog:
+
+```python
+def create_automatic_download(self, file_path, download_name=None, show_success=True):
+    """Create an automatic download that immediately triggers browser save dialog without UI"""
+    # Uses Streamlit's download_button for immediate download
+    # No additional clicks or UI required
+    # Perfect for single CSV/NetCDF files
+```
+
+**Usage:**
+```python
+download_helper = DownloadHelper()
+download_helper.create_automatic_download(
+    file_path="data.csv",
+    download_name="climate_data.csv",
+    show_success=True
+)
+```
+
+**Benefits:**
+- ✅ Immediate browser save dialog
+- ✅ No additional UI or clicks required
+- ✅ Clean, streamlined user experience
+- ✅ Perfect for single file downloads
 
 ### User Interface Enhancements
 
@@ -258,26 +314,45 @@ if estimated_size > max_ee_size:
 
 ## Usage Examples
 
-### Basic Usage
+### For CSV/NetCDF Files (Single Files)
 ```python
-# After data processing in main app
+# Use automatic download for immediate browser save dialog
 from app_components.download_component import DownloadHelper
 
 download_helper = DownloadHelper()
 
-# Single file
-download_helper.create_download_button(file_path)
+# CSV file - triggers immediate save dialog
+download_helper.create_automatic_download(
+    file_path="climate_data.csv",
+    download_name="climate_timeseries.csv",
+    show_success=True
+)
 
-# Multiple files as ZIP
-download_helper.create_zip_download(directory_path)
+# NetCDF file - triggers immediate save dialog  
+download_helper.create_automatic_download(
+    file_path="gridded_data.nc",
+    download_name="climate_grid.nc",
+    show_success=True
+)
+```
 
-# Complete summary interface
+### For GeoTIFF Files (Multiple Files)
+```python
+# Use download summary for multiple files with ZIP packaging
+from app_components.download_component import DownloadComponent
+
+download_component = DownloadComponent()
 download_component.show_download_summary(
-    output_dir=output_directory,
+    output_dir=geotiff_directory,
     successful_downloads=file_count,
     drive_exports=drive_count
 )
 ```
+
+### File Type Strategy
+- **CSV/NetCDF**: `create_automatic_download()` → Immediate browser save dialog
+- **Single GeoTIFF**: `create_automatic_download()` → Immediate download  
+- **Multiple GeoTIFFs**: `show_download_summary()` → ZIP packaging + download options
 
 ### Advanced Integration
 ```python
@@ -289,6 +364,47 @@ if successful_downloads > 0 or drive_exports > 0:
         successful_downloads=successful_downloads,
         drive_exports=drive_exports
     )
+```
+
+### Instant Download Integration
+```python
+# For CSV files
+download_helper.create_instant_download(
+    output_path, 
+    download_name=os.path.basename(output_path),
+    show_success=False
+)
+
+# For NetCDF files  
+download_helper.create_instant_download(
+    output_path, 
+    download_name=os.path.basename(output_path),
+    show_success=False
+)
+
+# For single GeoTIFF files
+download_helper.create_instant_download(
+    result_path, 
+    download_name=os.path.basename(result_path),
+    show_success=False
+)
+```
+
+### Automatic Download Integration
+```python
+# For single CSV file
+download_helper.create_automatic_download(
+    file_path="data.csv",
+    download_name="climate_data.csv",
+    show_success=True
+)
+
+# For single NetCDF file
+download_helper.create_automatic_download(
+    file_path="data.nc",
+    download_name="climate_data.nc",
+    show_success=True
+)
 ```
 
 ## Future Enhancements
