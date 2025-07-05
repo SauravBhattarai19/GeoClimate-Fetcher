@@ -68,20 +68,210 @@ st.set_page_config(
     }
 )
 
-# Enhanced CSS with new styling
+# Import app components
+from app_components.theme_utils import apply_dark_mode_css
+
+# Apply universal dark mode support
+apply_dark_mode_css()
+
+# Enhanced CSS with dark mode support
 st.markdown("""
 <style>
-    /* Landing page styles */
-    .landing-hero {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        padding: 3rem 2rem;
-        border-radius: 20px;
-        text-align: center;
-        margin-bottom: 2rem;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+    /* Dark mode support - automatically detects user's browser preference */
+    @media (prefers-color-scheme: dark) {
+        .stApp {
+            background-color: #0e1117;
+            color: #fafafa;
+        }
+        
+        /* Landing page styles - dark mode */
+        .landing-hero {
+            background: linear-gradient(135deg, #1e3a8a 0%, #312e81 100%);
+            color: white;
+            padding: 3rem 2rem;
+            border-radius: 20px;
+            text-align: center;
+            margin-bottom: 2rem;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+        
+        .tool-card {
+            background: #262730;
+            border-radius: 15px;
+            padding: 2rem;
+            margin: 1rem 0;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+            border: 2px solid #464852;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        
+        .tool-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.4);
+            border-color: #667eea;
+        }
+        
+        .tool-title {
+            color: #fafafa;
+        }
+        
+        .tool-description {
+            color: #d0d0d0;
+        }
+        
+        .author-section {
+            background: #262730;
+            border-radius: 15px;
+            padding: 2rem;
+            margin-top: 3rem;
+            text-align: center;
+            border-left: 5px solid #667eea;
+            color: #fafafa;
+        }
+        
+        .feature-item {
+            background: #262730;
+            padding: 1rem;
+            border-radius: 10px;
+            text-align: center;
+            border: 1px solid #464852;
+            color: #fafafa;
+        }
+        
+        .step-header {
+            padding: 1rem;
+            background: linear-gradient(90deg, #1e293b, #334155);
+            border-left: 5px solid #1f77b4;
+            border-radius: 5px;
+            margin: 1rem 0;
+            color: #fafafa;
+        }
+        
+        .metric-card {
+            background: #262730;
+            padding: 1rem;
+            border-radius: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+            border-left: 4px solid #1f77b4;
+            margin: 0.5rem 0;
+            color: #fafafa;
+        }
+        
+        .info-box {
+            background: #262730;
+            border: 1px solid #464852;
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1rem 0;
+            color: #fafafa;
+        }
+        
+        .progress-steps {
+            display: flex;
+            justify-content: space-between;
+            margin: 2rem 0;
+            padding: 1rem;
+            background: #262730;
+            border-radius: 10px;
+            border: 1px solid #464852;
+        }
+        
+        .step-item {
+            color: #fafafa;
+        }
     }
     
+    /* Light mode styles (default) */
+    @media (prefers-color-scheme: light) {
+        .landing-hero {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 3rem 2rem;
+            border-radius: 20px;
+            text-align: center;
+            margin-bottom: 2rem;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+        
+        .tool-card {
+            background: white;
+            border-radius: 15px;
+            padding: 2rem;
+            margin: 1rem 0;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.08);
+            border: 2px solid transparent;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        
+        .tool-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+            border-color: #667eea;
+        }
+        
+        .tool-title {
+            color: #333;
+        }
+        
+        .tool-description {
+            color: #666;
+        }
+        
+        .author-section {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 2rem;
+            margin-top: 3rem;
+            text-align: center;
+            border-left: 5px solid #667eea;
+        }
+        
+        .feature-item {
+            background: #f0f4ff;
+            padding: 1rem;
+            border-radius: 10px;
+            text-align: center;
+            border: 1px solid #e0e7ff;
+        }
+        
+        .step-header {
+            padding: 1rem;
+            background: linear-gradient(90deg, #f0f8ff, #e6f3ff);
+            border-left: 5px solid #1f77b4;
+            border-radius: 5px;
+            margin: 1rem 0;
+        }
+        
+        .metric-card {
+            background: white;
+            padding: 1rem;
+            border-radius: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            border-left: 4px solid #1f77b4;
+            margin: 0.5rem 0;
+        }
+        
+        .info-box {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+        
+        .progress-steps {
+            display: flex;
+            justify-content: space-between;
+            margin: 2rem 0;
+            padding: 1rem;
+            background: #f8f9fa;
+            border-radius: 10px;
+        }
+    }
+    
+    /* Universal styles that work in both modes */
     .landing-title {
         font-size: 3.5rem;
         font-weight: bold;
@@ -95,23 +285,6 @@ st.markdown("""
         margin-bottom: 2rem;
     }
     
-    .tool-card {
-        background: white;
-        border-radius: 15px;
-        padding: 2rem;
-        margin: 1rem 0;
-        box-shadow: 0 5px 15px rgba(0,0,0,0.08);
-        border: 2px solid transparent;
-        transition: all 0.3s ease;
-        cursor: pointer;
-    }
-    
-    .tool-card:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 10px 25px rgba(0,0,0,0.15);
-        border-color: #667eea;
-    }
-    
     .tool-icon {
         font-size: 3rem;
         margin-bottom: 1rem;
@@ -121,22 +294,11 @@ st.markdown("""
     .tool-title {
         font-size: 1.5rem;
         font-weight: bold;
-        color: #333;
         margin-bottom: 0.5rem;
     }
     
     .tool-description {
-        color: #666;
         line-height: 1.6;
-    }
-    
-    .author-section {
-        background: #f8f9fa;
-        border-radius: 15px;
-        padding: 2rem;
-        margin-top: 3rem;
-        text-align: center;
-        border-left: 5px solid #667eea;
     }
     
     .feature-grid {
@@ -144,14 +306,6 @@ st.markdown("""
         grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
         gap: 1rem;
         margin: 2rem 0;
-    }
-    
-    .feature-item {
-        background: #f0f4ff;
-        padding: 1rem;
-        border-radius: 10px;
-        text-align: center;
-        border: 1px solid #e0e7ff;
     }
     
     .feature-icon {
@@ -172,15 +326,6 @@ st.markdown("""
         background-clip: text;
     }
     
-    /* Step headers */
-    .step-header {
-        padding: 1rem;
-        background: linear-gradient(90deg, #f0f8ff, #e6f3ff);
-        border-left: 5px solid #1f77b4;
-        border-radius: 5px;
-        margin: 1rem 0;
-    }
-    
     /* Status indicators */
     .status-complete {
         color: #28a745;
@@ -194,35 +339,6 @@ st.markdown("""
     
     .status-pending {
         color: #6c757d;
-    }
-    
-    /* Metric cards */
-    .metric-card {
-        background: white;
-        padding: 1rem;
-        border-radius: 10px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        border-left: 4px solid #1f77b4;
-        margin: 0.5rem 0;
-    }
-    
-    /* Info boxes */
-    .info-box {
-        background: #f8f9fa;
-        border: 1px solid #dee2e6;
-        border-radius: 8px;
-        padding: 1rem;
-        margin: 1rem 0;
-    }
-    
-    /* Progress indicator */
-    .progress-steps {
-        display: flex;
-        justify-content: space-between;
-        margin: 2rem 0;
-        padding: 1rem;
-        background: #f8f9fa;
-        border-radius: 10px;
     }
     
     .step-item {
@@ -270,6 +386,37 @@ st.markdown("""
     
     .back-button:hover {
         background: #5a6268;
+    }
+    
+    /* Enhanced Streamlit component styling for both themes */
+    .stSelectbox > div > div {
+        border-radius: 8px;
+    }
+    
+    .stTextInput > div > div > input {
+        border-radius: 8px;
+    }
+    
+    .stButton > button {
+        border-radius: 8px;
+        font-weight: 500;
+        transition: all 0.3s ease;
+    }
+    
+    /* Responsive design */
+    @media (max-width: 768px) {
+        .landing-title {
+            font-size: 2.5rem;
+        }
+        
+        .feature-grid {
+            grid-template-columns: 1fr;
+        }
+        
+        .progress-steps {
+            flex-direction: column;
+            gap: 1rem;
+        }
     }
 </style>
 """, unsafe_allow_html=True)

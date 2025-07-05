@@ -13,6 +13,14 @@ if str(geoclimate_path) not in sys.path:
 
 from geoclimate_fetcher.core import authenticate
 
+# Import theme utilities
+try:
+    from .theme_utils import apply_dark_mode_css
+except ImportError:
+    # Fallback if theme_utils is not available
+    def apply_dark_mode_css():
+        pass
+
 class AuthComponent:
     """Authentication component for Google Earth Engine"""
     
@@ -53,7 +61,43 @@ class AuthComponent:
     
     def render(self):
         """Render the authentication component"""
+        
+        # Apply universal dark mode CSS
+        apply_dark_mode_css()
+        
+        # Additional component-specific styling
+        st.markdown("""
+        <style>
+            .auth-form-container {
+                max-width: 800px;
+                margin: 0 auto;
+                padding: 1rem;
+            }
+            
+            .auth-header {
+                text-align: center;
+                margin-bottom: 2rem;
+            }
+            
+            .auth-instructions {
+                background: rgba(31, 119, 180, 0.1);
+                padding: 1rem;
+                border-radius: 10px;
+                border-left: 4px solid #1f77b4;
+                margin-bottom: 1rem;
+            }
+            
+            .credential-upload-info {
+                font-size: 0.9rem;
+                margin-top: 0.5rem;
+            }
+        </style>
+        """, unsafe_allow_html=True)
+        
+        st.markdown('<div class="auth-form-container">', unsafe_allow_html=True)
+        st.markdown('<div class="auth-header">', unsafe_allow_html=True)
         st.markdown("## 🔐 Google Earth Engine Authentication")
+        st.markdown('</div>', unsafe_allow_html=True)
         
         # Check if already authenticated
         if st.session_state.get('auth_complete', False):
@@ -223,4 +267,5 @@ class AuthComponent:
                         
                         return True  # Return True to indicate successful authentication
         
-        return False 
+        st.markdown('</div>', unsafe_allow_html=True)  # Close auth-form-container
+        return False
