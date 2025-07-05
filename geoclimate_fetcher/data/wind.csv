@@ -1,4 +1,0 @@
-Dataset Name,Earth Engine ID,Snippet Type,Provider,Start Date,End Date,Pixel Size (m),Temporal Resolution,Band Names,Band Units,Description
-ERA5 Daily Aggregates,ECMWF/ERA5/DAILY,ImageCollection,ECMWF,1/2/1979,7/9/2020,27830.0,Daily,"u_component_of_wind_10m, v_component_of_wind_10m","m/s, m/s",Daily surface climate variables (2m temperature
-TerraClimate Monthly Climate,IDAHO_EPSCOR/TERRACLIMATE,ImageCollection,Univ. of Idaho / Google (UC Merced),1/1/1958,12/1/2024,4638.0,Monthly,wind,m/s,Monthly high-resolution (~4 km) global climate data including temperature
-GLDAS-2.1 Noah (0.25° 3-hourly),NASA/GLDAS/V021/NOAH/G025/T3H,ImageCollection,NASA GSFC (GES DISC),1/1/2000,4/10/2025,27830.0,3 Hours,Wind_f_inst,m/s,3-hourly global land surface model outputs (e.g. evaporation

@@ -1,7 +1,0 @@
-Dataset Name,Earth Engine ID,Snippet Type,Provider,Start Date,End Date,Pixel Size (m),Temporal Resolution,Band Names,Band Units,Description
-GridMET Daily Meteorology (CONUS),IDAHO_EPSCOR/GRIDMET,ImageCollection,University of Idaho,1/1/1979,4/18/2025,4000.0,Daily,srad,W/m^2,Daily 4-km gridded meteorological variables for the contiguous US
-TerraClimate Monthly Climate,IDAHO_EPSCOR/TERRACLIMATE,ImageCollection,Univ. of Idaho / Google (UC Merced),1/1/1958,12/1/2024,4638.0,Monthly,"swe, srad","mm, W/m^2",Monthly high-resolution (~4 km) global climate data including temperature
-MODIS Terra+Aqua Vegetation Indices (16-day 1km),MODIS/061/MCD13A2,ImageCollection,NASA LP DAAC (USGS),2/18/2000,3/22/2025,1000.0,16 Days,SolarZenith,deg,16-day composite global vegetation indices (NDVI & EVI) at 1-km resolution
-FLDAS NOAH Land Data Assimilation (Monthly 0.1°),NASA/FLDAS/NOAH01/C/GL/M/V001,ImageCollection,NASA GSFC (GES DISC),1/1/1982,2/1/2025,27830.0,Monthly,SWE_inst,kg/m^2,Monthly global land surface model outputs (FEWS NET FLDAS Noah) – precipitation
-GLDAS-2.2 CLSM (0.25° daily),NASA/GLDAS/V022/CLSM/G025/DA1D,ImageCollection,NASA GSFC (GES DISC),1/1/2003,1/31/2025,27830.0,Daily,SWE_tavg,kg/m^2,Daily global land surface variables (incl. soil moisture and evapotranspiration) from GLDAS-2.2 (Catchment model with GRACE DA)
-Daymet V4 Daily Meteorology (NA),NASA/ORNL/DAYMET_V4,ImageCollection,ORNL DAAC (US DOE),1/1/1980,12/31/2023,1000.0,Daily,"srad, swe","W/m^2, kg/m^2",Daily 1-km gridded weather data for North America: max/min temperature

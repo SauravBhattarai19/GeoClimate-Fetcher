@@ -90,6 +90,7 @@ private-key.json
 tests/
 .vs/
 data/*.ipynb
+file/
 
 # Allow only data/*.csv and ignore all others
 !data/*.csv          # 👈 Must come BEFORE *.csv to take effect
