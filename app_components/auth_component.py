@@ -1,6 +1,7 @@
 import streamlit as st
 import os
 import json
+import time
 from pathlib import Path
 import sys
 
@@ -58,15 +59,16 @@ class AuthComponent:
         if st.session_state.get('auth_complete', False):
             st.success("✅ Already authenticated with Google Earth Engine!")
             
-            col1, col2 = st.columns(2)
+            col1, col2 = st.columns([3, 1])
             with col1:
-                if st.button("Continue to Area Selection", type="primary"):
-                    return True
+                st.info("🚀 Authentication complete! You can now proceed to the next step.")
             with col2:
-                if st.button("Re-authenticate"):
+                if st.button("Re-authenticate", help="Click to authenticate with different credentials"):
                     st.session_state.auth_complete = False
                     st.rerun()
-            return False
+            
+            return True  # This will allow the main app to proceed to next step
+        
         
         # Load saved credentials
         saved_credentials = self.load_saved_credentials()
@@ -215,8 +217,10 @@ class AuthComponent:
                         st.session_state.auth_complete = True
                         st.session_state.auth_project_id = project_id
                         
-                        # Show success message and continue button
+                        # Show success message - the main app will handle proceeding to next step
                         st.balloons()
-                        st.success("🎉 Authentication complete! Use the button below to proceed.")
+                        st.success("🎉 Authentication complete! Proceeding to next step...")
+                        
+                        return True  # Return True to indicate successful authentication
         
         return False 

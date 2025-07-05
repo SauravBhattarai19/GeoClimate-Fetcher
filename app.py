@@ -613,6 +613,7 @@ elif st.session_state.app_mode == "data_explorer":
         
         auth_component = AuthComponent()
         if auth_component.render():
+            # Authentication is complete, automatically proceed to next step
             st.rerun()
 
     else:
@@ -2127,6 +2128,7 @@ elif st.session_state.app_mode == "climate_analytics":
         
         auth_component = AuthComponent()
         if auth_component.render():
+            # Authentication is complete, automatically proceed to next step
             st.rerun()
         else:
             st.stop()
