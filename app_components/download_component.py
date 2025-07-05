@@ -1,7 +1,15 @@
+"""
+Enhanced Download Component for GeoClimate Fetcher
+Provides file download functionality for users to get their processed data.
+"""
+
 import streamlit as st
 import os
-from pathlib import Path
 import sys
+import zipfile
+import tempfile
+import shutil
+from pathlib import Path
 from datetime import datetime
 import pandas as pd
 import ee
@@ -13,6 +21,192 @@ if str(geoclimate_path) not in sys.path:
     sys.path.insert(0, str(geoclimate_path))
 
 from geoclimate_fetcher.core import GEEExporter, ImageCollectionFetcher, StaticRasterFetcher
+
+class DownloadHelper:
+    """Helper class for file downloads"""
+    
+    def __init__(self):
+        self.temp_dir = tempfile.mkdtemp()
+    
+    def create_download_button(self, file_path, download_name=None, mime_type=None):
+        """Create a download button for a single file"""
+        if not os.path.exists(file_path):
+            st.error(f"❌ File not found: {file_path}")
+            return False
+            
+        if download_name is None:
+            download_name = os.path.basename(file_path)
+            
+        file_size = os.path.getsize(file_path)
+        file_size_mb = file_size / (1024 * 1024)
+        
+        # Read file content
+        try:
+            with open(file_path, 'rb') as f:
+                file_data = f.read()
+            
+            # Determine MIME type if not provided
+            if mime_type is None:
+                ext = os.path.splitext(file_path)[1].lower()
+                mime_types = {
+                    '.tif': 'image/tiff',
+                    '.tiff': 'image/tiff',
+                    '.nc': 'application/x-netcdf',
+                    '.csv': 'text/csv',
+                    '.zip': 'application/zip',
+                    '.json': 'application/json'
+                }
+                mime_type = mime_types.get(ext, 'application/octet-stream')
+            
+            # Create download button
+            st.download_button(
+                label=f"📥 Download {download_name} ({file_size_mb:.1f} MB)",
+                data=file_data,
+                file_name=download_name,
+                mime=mime_type,
+                type="primary"
+            )
+            return True
+            
+        except Exception as e:
+            st.error(f"❌ Error preparing download: {str(e)}")
+            return False
+    
+    def create_zip_download(self, source_dir, zip_name=None, include_subdirs=True):
+        """Create a ZIP file from a directory and provide download"""
+        if not os.path.exists(source_dir):
+            st.error(f"❌ Directory not found: {source_dir}")
+            return False
+            
+        if zip_name is None:
+            dir_name = os.path.basename(source_dir.rstrip('/\\'))
+            zip_name = f"{dir_name}.zip"
+        
+        if not zip_name.endswith('.zip'):
+            zip_name += '.zip'
+            
+        # Create ZIP file in temporary directory
+        zip_path = os.path.join(self.temp_dir, zip_name)
+        
+        try:
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                total_files = 0
+                
+                if include_subdirs:
+                    # Include all files and subdirectories
+                    for root, dirs, files in os.walk(source_dir):
+                        for file in files:
+                            file_path = os.path.join(root, file)
+                            # Create relative path for ZIP
+                            arcname = os.path.relpath(file_path, source_dir)
+                            zipf.write(file_path, arcname)
+                            total_files += 1
+                else:
+                    # Include only files in the main directory
+                    for file in os.listdir(source_dir):
+                        file_path = os.path.join(source_dir, file)
+                        if os.path.isfile(file_path):
+                            zipf.write(file_path, file)
+                            total_files += 1
+            
+            if total_files == 0:
+                st.warning("⚠️ No files found to zip")
+                return False
+            
+            # Get ZIP file size
+            zip_size = os.path.getsize(zip_path)
+            zip_size_mb = zip_size / (1024 * 1024)
+            
+            # Read ZIP file for download
+            with open(zip_path, 'rb') as f:
+                zip_data = f.read()
+            
+            # Create download button
+            st.download_button(
+                label=f"📦 Download ZIP ({total_files} files, {zip_size_mb:.1f} MB)",
+                data=zip_data,
+                file_name=zip_name,
+                mime='application/zip',
+                type="primary"
+            )
+            
+            # Clean up temporary ZIP file
+            os.remove(zip_path)
+            return True
+            
+        except Exception as e:
+            st.error(f"❌ Error creating ZIP: {str(e)}")
+            return False
+    
+    def create_multi_file_download(self, file_paths, zip_name=None):
+        """Create a ZIP download for multiple specific files"""
+        if not file_paths:
+            st.warning("⚠️ No files provided for download")
+            return False
+            
+        # Filter existing files
+        existing_files = [f for f in file_paths if os.path.exists(f)]
+        
+        if not existing_files:
+            st.error("❌ No valid files found for download")
+            return False
+            
+        if len(existing_files) == 1:
+            # Single file - direct download
+            return self.create_download_button(existing_files[0])
+        
+        # Multiple files - create ZIP
+        if zip_name is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            zip_name = f"geoclimate_data_{timestamp}.zip"
+            
+        if not zip_name.endswith('.zip'):
+            zip_name += '.zip'
+            
+        zip_path = os.path.join(self.temp_dir, zip_name)
+        
+        try:
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for file_path in existing_files:
+                    filename = os.path.basename(file_path)
+                    zipf.write(file_path, filename)
+            
+            # Get ZIP file size
+            zip_size = os.path.getsize(zip_path)
+            zip_size_mb = zip_size / (1024 * 1024)
+            
+            # Read ZIP file for download
+            with open(zip_path, 'rb') as f:
+                zip_data = f.read()
+            
+            # Create download button
+            st.download_button(
+                label=f"📦 Download ZIP ({len(existing_files)} files, {zip_size_mb:.1f} MB)",
+                data=zip_data,
+                file_name=zip_name,
+                mime='application/zip',
+                type="primary"
+            )
+            
+            # Clean up temporary ZIP file
+            os.remove(zip_path)
+            return True
+            
+        except Exception as e:
+            st.error(f"❌ Error creating multi-file ZIP: {str(e)}")
+            return False
+    
+    def cleanup(self):
+        """Clean up temporary files"""
+        try:
+            if os.path.exists(self.temp_dir):
+                shutil.rmtree(self.temp_dir)
+        except Exception:
+            pass  # Ignore cleanup errors
+    
+    def __del__(self):
+        """Cleanup when object is destroyed"""
+        self.cleanup()
 
 class DownloadComponent:
     """Component for download configuration and execution"""
@@ -488,4 +682,167 @@ class DownloadComponent:
             
         except Exception as e:
             st.error(f"Error downloading Image: {str(e)}")
-            return False 
+            return False
+    
+    def show_download_summary(self, output_dir, successful_downloads=0, drive_exports=0):
+        """Show download summary with download options for users"""
+        st.markdown("---")
+        st.markdown("## 📥 Download Your Data")
+        
+        download_helper = DownloadHelper()
+        
+        if successful_downloads == 0 and drive_exports == 0:
+            st.warning("⚠️ No files were successfully processed for download")
+            if drive_exports > 0:
+                st.info("📤 Files were sent to Google Drive. Check your Google Drive folder.")
+                st.markdown("🔗 [Check Google Drive Tasks](https://code.earthengine.google.com/tasks)")
+            return
+        
+        # Check what files exist in output directory
+        if os.path.exists(output_dir):
+            files = []
+            dirs = []
+            
+            for item in os.listdir(output_dir):
+                item_path = os.path.join(output_dir, item)
+                if os.path.isfile(item_path):
+                    files.append(item_path)
+                elif os.path.isdir(item_path):
+                    # Check if directory has files
+                    dir_files = []
+                    for root, _, filenames in os.walk(item_path):
+                        for filename in filenames:
+                            dir_files.append(os.path.join(root, filename))
+                    if dir_files:
+                        dirs.append((item_path, dir_files))
+            
+            # Show download options
+            if files or dirs:
+                col1, col2 = st.columns([3, 1])
+                
+                with col1:
+                    if files and not dirs:
+                        # Files in main directory
+                        if len(files) == 1:
+                            st.info("📁 Single file ready for download:")
+                            download_helper.create_download_button(files[0])
+                        else:
+                            st.info(f"📁 {len(files)} files ready for download:")
+                            
+                            # Option to download all as ZIP
+                            download_option = st.radio(
+                                "Download option:",
+                                ["Download all as ZIP", "Download individual files"],
+                                key="main_download_option"
+                            )
+                            
+                            if download_option == "Download all as ZIP":
+                                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                zip_name = f"geoclimate_data_{timestamp}.zip"
+                                download_helper.create_multi_file_download(files, zip_name)
+                            else:
+                                st.markdown("**Individual file downloads:**")
+                                for file_path in files:
+                                    filename = os.path.basename(file_path)
+                                    file_size = os.path.getsize(file_path) / (1024 * 1024)
+                                    
+                                    col_file, col_download = st.columns([3, 1])
+                                    with col_file:
+                                        st.text(f"📄 {filename} ({file_size:.1f} MB)")
+                                    with col_download:
+                                        download_helper.create_download_button(file_path)
+                    
+                    elif dirs:
+                        # Directories with files (common for multiple GeoTIFFs)
+                        for dir_path, dir_files in dirs:
+                            dir_name = os.path.basename(dir_path)
+                            st.info(f"📁 {dir_name} ({len(dir_files)} files)")
+                            
+                            # Calculate total size
+                            total_size = sum(os.path.getsize(f) for f in dir_files) / (1024 * 1024)
+                            
+                            if len(dir_files) == 1:
+                                # Single file in directory
+                                download_helper.create_download_button(dir_files[0])
+                            else:
+                                # Multiple files - offer ZIP download
+                                st.markdown(f"**Download options for {dir_name}:**")
+                                
+                                # ZIP download button
+                                zip_name = f"{dir_name}.zip"
+                                download_helper.create_zip_download(dir_path, zip_name)
+                                
+                                # Also show individual files in expander
+                                with st.expander(f"View individual files in {dir_name}"):
+                                    for file_path in dir_files:
+                                        filename = os.path.basename(file_path)
+                                        file_size = os.path.getsize(file_path) / (1024 * 1024)
+                                        
+                                        col_file, col_download = st.columns([3, 1])
+                                        with col_file:
+                                            st.text(f"📄 {filename} ({file_size:.1f} MB)")
+                                        with col_download:
+                                            download_helper.create_download_button(file_path)
+                    
+                    # Also include files in main directory if there are dirs
+                    if files and dirs:
+                        st.markdown("**Additional files:**")
+                        for file_path in files:
+                            filename = os.path.basename(file_path)
+                            file_size = os.path.getsize(file_path) / (1024 * 1024)
+                            
+                            col_file, col_download = st.columns([3, 1])
+                            with col_file:
+                                st.text(f"📄 {filename} ({file_size:.1f} MB)")
+                            with col_download:
+                                download_helper.create_download_button(file_path)
+                
+                with col2:
+                    st.markdown("**📊 Summary:**")
+                    if successful_downloads > 0:
+                        st.success(f"✅ {successful_downloads} files processed")
+                    if drive_exports > 0:
+                        st.info(f"📤 {drive_exports} files sent to Google Drive")
+                        st.markdown("🔗 [Check Google Drive Tasks](https://code.earthengine.google.com/tasks)")
+                    
+                    # Show total storage used
+                    if files or dirs:
+                        all_files = files[:]
+                        for _, dir_files in dirs:
+                            all_files.extend(dir_files)
+                        
+                        total_size = sum(os.path.getsize(f) for f in all_files if os.path.exists(f))
+                        total_size_mb = total_size / (1024 * 1024)
+                        st.metric("Total Size", f"{total_size_mb:.1f} MB")
+            
+            else:
+                st.warning("⚠️ No download files found in output directory")
+                if drive_exports > 0:
+                    st.info("📤 All files were sent to Google Drive due to size constraints")
+                    st.markdown("🔗 [Check Google Drive Tasks](https://code.earthengine.google.com/tasks)")
+        else:
+            st.error("❌ Output directory not found")
+        
+        # Add helpful information
+        with st.expander("💡 Download Tips"):
+            st.markdown("""
+            **File Formats:**
+            - **GeoTIFF (.tif)**: Raster images for GIS software (QGIS, ArcGIS, etc.)
+            - **NetCDF (.nc)**: Scientific data format for analysis (Python, R, MATLAB)
+            - **CSV (.csv)**: Tabular data for spreadsheets (Excel, Google Sheets)
+            - **ZIP (.zip)**: Compressed archive of multiple files
+            
+            **Large Downloads:**
+            - Files > 50MB are automatically sent to Google Drive
+            - Check your Google Drive for large datasets
+            - ZIP files compress data for faster downloads
+            - Multiple GeoTIFFs are automatically packaged as ZIP
+            
+            **Using Downloaded Data:**
+            - GeoTIFF files can be opened in QGIS, ArcGIS, or Python (rasterio, gdal)
+            - NetCDF files work well with xarray, rioxarray in Python
+            - CSV files contain statistical summaries and time series data
+            """)
+        
+        # Cleanup
+        download_helper.cleanup()

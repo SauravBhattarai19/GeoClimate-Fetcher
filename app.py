@@ -1997,11 +1997,18 @@ elif st.session_state.app_mode == "data_explorer":
                                     except Exception as e:
                                         st.warning(f"⚠️ Failed to process image {i+1}: {str(e)}")
                                 
-                                # Summary
-                                if successful_downloads > 0:
-                                    st.success(f"✅ {successful_downloads} images saved to `{geotiff_dir}`")
-                                if drive_exports > 0:
-                                    st.info(f"📤 {drive_exports} images sent to Google Drive folder '{drive_folder}'")
+                                # Summary with download options
+                                if successful_downloads > 0 or drive_exports > 0:
+                                    # Import download component
+                                    from app_components.download_component import DownloadComponent
+                                    download_component = DownloadComponent()
+                                    download_component.show_download_summary(
+                                        output_dir=geotiff_dir,
+                                        successful_downloads=successful_downloads,
+                                        drive_exports=drive_exports
+                                    )
+                                else:
+                                    st.warning("⚠️ No files were successfully processed")
                         
                         else:  # Static Image
                             fetcher = StaticRasterFetcher(ee_id=ee_id, bands=selected_bands, geometry=processing_geometry)
@@ -2013,7 +2020,14 @@ elif st.session_state.app_mode == "data_explorer":
                                 rows = [{'band': band, **band_stats} for band, band_stats in stats.items()]
                                 df = pd.DataFrame(rows)
                                 exporter.export_time_series_to_csv(df, output_path)
-                                st.success(f"✅ Statistics exported to `{output_path}`")
+                                
+                                # Show success and download option
+                                from app_components.download_component import DownloadHelper
+                                download_helper = DownloadHelper()
+                                
+                                st.success(f"✅ Statistics exported successfully!")
+                                st.markdown("### 📥 Download Your Data")
+                                download_helper.create_download_button(output_path)
                                 
                             elif file_format.lower() == 'netcdf':
                                 st.info("🌐 Creating NetCDF from static image...")
@@ -2050,7 +2064,14 @@ elif st.session_state.app_mode == "data_explorer":
                                     })
                                     
                                     exporter.export_gridded_data_to_netcdf(ds, output_path)
-                                    st.success(f"✅ NetCDF exported to `{output_path}`")
+                                    
+                                    # Show success and download option
+                                    from app_components.download_component import DownloadHelper
+                                    download_helper = DownloadHelper()
+                                    
+                                    st.success(f"✅ NetCDF exported successfully!")
+                                    st.markdown("### 📥 Download Your Data")
+                                    download_helper.create_download_button(output_path)
                                 else:
                                     st.error("❌ No pixel data retrieved")
                                     
@@ -2096,7 +2117,13 @@ elif st.session_state.app_mode == "data_explorer":
                                     )
                                     
                                     if os.path.exists(result_path) and os.path.getsize(result_path) > 0:
-                                        st.success(f"✅ GeoTIFF exported to `{output_path}`")
+                                        # Show success and download option
+                                        from app_components.download_component import DownloadHelper
+                                        download_helper = DownloadHelper()
+                                        
+                                        st.success(f"✅ GeoTIFF exported successfully!")
+                                        st.markdown("### 📥 Download Your Data")
+                                        download_helper.create_download_button(result_path)
                                     else:
                                         raise ValueError("Local export failed")
                                         
