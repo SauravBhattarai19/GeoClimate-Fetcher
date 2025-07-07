@@ -1,4 +1,19 @@
 import streamlit as st
+
+# Configure Streamlit page - MUST be first Streamlit command
+st.set_page_config(
+    page_title="GeoClimate Intelligence Platform",
+    page_icon="🌍",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+    menu_items={
+        'Get Help': 'https://github.com/sauravbhattarai19/geoclimate-platform',
+        'Report a bug': "https://github.com/sauravbhattarai19/geoclimate-platform/issues",
+        'About': "# GeoClimate Intelligence Platform\nA comprehensive platform for Earth Engine climate data analysis and intelligence!"
+    }
+)
+
+# Now import the rest of the modules
 import ee
 import geemap.foliumap as geemap
 import folium
@@ -19,7 +34,7 @@ from geoclimate_fetcher.climate_indices import ClimateIndicesCalculator
 import hashlib
 import extra_streamlit_components as stx
 
-# Create cookie manager
+# Create cookie manager (after st.set_page_config)
 cookie_manager = stx.CookieManager()
 
 # Function to create a secure token
@@ -54,19 +69,6 @@ def check_stored_auth():
         if validate_auth_token(auth_cookie, project_cookie):
             return project_cookie
     return None
-
-# Configure Streamlit page
-st.set_page_config(
-    page_title="GeoClimate Intelligence Platform",
-    page_icon="🌍",
-    layout="wide",
-    initial_sidebar_state="collapsed",
-    menu_items={
-        'Get Help': 'https://github.com/sauravbhattarai19/geoclimate-platform',
-        'Report a bug': "https://github.com/sauravbhattarai19/geoclimate-platform/issues",
-        'About': "# GeoClimate Intelligence Platform\nA comprehensive platform for Earth Engine climate data analysis and intelligence!"
-    }
-)
 
 # Import app components
 from app_components.theme_utils import apply_dark_mode_css
