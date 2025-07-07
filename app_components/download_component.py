@@ -310,6 +310,11 @@ class DownloadHelper:
         file_size = os.path.getsize(file_path)
         file_size_mb = file_size / (1024 * 1024)
         
+        # Check if file is too large for browser download (>100MB)
+        if file_size_mb > 100:
+            st.warning(f"⚠️ File is too large ({file_size_mb:.1f} MB) for browser download. Using fallback method.")
+            return self.create_download_button(file_path, download_name)
+        
         try:
             with open(file_path, 'rb') as f:
                 file_data = f.read()
@@ -328,7 +333,11 @@ class DownloadHelper:
             
             # Create immediate download
             import base64
-            b64 = base64.b64encode(file_data).decode()
+            try:
+                b64 = base64.b64encode(file_data).decode()
+            except Exception as e:
+                st.error(f"❌ Error encoding file: {str(e)}")
+                return self.create_download_button(file_path, download_name)
             
             # Generate unique ID for this download
             download_id = f"instant_download_{abs(hash(str(file_path) + str(file_size)))}"
@@ -361,36 +370,70 @@ class DownloadHelper:
             </div>
             
             <script>
-                function startDownload_{download_id}() {{
-                    // Create download link
-                    const link = document.createElement('a');
-                    link.href = 'data:{mime_type};base64,{b64}';
-                    link.download = '{download_name}';
-                    link.style.display = 'none';
-                    
-                    // Add to DOM and trigger click
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
-                    
-                    // Update UI to show download started
-                    const statusDiv = document.getElementById('download_status_{download_id}');
-                    statusDiv.innerHTML = `
-                        <div style="background: #d4edda; color: #155724; padding: 1rem; border-radius: 5px; margin: 1rem 0;">
-                            ✅ <strong>Download Started!</strong><br>
-                            <small>Check your browser's Downloads folder or the location you selected.</small>
-                        </div>
-                        <button onclick="startDownload_{download_id}()" 
-                                style="background: #28a745; color: white; border: none; padding: 0.5rem 1rem; border-radius: 5px; cursor: pointer; margin-top: 0.5rem;">
-                            📥 Download Again
-                        </button>
-                    `;
-                }}
+                // Ensure function is defined in global scope
+                window.startDownload_{download_id} = function() {{
+                    try {{
+                        console.log('Starting download for {download_name}');
+                        
+                        // Create download link
+                        const link = document.createElement('a');
+                        link.href = 'data:{mime_type};base64,{b64}';
+                        link.download = '{download_name}';
+                        link.style.display = 'none';
+                        
+                        // Add to DOM and trigger click
+                        document.body.appendChild(link);
+                        link.click();
+                        
+                        // Clean up
+                        setTimeout(function() {{
+                            document.body.removeChild(link);
+                        }}, 100);
+                        
+                        // Update UI to show download started
+                        const statusDiv = document.getElementById('download_status_{download_id}');
+                        if (statusDiv) {{
+                            statusDiv.innerHTML = `
+                                <div style="background: #d4edda; color: #155724; padding: 1rem; border-radius: 5px; margin: 1rem 0;">
+                                    ✅ <strong>Download Started!</strong><br>
+                                    <small>Check your browser's Downloads folder or the location you selected.</small>
+                                </div>
+                                <button onclick="startDownload_{download_id}()" 
+                                        style="background: #28a745; color: white; border: none; padding: 0.5rem 1rem; border-radius: 5px; cursor: pointer; margin-top: 0.5rem;">
+                                    📥 Download Again
+                                </button>
+                            `;
+                        }}
+                        
+                        console.log('Download initiated successfully');
+                    }} catch (error) {{
+                        console.error('Download error:', error);
+                        alert('Download failed. Please try using the fallback download button below.');
+                    }}
+                }};
+                
+                // Auto-execute for testing
+                console.log('Download function loaded for {download_name}');
             </script>
             """, unsafe_allow_html=True)
             
             if show_success:
                 st.success("🎉 File processed successfully and ready for download!")
+            
+            # Always provide a fallback Streamlit download button
+            st.markdown("---")
+            st.markdown("**Alternative Download Method:**")
+            st.markdown("If the download button above doesn't work, use this fallback:")
+            
+            # Use Streamlit's native download button as backup
+            st.download_button(
+                label=f"📥 Fallback Download {download_name} ({file_size_mb:.1f} MB)",
+                data=file_data,
+                file_name=download_name,
+                mime=mime_type,
+                type="secondary",
+                help="Use this if the main download button doesn't work"
+            )
                 
             return True
             
@@ -438,6 +481,343 @@ class DownloadHelper:
             
             if show_success:
                 st.success(f"🎉 {download_name} is ready for download!")
+                
+            return True
+            
+        except Exception as e:
+            st.error(f"❌ Error preparing download: {str(e)}")
+            return False
+
+    def create_instant_download_debug(self, file_path, download_name=None, show_success=True):
+        """Create an instant download with debugging information"""
+        if not os.path.exists(file_path):
+            st.error(f"❌ File not found: {file_path}")
+            return False
+            
+        if download_name is None:
+            download_name = os.path.basename(file_path)
+            
+        file_size = os.path.getsize(file_path)
+        file_size_mb = file_size / (1024 * 1024)
+        
+        # Show debug info
+        st.markdown("### 🔍 Debug Information")
+        st.write(f"**File Path:** {file_path}")
+        st.write(f"**File Size:** {file_size_mb:.2f} MB")
+        st.write(f"**File Exists:** {os.path.exists(file_path)}")
+        
+        # Check if file is too large for browser download (>50MB)
+        if file_size_mb > 50:
+            st.warning(f"⚠️ File is large ({file_size_mb:.1f} MB). Browser download may be slow.")
+            
+        # Check if file is too large for data URL (>100MB)
+        if file_size_mb > 100:
+            st.error(f"❌ File is too large ({file_size_mb:.1f} MB) for browser data URL. Using fallback method.")
+            return self.create_download_button(file_path, download_name)
+        
+        try:
+            st.info("📖 Reading file content...")
+            with open(file_path, 'rb') as f:
+                file_data = f.read()
+            
+            st.success(f"✅ File read successfully ({len(file_data)} bytes)")
+            
+            # Determine MIME type
+            ext = os.path.splitext(file_path)[1].lower()
+            mime_types = {
+                '.tif': 'image/tiff',
+                '.tiff': 'image/tiff',
+                '.nc': 'application/x-netcdf',
+                '.csv': 'text/csv',
+                '.zip': 'application/zip',
+                '.json': 'application/json'
+            }
+            mime_type = mime_types.get(ext, 'application/octet-stream')
+            st.write(f"**MIME Type:** {mime_type}")
+            
+            # Create immediate download
+            import base64
+            try:
+                st.info("🔄 Encoding file to base64...")
+                b64 = base64.b64encode(file_data).decode()
+                st.success(f"✅ Base64 encoding successful ({len(b64)} characters)")
+            except Exception as e:
+                st.error(f"❌ Error encoding file: {str(e)}")
+                return self.create_download_button(file_path, download_name)
+            
+            # Generate unique ID for this download
+            download_id = f"debug_download_{abs(hash(str(file_path) + str(file_size)))}"
+            st.write(f"**Download ID:** {download_id}")
+            
+            # Create simple test download button first
+            st.markdown("### 🧪 Test Download")
+            st.download_button(
+                label=f"📥 Test Download {download_name}",
+                data=file_data,
+                file_name=download_name,
+                mime=mime_type,
+                type="primary",
+                help="This should work - native Streamlit download"
+            )
+            
+            # Create enhanced download with JavaScript
+            st.markdown("### 🚀 Enhanced Download")
+            st.markdown(f"""
+            <div id="download_container_{download_id}" style="text-align: center; margin: 2rem 0; padding: 1rem; border: 2px solid #1f77b4; border-radius: 10px; background: linear-gradient(135deg, #f0f8ff 0%, #e6f3ff 100%);">
+                <h3 style="color: #1f77b4; margin-bottom: 1rem;">📥 Enhanced Download Ready!</h3>
+                <p style="margin-bottom: 1rem; font-size: 1.1em;">
+                    <strong>{download_name}</strong> ({file_size_mb:.1f} MB)
+                </p>
+                <div id="download_status_{download_id}" style="margin: 1rem 0;">
+                    <button id="download_btn_{download_id}" 
+                            onclick="startDownload_{download_id}()" 
+                            style="background: #1f77b4; 
+                                   color: white; 
+                                   border: none; 
+                                   padding: 1rem 2rem; 
+                                   font-size: 1.1em; 
+                                   border-radius: 8px; 
+                                   cursor: pointer; 
+                                   font-weight: bold;
+                                   box-shadow: 0 2px 4px rgba(0,0,0,0.2);">
+                        📥 Download Now (Enhanced)
+                    </button>
+                </div>
+                <div id="debug_info_{download_id}" style="font-size: 0.8em; color: #666; margin-top: 1rem;">
+                    Click the button to test enhanced download
+                </div>
+            </div>
+            
+            <script>
+                // Debug logging
+                console.log('Setting up download function for {download_name}');
+                console.log('Download ID: {download_id}');
+                console.log('File size: {file_size_mb:.1f} MB');
+                console.log('MIME type: {mime_type}');
+                
+                // Ensure function is defined in global scope
+                window.startDownload_{download_id} = function() {{
+                    const debugDiv = document.getElementById('debug_info_{download_id}');
+                    try {{
+
+                        // Create download link
+                        const link = document.createElement('a');
+                        link.href = 'data:{mime_type};base64,{b64}';
+                        link.download = '{download_name}';
+                        link.style.display = 'none';
+                        
+                        console.log('Download link created');
+                        if (debugDiv) debugDiv.innerHTML = '⬇️ Initiating download...';
+                        
+                        // Add to DOM and trigger click
+                        document.body.appendChild(link);
+                        link.click();
+                        
+                        console.log('Download click triggered');
+                        if (debugDiv) debugDiv.innerHTML = '✅ Download initiated!';
+                        
+                        // Clean up
+                        setTimeout(function() {{
+                            document.body.removeChild(link);
+                            console.log('Download link cleaned up');
+                        }}, 100);
+                        
+                        // Update UI to show download started
+                        const statusDiv = document.getElementById('download_status_{download_id}');
+                        if (statusDiv) {{
+                            setTimeout(function() {{
+                                statusDiv.innerHTML = `
+                                    <div style="background: #d4edda; color: #155724; padding: 1rem; border-radius: 5px; margin: 1rem 0;">
+                                        ✅ <strong>Download Started!</strong><br>
+                                        <small>Check your browser's Downloads folder.</small>
+                                    </div>
+                                    <button onclick="startDownload_{download_id}()" 
+                                            style="background: #28a745; color: white; border: none; padding: 0.5rem 1rem; border-radius: 5px; cursor: pointer; margin-top: 0.5rem;">
+                                        📥 Download Again
+                                    </button>
+                                `;
+                            }}, 1000);
+                        }}
+                        
+                        console.log('Download process completed successfully');
+                    }} catch (error) {{
+                        console.error('Download error:', error);
+                        if (debugDiv) debugDiv.innerHTML = '❌ Download failed: ' + error.message;
+                        alert('Download failed: ' + error.message + '. Please try the fallback download button.');
+                    }}
+                }};
+                
+                // Test if function is accessible
+                console.log('Download function loaded:', typeof window.startDownload_{download_id});
+            </script>
+            """, unsafe_allow_html=True)
+            
+            if show_success:
+                st.success("🎉 Debug download setup complete!")
+                
+            return True
+            
+        except Exception as e:
+            st.error(f"❌ Error preparing download: {str(e)}")
+            return False
+    
+    def create_instant_download_debug_v2(self, file_path, download_name=None, show_success=True):
+        """Create an instant download with advanced debugging information"""
+        if not os.path.exists(file_path):
+            st.error(f"❌ File not found: {file_path}")
+            return False
+            
+        if download_name is None:
+            download_name = os.path.basename(file_path)
+            
+        file_size = os.path.getsize(file_path)
+        file_size_mb = file_size / (1024 * 1024)
+        
+        # Show debug info
+        st.markdown("### 🔍 Debug Information")
+        st.write(f"**File Path:** {file_path}")
+        st.write(f"**File Size:** {file_size_mb:.2f} MB")
+        st.write(f"**File Exists:** {os.path.exists(file_path)}")
+        
+        # Check if file is too large for browser download (>50MB)
+        if file_size_mb > 50:
+            st.warning(f"⚠️ File is large ({file_size_mb:.1f} MB). Browser download may be slow.")
+            
+        # Check if file is too large for data URL (>100MB)
+        if file_size_mb > 100:
+            st.error(f"❌ File is too large ({file_size_mb:.1f} MB) for browser data URL. Using fallback method.")
+            return self.create_download_button(file_path, download_name)
+        
+        try:
+            st.info("📖 Reading file content...")
+            with open(file_path, 'rb') as f:
+                file_data = f.read()
+            
+            st.success(f"✅ File read successfully ({len(file_data)} bytes)")
+            
+            # Determine MIME type
+            ext = os.path.splitext(file_path)[1].lower()
+            mime_types = {
+                '.tif': 'image/tiff',
+                '.tiff': 'image/tiff',
+                '.nc': 'application/x-netcdf',
+                '.csv': 'text/csv',
+                '.zip': 'application/zip',
+                '.json': 'application/json'
+            }
+            mime_type = mime_types.get(ext, 'application/octet-stream')
+            st.write(f"**MIME Type:** {mime_type}")
+            
+            # Create immediate download
+            import base64
+            try:
+                st.info("🔄 Encoding file to base64...")
+                b64 = base64.b64encode(file_data).decode()
+                st.success(f"✅ Base64 encoding successful ({len(b64)} characters)")
+            except Exception as e:
+                st.error(f"❌ Error encoding file: {str(e)}")
+                return self.create_download_button(file_path, download_name)
+            
+            # Generate unique ID for this download
+            download_id = f"debug_download_v2_{abs(hash(str(file_path) + str(file_size)))}"
+            st.write(f"**Download ID:** {download_id}")
+            
+            # Create enhanced download with JavaScript
+            st.markdown("### 🚀 Enhanced Download")
+            st.markdown(f"""
+            <div id="download_container_{download_id}" style="text-align: center; margin: 2rem 0; padding: 1rem; border: 2px solid #1f77b4; border-radius: 10px; background: linear-gradient(135deg, #f0f8ff 0%, #e6f3ff 100%);">
+                <h3 style="color: #1f77b4; margin-bottom: 1rem;">📥 Enhanced Download Ready!</h3>
+                <p style="margin-bottom: 1rem; font-size: 1.1em;">
+                    <strong>{download_name}</strong> ({file_size_mb:.1f} MB)
+                </p>
+                <div id="download_status_{download_id}" style="margin: 1rem 0;">
+                    <button id="download_btn_{download_id}" 
+                            onclick="startDownload_{download_id}()" 
+                            style="background: #1f77b4; 
+                                   color: white; 
+                                   border: none; 
+                                   padding: 1rem 2rem; 
+                                   font-size: 1.1em; 
+                                   border-radius: 8px; 
+                                   cursor: pointer; 
+                                   font-weight: bold;
+                                   box-shadow: 0 2px 4px rgba(0,0,0,0.2);">
+                        📥 Download Now (Enhanced)
+                    </button>
+                </div>
+                <div id="debug_info_{download_id}" style="font-size: 0.8em; color: #666; margin-top: 1rem;">
+                    Click the button to test enhanced download
+                </div>
+            </div>
+            
+            <script>
+                // Debug logging
+                console.log('Setting up download function for {download_name}');
+                console.log('Download ID: {download_id}');
+                console.log('File size: {file_size_mb:.1f} MB');
+                console.log('MIME type: {mime_type}');
+                
+                // Ensure function is defined in global scope
+                window.startDownload_{download_id} = function() {{
+                    const debugDiv = document.getElementById('debug_info_{download_id}');
+                    try {{
+                        console.log('Starting download for {download_name}');
+                        if (debugDiv) debugDiv.innerHTML = '🔄 Preparing download...';
+                        
+                        // Create download link
+                        const link = document.createElement('a');
+                        link.href = 'data:{mime_type};base64,{b64}';
+                        link.download = '{download_name}';
+                        link.style.display = 'none';
+                        
+                        console.log('Download link created');
+                        if (debugDiv) debugDiv.innerHTML = '⬇️ Initiating download...';
+                        
+                        // Add to DOM and trigger click
+                        document.body.appendChild(link);
+                        link.click();
+                        
+                        console.log('Download click triggered');
+                        if (debugDiv) debugDiv.innerHTML = '✅ Download initiated!';
+                        
+                        // Clean up
+                        setTimeout(function() {{
+                            document.body.removeChild(link);
+                            console.log('Download link cleaned up');
+                        }}, 100);
+                        
+                        // Update UI to show download started
+                        const statusDiv = document.getElementById('download_status_{download_id}');
+                        if (statusDiv) {{
+                            setTimeout(function() {{
+                                statusDiv.innerHTML = `
+                                    <div style="background: #d4edda; color: #155724; padding: 1rem; border-radius: 5px; margin: 1rem 0;">
+                                        ✅ <strong>Download Started!</strong><br>
+                                        <small>Check your browser's Downloads folder.</small>
+                                    </div>
+                                    <button onclick="startDownload_{download_id}()" 
+                                            style="background: #28a745; color: white; border: none; padding: 0.5rem 1rem; border-radius: 5px; cursor: pointer; margin-top: 0.5rem;">
+                                        📥 Download Again
+                                    </button>
+                                `;
+                            }}, 1000);
+                        }}
+                        
+                        console.log('Download process completed successfully');
+                    }} catch (error) {{
+                        console.error('Download error:', error);
+                        if (debugDiv) debugDiv.innerHTML = '❌ Download failed: ' + error.message;
+                        alert('Download failed: ' + error.message + '. Please try the fallback download button.');
+                    }}
+                }};
+                
+                // Test if function is accessible
+                console.log('Download function loaded:', typeof window.startDownload_{download_id});
+            </script>
+            """, unsafe_allow_html=True)
+            
+            if show_success:
+                st.success("🎉 Debug download setup complete!")
                 
             return True
             
