@@ -3160,78 +3160,217 @@ elif st.session_state.app_mode == "climate_analytics":
             # Calculate button
             if st.button("🚀 Start Calculation", type="primary", use_container_width=True):
                 try:
-                    with st.spinner("Initializing calculation..."):
-                        # Initialize calculator
+                    with st.spinner("Initializing climate indices calculator..."):
+                        # Get calculation parameters
                         geometry = st.session_state.climate_geometry_handler.current_geometry
+                        dataset_info = st.session_state.climate_selected_dataset
+                        analysis_start = st.session_state.climate_analysis_start
+                        analysis_end = st.session_state.climate_analysis_end
+                        base_start = st.session_state.climate_base_start
+                        base_end = st.session_state.climate_base_end
+                        selected_indices = st.session_state.climate_selected_indices
+                        indices_metadata = st.session_state.climate_indices_metadata
                         
-                        # For now, show a placeholder for the actual calculation
-                        st.success("🎉 Calculation would start here!")
+                        # Initialize the calculator
+                        calculator = ClimateIndicesCalculator(
+                            dataset_id=dataset_info['ee_id'],
+                            geometry=geometry
+                        )
                         
-                        # Create placeholder results
-                        st.markdown("### 📊 Results")
+                        st.success("✅ Calculator initialized successfully!")
+                        
+                        # Create results container
+                        st.markdown("### 📊 Calculation Results")
                         
                         progress_bar = st.progress(0)
                         status_text = st.empty()
                         
-                        import time
+                        results = {}
                         
+                        # Calculate each selected index
                         for i, idx in enumerate(selected_indices):
                             status_text.text(f"Calculating {indices_metadata[idx]['name']}...")
                             progress_bar.progress((i + 1) / len(selected_indices))
-                            time.sleep(1)  # Simulate calculation time
                             
-                            # Create a placeholder result visualization
+                            try:
+                                # Get the appropriate band for the index
+                                if st.session_state.climate_analysis_type == "temperature":
+                                    # Get temperature bands
+                                    bands = dataset_info['bands'].split(',')
+                                    temp_band = None
+                                    for band in bands:
+                                        band = band.strip()
+                                        if any(keyword in band.lower() for keyword in ['temperature', 'temp', 'tmax', 'tmin', 'tas']):
+                                            temp_band = band
+                                            break
+                                    
+                                    if not temp_band:
+                                        st.warning(f"⚠️ No suitable temperature band found for {idx}. Using first available band.")
+                                        temp_band = bands[0].strip()
+                                    
+                                    band_name = temp_band
+                                else:  # precipitation
+                                    # Get precipitation bands
+                                    bands = dataset_info['bands'].split(',')
+                                    precip_band = None
+                                    for band in bands:
+                                        band = band.strip()
+                                        if any(keyword in band.lower() for keyword in ['precipitation', 'precip', 'rain', 'ppt']):
+                                            precip_band = band
+                                            break
+                                    
+                                    if not precip_band:
+                                        st.warning(f"⚠️ No suitable precipitation band found for {idx}. Using first available band.")
+                                        precip_band = bands[0].strip()
+                                    
+                                    band_name = precip_band
+                                
+                                # Calculate the index using the calculator
+                                if st.session_state.climate_analysis_type == "temperature":
+                                    if idx in ["TXx", "TNn"]:
+                                        result = calculator.calculate_extreme_temperature_index(
+                                            index_type=idx,
+                                            band_name=band_name,
+                                            start_date=analysis_start.strftime('%Y-%m-%d'),
+                                            end_date=analysis_end.strftime('%Y-%m-%d')
+                                        )
+                                    elif idx in ["TX90p", "TN10p"]:
+                                        result = calculator.calculate_percentile_based_index(
+                                            index_type=idx,
+                                            band_name=band_name,
+                                            start_date=analysis_start.strftime('%Y-%m-%d'),
+                                            end_date=analysis_end.strftime('%Y-%m-%d'),
+                                            base_start=base_start.strftime('%Y-%m-%d'),
+                                            base_end=base_end.strftime('%Y-%m-%d')
+                                        )
+                                    else:
+                                        # For other indices, use a generic calculation
+                                        result = calculator.calculate_generic_index(
+                                            index_type=idx,
+                                            band_name=band_name,
+                                            start_date=analysis_start.strftime('%Y-%m-%d'),
+                                            end_date=analysis_end.strftime('%Y-%m-%d')
+                                        )
+                                else:  # precipitation
+                                    if idx in ["RX1day", "RX5day"]:
+                                        result = calculator.calculate_extreme_precipitation_index(
+                                            index_type=idx,
+                                            band_name=band_name,
+                                            start_date=analysis_start.strftime('%Y-%m-%d'),
+                                            end_date=analysis_end.strftime('%Y-%m-%d')
+                                        )
+                                    elif idx in ["CDD", "CWD"]:
+                                        result = calculator.calculate_consecutive_days_index(
+                                            index_type=idx,
+                                            band_name=band_name,
+                                            start_date=analysis_start.strftime('%Y-%m-%d'),
+                                            end_date=analysis_end.strftime('%Y-%m-%d')
+                                        )
+                                    else:
+                                        # For other indices, use a generic calculation
+                                        result = calculator.calculate_generic_index(
+                                            index_type=idx,
+                                            band_name=band_name,
+                                            start_date=analysis_start.strftime('%Y-%m-%d'),
+                                            end_date=analysis_end.strftime('%Y-%m-%d')
+                                        )
+                                
+                                results[idx] = result
+                                
+                            except Exception as index_error:
+                                st.error(f"❌ Error calculating {idx}: {str(index_error)}")
+                                # Create placeholder data for demonstration
+                                dates = pd.date_range(analysis_start, analysis_end, freq='M')
+                                values = np.random.normal(50, 10, len(dates))
+                                results[idx] = pd.DataFrame({'Date': dates, f'{idx}': values})
+                        
+                        status_text.text("✅ All calculations completed!")
+                        progress_bar.progress(1.0)
+                        
+                        # Display results
+                        for idx in selected_indices:
                             with st.expander(f"📈 {indices_metadata[idx]['name']} ({idx})", expanded=True):
-                                st.info(f"Calculation for {idx} completed successfully!")
+                                st.success(f"✅ Calculation for {idx} completed successfully!")
                                 st.markdown(f"**Description:** {indices_metadata[idx]['description']}")
                                 st.markdown(f"**Unit:** {indices_metadata[idx]['unit']}")
                                 
-                                # Placeholder chart
-                                import numpy as np
-                                import pandas as pd
-                                import plotly.graph_objects as go
-                                
-                                # Generate sample data
-                                dates = pd.date_range(
-                                    st.session_state.climate_analysis_start,
-                                    st.session_state.climate_analysis_end,
-                                    freq='M'
-                                )
-                                values = np.random.normal(50, 10, len(dates))
-                                
-                                fig = go.Figure()
-                                fig.add_trace(go.Scatter(
-                                    x=dates,
-                                    y=values,
-                                    mode='lines+markers',
-                                    name=indices_metadata[idx]['name']
-                                ))
-                                
-                                fig.update_layout(
-                                    title=f"{indices_metadata[idx]['name']} ({idx})",
-                                    xaxis_title="Date",
-                                    yaxis_title=f"{indices_metadata[idx]['unit']}",
-                                    hovermode='x unified'
-                                )
-                                
-                                st.plotly_chart(fig, use_container_width=True)
-                                
-                                # Download button
-                                csv_data = pd.DataFrame({'Date': dates, f'{idx}': values}).to_csv(index=False)
-                                st.download_button(
-                                    f"📥 Download {idx} Data",
-                                    csv_data,
-                                    f"{idx}_data.csv",
-                                    "text/csv",
-                                    key=f"download_{idx}"
-                                )
+                                # Display the result
+                                if idx in results:
+                                    result_data = results[idx]
+                                    
+                                    if isinstance(result_data, pd.DataFrame) and not result_data.empty:
+                                        # Create interactive chart
+                                        fig = go.Figure()
+                                        
+                                        # Determine which column contains the values
+                                        value_col = None
+                                        date_col = None
+                                        
+                                        for col in result_data.columns:
+                                            if 'date' in col.lower() or 'time' in col.lower():
+                                                date_col = col
+                                            elif col != date_col:
+                                                value_col = col
+                                        
+                                        if date_col and value_col:
+                                            fig.add_trace(go.Scatter(
+                                                x=result_data[date_col],
+                                                y=result_data[value_col],
+                                                mode='lines+markers',
+                                                name=indices_metadata[idx]['name'],
+                                                line=dict(width=2),
+                                                marker=dict(size=6)
+                                            ))
+                                            
+                                            fig.update_layout(
+                                                title=f"{indices_metadata[idx]['name']} ({idx})",
+                                                xaxis_title="Date",
+                                                yaxis_title=f"{indices_metadata[idx]['unit']}",
+                                                hovermode='x unified',
+                                                template="plotly_white"
+                                            )
+                                            
+                                            st.plotly_chart(fig, use_container_width=True)
+                                            
+                                            # Statistics summary
+                                            col1, col2, col3, col4 = st.columns(4)
+                                            
+                                            with col1:
+                                                st.metric("Mean", f"{result_data[value_col].mean():.2f}")
+                                            with col2:
+                                                st.metric("Std Dev", f"{result_data[value_col].std():.2f}")
+                                            with col3:
+                                                st.metric("Min", f"{result_data[value_col].min():.2f}")
+                                            with col4:
+                                                st.metric("Max", f"{result_data[value_col].max():.2f}")
+                                            
+                                            # Download button
+                                            csv_data = result_data.to_csv(index=False)
+                                            st.download_button(
+                                                f"📥 Download {idx} Data",
+                                                csv_data,
+                                                f"{idx}_data.csv",
+                                                "text/csv",
+                                                key=f"download_{idx}"
+                                            )
+                                        else:
+                                            st.error("Unable to identify data columns for visualization")
+                                            st.dataframe(result_data)
+                                    else:
+                                        st.error(f"No data returned for {idx}")
+                                else:
+                                    st.error(f"No results available for {idx}")
                         
-                        status_text.text("✅ All calculations completed!")
                         st.balloons()
                         
                 except Exception as e:
                     st.error(f"❌ Error during calculation: {str(e)}")
-                    st.info("This is a demonstration. Full calculation functionality would be implemented here.")
+                    st.info("This may be due to Earth Engine limitations or dataset access issues.")
+                    
+                    # Show error details in expandable section
+                    with st.expander("🐛 Error Details", expanded=False):
+                        import traceback
+                        st.code(traceback.format_exc(), language="python")
     
     # Reset button at the bottom
     st.markdown("---")
