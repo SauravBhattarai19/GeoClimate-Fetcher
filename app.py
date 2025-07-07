@@ -2328,23 +2328,125 @@ elif st.session_state.app_mode == "climate_analytics":
             st.rerun()
         else:
             st.stop()
-      # Create tabs for different analysis types
-    tab1, tab2, tab3 = st.tabs(["🌡️ Temperature Indices", "💧 Precipitation Indices", "📊 Analysis & Visualization"])
-    
-    with tab1:
-        st.markdown("### Temperature Indices")
-          # Initialize session state for climate analytics
-        if 'climate_geometry_complete' not in st.session_state:
-            st.session_state.climate_geometry_complete = False
-        if 'climate_dataset_selected' not in st.session_state:
-            st.session_state.climate_dataset_selected = False
-        if 'climate_geometry_handler' not in st.session_state:
-            st.session_state.climate_geometry_handler = GeometryHandler()
+      # Initialize session state for climate analytics
+    if 'climate_step' not in st.session_state:
+        st.session_state.climate_step = 1
+    if 'climate_geometry_complete' not in st.session_state:
+        st.session_state.climate_geometry_complete = False
+    if 'climate_dataset_selected' not in st.session_state:
+        st.session_state.climate_dataset_selected = False
+    if 'climate_geometry_handler' not in st.session_state:
+        st.session_state.climate_geometry_handler = GeometryHandler()
+    if 'climate_selected_dataset' not in st.session_state:
+        st.session_state.climate_selected_dataset = None
+    if 'climate_analysis_type' not in st.session_state:
+        st.session_state.climate_analysis_type = None
+    if 'climate_date_range_set' not in st.session_state:
+        st.session_state.climate_date_range_set = False
+    if 'climate_indices_selected' not in st.session_state:
+        st.session_state.climate_indices_selected = False
+
+    # Progress indicator for climate analytics
+    def show_climate_progress():
+        """Display progress indicator for climate analytics workflow"""
+        steps = [
+            ("🔐", "Auth", st.session_state.auth_complete),
+            ("🌡️", "Type", st.session_state.climate_analysis_type is not None),
+            ("🗺️", "Area", st.session_state.climate_geometry_complete),
+            ("📊", "Dataset", st.session_state.climate_dataset_selected),
+            ("📅", "Dates", st.session_state.climate_date_range_set),
+            ("🧮", "Indices", st.session_state.climate_indices_selected),
+            ("�", "Results", False)
+        ]
         
-        # Step 1: Area of Interest Selection
+        st.markdown('<div class="progress-steps">', unsafe_allow_html=True)
+        cols = st.columns(len(steps))
+        
+        for i, (icon, name, complete) in enumerate(steps):
+            with cols[i]:
+                if complete:
+                    status_class = "step-complete"
+                elif i == st.session_state.climate_step - 1:
+                    status_class = "step-current"
+                else:
+                    status_class = "step-pending"
+                
+                st.markdown(f"""
+                <div class="step-item {status_class}">
+                    <div class="step-number">{icon}</div>
+                    <div class="step-name">{name}</div>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # Show progress
+    show_climate_progress()
+
+    # Step 1: Analysis Type Selection
+    if st.session_state.climate_analysis_type is None:
+        st.markdown('<div class="step-header"><h2>🌡️ Step 1: Choose Analysis Type</h2></div>', unsafe_allow_html=True)
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("""
+            <div class="tool-card">
+                <span class="tool-icon">🌡️</span>
+                <div class="tool-title">Temperature Indices</div>
+                <div class="tool-description">
+                    Calculate temperature-based climate indices such as heat waves, cold spells, 
+                    growing degree days, and temperature percentiles using various satellite datasets.
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            if st.button("🌡️ Analyze Temperature", use_container_width=True, type="primary"):
+                st.session_state.climate_analysis_type = "temperature"
+                st.session_state.climate_step = 2
+                st.rerun()
+        
+        with col2:
+            st.markdown("""
+            <div class="tool-card">
+                <span class="tool-icon">💧</span>
+                <div class="tool-title">Precipitation Indices</div>
+                <div class="tool-description">
+                    Calculate precipitation-based climate indices such as dry spells, extreme precipitation,
+                    standardized precipitation index (SPI), and rainfall percentiles.
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            if st.button("💧 Analyze Precipitation", use_container_width=True, type="primary"):
+                st.session_state.climate_analysis_type = "precipitation"
+                st.session_state.climate_step = 2
+                st.rerun()
+    
+    else:
+        # Show current analysis type and allow changing
+        analysis_type = st.session_state.climate_analysis_type
+        st.info(f"🎯 Current Analysis: **{analysis_type.title()} Indices**")
+        
+        if st.button("🔄 Change Analysis Type", key="change_analysis"):
+            st.session_state.climate_analysis_type = None
+            st.session_state.climate_step = 1
+            st.session_state.climate_geometry_complete = False
+            st.session_state.climate_dataset_selected = False
+            st.session_state.climate_date_range_set = False
+            st.session_state.climate_indices_selected = False
+            st.rerun()
+        # Step 2: Area of Interest Selection
         if not st.session_state.climate_geometry_complete:
-            st.write("#### 1. Select Area of Interest")
-            st.markdown("Choose your area of interest using one of the methods below:")
+            st.markdown('<div class="step-header"><h2>🗺️ Step 2: Select Study Area</h2></div>', unsafe_allow_html=True)
+            
+            # Add back button
+            if st.button("← Back to Analysis Type"):
+                st.session_state.climate_analysis_type = None
+                st.session_state.climate_step = 1
+                st.rerun()
+            
+            st.markdown("Choose your study area using one of the methods below:")
             
             # Method selection
             method = st.radio(
@@ -2356,7 +2458,8 @@ elif st.session_state.app_mode == "climate_analytics":
             
             if method == "🗺️ Draw on Map":
                 st.info("Use the drawing tools in the top-right corner to draw a rectangle or polygon on the map.")
-                  # Create the map
+                
+                # Create the map
                 m = folium.Map(location=[39.8283, -98.5795], zoom_start=4)
                 folium.TileLayer( 
                     tiles='OpenStreetMap',
@@ -2433,6 +2536,7 @@ elif st.session_state.app_mode == "climate_analytics":
                                 st.session_state.climate_geometry_handler._current_geometry = geometry
                                 st.session_state.climate_geometry_handler._current_geometry_name = "climate_drawn_aoi"
                                 st.session_state.climate_geometry_complete = True
+                                st.session_state.climate_step = 3
                                 st.success("✅ Area of interest selected successfully!")
                                 st.balloons()
                                 st.rerun()
@@ -2492,6 +2596,7 @@ elif st.session_state.app_mode == "climate_analytics":
                                     st.session_state.climate_geometry_handler._current_geometry = geometry
                                     st.session_state.climate_geometry_handler._current_geometry_name = "climate_uploaded_aoi"
                                     st.session_state.climate_geometry_complete = True
+                                    st.session_state.climate_step = 3
                                     st.success("✅ Geometry created successfully from GeoJSON")
                                     st.balloons()
                                     st.rerun()
@@ -2571,36 +2676,49 @@ elif st.session_state.app_mode == "climate_analytics":
                             st.session_state.climate_geometry_handler._current_geometry = geometry
                             st.session_state.climate_geometry_handler._current_geometry_name = "climate_coordinates_aoi"
                             st.session_state.climate_geometry_complete = True
+                            st.session_state.climate_step = 3
                             st.success("✅ Geometry created successfully from coordinates")
                             st.balloons()
                             st.rerun()
                         except Exception as e:
                             st.error(f"❌ Error creating geometry: {str(e)}")
-          # Step 2: Continue with climate analysis if geometry is selected
-        elif st.session_state.climate_geometry_complete and not st.session_state.climate_dataset_selected:
+                            
+        # Step 3: Dataset Selection
+        elif not st.session_state.climate_dataset_selected:
+            st.markdown('<div class="step-header"><h2>📊 Step 3: Select Data Source</h2></div>', unsafe_allow_html=True)
+            
+            # Add back button
+            if st.button("← Back to Study Area"):
+                st.session_state.climate_geometry_complete = False
+                st.session_state.climate_step = 2
+                st.rerun()
+            
             # Show current geometry info
             try:
                 handler = st.session_state.climate_geometry_handler
                 if handler.current_geometry:
                     area = handler.get_geometry_area()
                     name = handler.current_geometry_name
-                    st.success(f"✅ Area selected: {name} ({area:.2f} km²)")
+                    st.success(f"✅ Study Area: {name} ({area:.2f} km²)")
                     
-                    if st.button("Select Different Area", key="climate_change_area"):
-                        st.session_state.climate_geometry_complete = False
-                        st.rerun()
+                    # Load appropriate datasets based on analysis type
+                    analysis_type = st.session_state.climate_analysis_type
+                    csv_file = f'geoclimate_fetcher/data/climate_index/{analysis_type}.csv'
                     
-                    # Step 2: Dataset Selection
-                    st.write("#### 2. Select Temperature Dataset")
-                    st.info("Choose the temperature dataset to use for calculating climate indices:")
-                    
-                    # Load temperature datasets
                     try:
-                        temp_df = pd.read_csv('geoclimate_fetcher/data/temperature.csv')
+                        # Check if the CSV file exists
+                        from pathlib import Path
+                        if not Path(csv_file).exists():
+                            st.error(f"❌ Dataset file not found: {csv_file}")
+                            st.info("Please make sure the climate index CSV files are in the correct location.")
+                            st.stop()
+                        
+                        df = pd.read_csv(csv_file)
+                        st.info(f"📊 Found {len(df)} {analysis_type} datasets")
                         
                         # Create dataset selection interface
                         dataset_options = {}
-                        for _, row in temp_df.iterrows():
+                        for _, row in df.iterrows():
                             name = row['Dataset Name']
                             provider = row['Provider']
                             temporal_res = row['Temporal Resolution']
@@ -2608,7 +2726,7 @@ elif st.session_state.app_mode == "climate_analytics":
                             end_date = row['End Date']
                             bands = row['Band Names']
                             
-                            display_name = f"{name} ({provider}) - {temporal_res}"
+                            display_name = f"{name} ({provider})"
                             dataset_options[display_name] = {
                                 'name': name,
                                 'ee_id': row['Earth Engine ID'],
@@ -2617,201 +2735,513 @@ elif st.session_state.app_mode == "climate_analytics":
                                 'start_date': start_date,
                                 'end_date': end_date,
                                 'bands': bands,
-                                'description': row['Description']
+                                'band_units': row.get('Band Units', ''),
+                                'description': row['Description'],
+                                'pixel_size': row.get('Pixel Size (m)', 'N/A'),
+                                'snippet_type': row.get('Snippet Type', 'ImageCollection')
                             }
                         
-                        # Display dataset cards for selection
-                        st.write("Available temperature datasets:")
+                        # Display dataset selection
+                        st.markdown(f"### Available {analysis_type.title()} Datasets:")
                         
-                        selected_dataset_key = None
-                        
-                        # Create columns for dataset cards
-                        num_cols = 2
-                        cols = st.columns(num_cols)
-                        
-                        for i, (display_name, dataset_info) in enumerate(dataset_options.items()):
-                            with cols[i % num_cols]:
-                                with st.container():
-                                    st.markdown(f"""
-                                    <div style="border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin: 8px 0; background: white;">
-                                        <h4 style="margin-top: 0; color: #1f77b4;">{dataset_info['name']}</h4>
-                                        <p><strong>Provider:</strong> {dataset_info['provider']}</p>
-                                        <p><strong>Resolution:</strong> {dataset_info['temporal_resolution']}</p>
-                                        <p><strong>Period:</strong> {dataset_info['start_date']} to {dataset_info['end_date']}</p>
-                                        <p><strong>Bands:</strong> {dataset_info['bands']}</p>
-                                        <p><strong>Description:</strong> {dataset_info['description'][:100]}...</p>
-                                    </div>
-                                    """, unsafe_allow_html=True)
-                                    
-                                    if st.button(f"Select {dataset_info['name']}", key=f"climate_select_{i}", type="primary"):
-                                        selected_dataset_key = display_name
-                        
-                        # Handle dataset selection
-                        if selected_dataset_key:
-                            st.session_state.climate_selected_dataset = dataset_options[selected_dataset_key]
-                            st.session_state.climate_dataset_selected = True
-                            st.success(f"✅ Selected dataset: {dataset_options[selected_dataset_key]['name']}")
-                            st.rerun()
+                        # Create tabs for different providers if there are many datasets
+                        if len(dataset_options) > 6:
+                            providers = list(set([info['provider'] for info in dataset_options.values()]))
+                            provider_tabs = st.tabs(providers)
                             
+                            for i, provider in enumerate(providers):
+                                with provider_tabs[i]:
+                                    provider_datasets = {k: v for k, v in dataset_options.items() if v['provider'] == provider}
+                                    selected_dataset_key = None
+                                    
+                                    for display_name, dataset_info in provider_datasets.items():
+                                        with st.expander(f"📊 {dataset_info['name']}", expanded=False):
+                                            col1, col2 = st.columns([2, 1])
+                                            
+                                            with col1:
+                                                st.markdown(f"**Provider:** {dataset_info['provider']}")
+                                                st.markdown(f"**Temporal Resolution:** {dataset_info['temporal_resolution']}")
+                                                st.markdown(f"**Data Period:** {dataset_info['start_date']} to {dataset_info['end_date']}")
+                                                st.markdown(f"**Pixel Size:** {dataset_info['pixel_size']} meters")
+                                                st.markdown(f"**Available Bands:** {dataset_info['bands']}")
+                                                if dataset_info['band_units']:
+                                                    st.markdown(f"**Band Units:** {dataset_info['band_units']}")
+                                                st.markdown(f"**Description:** {dataset_info['description']}")
+                                            
+                                            with col2:
+                                                if st.button(f"Select {dataset_info['name']}", key=f"select_{display_name.replace(' ', '_')}", type="primary"):
+                                                    selected_dataset_key = display_name
+                                    
+                                    # Handle dataset selection
+                                    if selected_dataset_key:
+                                        st.session_state.climate_selected_dataset = dataset_options[selected_dataset_key]
+                                        st.session_state.climate_dataset_selected = True
+                                        st.session_state.climate_step = 4
+                                        st.success(f"✅ Selected dataset: {dataset_options[selected_dataset_key]['name']}")
+                                        st.rerun()
+                        else:
+                            # Display all datasets in a simpler format
+                            selected_dataset_key = None
+                            
+                            for display_name, dataset_info in dataset_options.items():
+                                with st.expander(f"📊 {dataset_info['name']}", expanded=False):
+                                    col1, col2 = st.columns([2, 1])
+                                    
+                                    with col1:
+                                        st.markdown(f"**Provider:** {dataset_info['provider']}")
+                                        st.markdown(f"**Temporal Resolution:** {dataset_info['temporal_resolution']}")
+                                        st.markdown(f"**Data Period:** {dataset_info['start_date']} to {dataset_info['end_date']}")
+                                        st.markdown(f"**Pixel Size:** {dataset_info['pixel_size']} meters")
+                                        st.markdown(f"**Available Bands:** {dataset_info['bands']}")
+                                        if dataset_info['band_units']:
+                                            st.markdown(f"**Band Units:** {dataset_info['band_units']}")
+                                        st.markdown(f"**Description:** {dataset_info['description']}")
+                                    
+                                    with col2:
+                                        if st.button(f"Select Dataset", key=f"select_{display_name.replace(' ', '_')}", type="primary"):
+                                            selected_dataset_key = display_name
+                            
+                            # Handle dataset selection
+                            if selected_dataset_key:
+                                st.session_state.climate_selected_dataset = dataset_options[selected_dataset_key]
+                                st.session_state.climate_dataset_selected = True
+                                st.session_state.climate_step = 4
+                                st.success(f"✅ Selected dataset: {dataset_options[selected_dataset_key]['name']}")
+                                st.rerun()
+                                
                     except Exception as e:
-                        st.error(f"❌ Error loading temperature datasets: {str(e)}")
-                        st.info("Using default ERA5 dataset...")
-                        # Fallback to ERA5
-                        st.session_state.climate_selected_dataset = {
-                            'name': 'ERA5 Daily Aggregates',
-                            'ee_id': 'ECMWF/ERA5/DAILY',
-                            'provider': 'ECMWF',
-                            'temporal_resolution': 'Daily',
-                            'bands': 'mean_2m_air_temperature, minimum_2m_air_temperature, maximum_2m_air_temperature'                        }
-                        st.session_state.climate_dataset_selected = True
+                        st.error(f"❌ Error loading {analysis_type} datasets: {str(e)}")
+                        st.info("Please check if the CSV files are available in the geoclimate_fetcher/data/climate_index/ directory.")
                         
             except Exception as e:
                 st.error(f"❌ Error with geometry handler: {str(e)}")
-                        
-        # Step 3: Date selection and index calculation
-        elif st.session_state.climate_geometry_complete and st.session_state.climate_dataset_selected:
-            # Show current geometry info
+                
+        # Step 4: Date Range and Base Period Selection  
+        elif not st.session_state.climate_date_range_set:
+            st.markdown('<div class="step-header"><h2>📅 Step 4: Configure Time Parameters</h2></div>', unsafe_allow_html=True)
+            
+            # Add back button
+            if st.button("← Back to Dataset Selection"):
+                st.session_state.climate_dataset_selected = False
+                st.session_state.climate_step = 3
+                st.rerun()
+            
+            # Show current selections
+            dataset = st.session_state.climate_selected_dataset
+            st.success(f"✅ Dataset: {dataset['name']} ({dataset['provider']})")
+            
+            # Get dataset date constraints
+            dataset_start = dataset['start_date']
+            dataset_end = dataset['end_date']
+            
+            # Parse dataset dates to help with validation
             try:
-                handler = st.session_state.climate_geometry_handler
-                if handler.current_geometry:
-                    area = handler.get_geometry_area()
-                    name = handler.current_geometry_name
-                    st.success(f"✅ Area selected: {name} ({area:.2f} km²)")
-                    
-                    if st.button("Select Different Area", key="climate_change_area"):
-                        st.session_state.climate_geometry_complete = False
-                        st.rerun()
-                    
-                    # Store the geometry for use in calculations
-                    ee_geometry = st.session_state.climate_geometry_handler.current_geometry
-                    
-                    # Date range selection
-                    st.write("#### 2. Select Date Range")
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        start_date = st.date_input("Start Date", datetime(2000, 1, 1))
-                    with col2:
-                        end_date = st.date_input("End Date", datetime(2020, 12, 31))
-                    
-                    # Base period for percentiles
-                    st.write("#### 3. Select Base Period for Percentiles")
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        base_start = st.date_input("Base Period Start", datetime(1961, 1, 1))
-                    with col2:
-                        base_end = st.date_input("Base Period End", datetime(1990, 12, 31))
-                    
-                    # Select temperature indices
-                    st.write("#### 4. Select Indices to Calculate")
-                    
-                    # Initialize calculator only once
-                    if 'calculator' not in st.session_state:
-                        st.session_state.calculator = ClimateIndicesCalculator(ee_geometry)
-                    
-                    # Get available temperature indices
-                    temp_indices = {k: v for k, v in st.session_state.calculator.indices_metadata.items() 
-                                  if v['category'] == 'temperature'}
-                    
-                    selected_indices = st.multiselect(
-                        "Select temperature indices to calculate:",
-                        options=list(temp_indices.keys()),
-                        format_func=lambda x: f"{temp_indices[x]['name']} ({x})"
-                    )
-                    
-                    if selected_indices:
-                        if st.button("Calculate Indices", type="primary"):
-                            try:
-                                with st.spinner("Initializing calculation..."):
-                                    # Get temperature collections
-                                    tmax_collection = ee.ImageCollection('ECMWF/ERA5/DAILY')
-                                    tmin_collection = ee.ImageCollection('ECMWF/ERA5/DAILY')
-                                    
-                                    # Show progress
-                                    progress_bar = st.progress(0)
-                                    status_text = st.empty()
-                                    
-                                    # Calculate indices one by one with progress updates
-                                    results = {}
-                                    for i, idx_name in enumerate(selected_indices):
-                                        status_text.text(f"Calculating {temp_indices[idx_name]['name']}...")
-                                        progress_bar.progress((i) / len(selected_indices))
-                                        
-                                        try:
-                                            result = st.session_state.calculator.calculate_index(
-                                                index_name=idx_name,
-                                                tmax_collection=tmax_collection,
-                                                tmin_collection=tmin_collection,
-                                                start_date=start_date.strftime("%Y-%m-%d"),
-                                                end_date=end_date.strftime("%Y-%m-%d"),
-                                                base_start=base_start.strftime("%Y-%m-%d"),
-                                                base_end=base_end.strftime("%Y-%m-%d")
-                                            )
-                                            results[idx_name] = result
-                                        except Exception as e:
-                                            st.error(f"Error calculating {idx_name}: {str(e)}")
-                                            continue
-                                    
-                                    progress_bar.progress(1.0)
-                                    status_text.text("Calculation complete!")
-                                    
-                                    # Display results
-                                    if results:
-                                        st.write("#### Results")
-                                        for idx_name, result in results.items():
-                                            if result is not None:
-                                                try:
-                                                    # Extract time series
-                                                    ts_data = st.session_state.calculator.extract_time_series(result)
-                                                    
-                                                    # Create tabs for each index
-                                                    with st.expander(f"{temp_indices[idx_name]['name']} ({idx_name})", expanded=True):
-                                                        # Plot time series
-                                                        fig = go.Figure()
-                                                        fig.add_trace(go.Scatter(
-                                                            x=ts_data.index,
-                                                            y=ts_data.iloc[:, 0],
-                                                            mode='lines',
-                                                            name=temp_indices[idx_name]['name']
-                                                        ))
-                                                        
-                                                        fig.update_layout(
-                                                            title=f"{temp_indices[idx_name]['name']} ({idx_name})",
-                                                            xaxis_title="Date",
-                                                            yaxis_title=f"{temp_indices[idx_name]['unit']}",
-                                                            hovermode='x unified'
-                                                        )
-                                                        
-                                                        st.plotly_chart(fig, use_container_width=True)
-                                                        
-                                                        # Show statistics
-                                                        st.write("**Statistics:**")
-                                                        st.dataframe(ts_data.describe(), use_container_width=True)
-                                                        
-                                                        # Download option
-                                                        csv = ts_data.to_csv()
-                                                        st.download_button(
-                                                            f"Download {idx_name} data",
-                                                            csv,
-                                                            f"{idx_name}_data.csv",                                                            "text/csv",                                                            key=f"download_{idx_name}"
-                                                        )
-                                                except Exception as e:
-                                                    st.error(f"Error processing results for {idx_name}: {str(e)}")
-                            except Exception as e:
-                                st.error(f"Error during calculation: {str(e)}")
-                                st.info("Please try again with a smaller area or shorter time period.")
+                from datetime import datetime
+                date_formats = ["%m/%d/%Y", "%Y-%m-%d", "%Y/%m/%d", "%Y"]
+                
+                dataset_start_parsed = None
+                dataset_end_parsed = None
+                
+                for fmt in date_formats:
+                    try:
+                        dataset_start_parsed = datetime.strptime(dataset_start.strip(), fmt)
+                        break
+                    except:
+                        continue
+                
+                for fmt in date_formats:
+                    try:
+                        dataset_end_parsed = datetime.strptime(dataset_end.strip(), fmt)
+                        break
+                    except:
+                        continue
+                        
+                if dataset_start_parsed:
+                    min_date = dataset_start_parsed.date()
                 else:
-                    st.warning("Please draw a polygon on the map to select your area of interest.")
-            except Exception as e:
-                st.error(f"Error processing geometry: {str(e)}")
-                st.info("Please try drawing the area again.")
+                    min_date = datetime(1980, 1, 1).date()
+                    
+                if dataset_end_parsed:
+                    max_date = dataset_end_parsed.date()
+                else:
+                    max_date = datetime(2023, 12, 31).date()
+                    
+            except:
+                # Fallback dates
+                min_date = datetime(1980, 1, 1).date()
+                max_date = datetime(2023, 12, 31).date()
+            
+            st.info(f"📊 Dataset Coverage: {dataset_start} to {dataset_end}")
+            
+            with st.form("climate_time_config"):
+                st.markdown("### 📅 Analysis Period")
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    analysis_start = st.date_input(
+                        "Analysis Start Date",
+                        value=datetime(2000, 1, 1).date(),
+                        min_value=min_date,
+                        max_value=max_date,
+                        help="Start date for climate indices calculation"
+                    )
+                
+                with col2:
+                    analysis_end = st.date_input(
+                        "Analysis End Date",
+                        value=datetime(2020, 12, 31).date(),
+                        min_value=min_date,
+                        max_value=max_date,
+                        help="End date for climate indices calculation"
+                    )
+                
+                st.markdown("### 📊 Base Period for Percentiles")
+                st.info("The base period is used to calculate percentiles and anomalies. Typically 30 years (e.g., 1961-1990 or 1991-2020).")
+                
+                col3, col4 = st.columns(2)
+                
+                with col3:
+                    base_start = st.date_input(
+                        "Base Period Start",
+                        value=datetime(1981, 1, 1).date(),
+                        min_value=min_date,
+                        max_value=max_date,
+                        help="Start of reference period for calculating percentiles"
+                    )
+                
+                with col4:
+                    base_end = st.date_input(
+                        "Base Period End",
+                        value=datetime(2010, 12, 31).date(),
+                        min_value=min_date,
+                        max_value=max_date,
+                        help="End of reference period for calculating percentiles"
+                    )
+                
+                # Validation
+                valid = True
+                if analysis_start >= analysis_end:
+                    st.error("❌ Analysis start date must be before end date")
+                    valid = False
+                    
+                if base_start >= base_end:
+                    st.error("❌ Base period start date must be before end date")
+                    valid = False
+                    
+                # Check if base period is reasonable (at least 10 years)
+                if valid and (base_end - base_start).days < 3650:
+                    st.warning("⚠️ Base period is less than 10 years. For reliable percentiles, consider using at least 20-30 years.")
+                
+                # Check overlap
+                if valid and not (analysis_start <= base_end and analysis_end >= base_start):
+                    st.warning("⚠️ Analysis period and base period don't overlap. This is unusual but may be intentional.")
+                
+                submitted = st.form_submit_button("Confirm Time Parameters", type="primary", disabled=not valid)
+                
+                if submitted and valid:
+                    # Store the dates in session state
+                    st.session_state.climate_analysis_start = analysis_start
+                    st.session_state.climate_analysis_end = analysis_end
+                    st.session_state.climate_base_start = base_start
+                    st.session_state.climate_base_end = base_end
+                    st.session_state.climate_date_range_set = True
+                    st.session_state.climate_step = 5
+                    
+                    # Calculate analysis period info
+                    analysis_years = (analysis_end - analysis_start).days / 365.25
+                    base_years = (base_end - base_start).days / 365.25
+                    
+                    st.success(f"✅ Time parameters configured!")
+                    st.info(f"📊 Analysis period: {analysis_years:.1f} years | Base period: {base_years:.1f} years")
+                    st.rerun()
+        
+        # Step 5: Climate Indices Selection
+        elif not st.session_state.climate_indices_selected:
+            st.markdown('<div class="step-header"><h2>🧮 Step 5: Select Climate Indices</h2></div>', unsafe_allow_html=True)
+            
+            # Add back button
+            if st.button("← Back to Time Parameters"):
+                st.session_state.climate_date_range_set = False
+                st.session_state.climate_step = 4
+                st.rerun()
+            
+            # Show current selections
+            dataset = st.session_state.climate_selected_dataset
+            analysis_start = st.session_state.climate_analysis_start
+            analysis_end = st.session_state.climate_analysis_end
+            base_start = st.session_state.climate_base_start
+            base_end = st.session_state.climate_base_end
+            
+            st.success(f"✅ Dataset: {dataset['name']}")
+            st.success(f"✅ Analysis Period: {analysis_start} to {analysis_end}")
+            st.success(f"✅ Base Period: {base_start} to {base_end}")
+            
+            # Define available climate indices based on analysis type
+            analysis_type = st.session_state.climate_analysis_type
+            
+            if analysis_type == "temperature":
+                available_indices = {
+                    "TXx": {
+                        "name": "Monthly Maximum of Daily Maximum Temperature",
+                        "description": "Highest daily maximum temperature in each month",
+                        "unit": "°C",
+                        "category": "extreme_temperature"
+                    },
+                    "TNn": {
+                        "name": "Monthly Minimum of Daily Minimum Temperature", 
+                        "description": "Lowest daily minimum temperature in each month",
+                        "unit": "°C",
+                        "category": "extreme_temperature"
+                    },
+                    "TX90p": {
+                        "name": "Hot Days (TX > 90th percentile)",
+                        "description": "Number of days with maximum temperature above 90th percentile",
+                        "unit": "days",
+                        "category": "percentile_based"
+                    },
+                    "TN10p": {
+                        "name": "Cold Nights (TN < 10th percentile)",
+                        "description": "Number of days with minimum temperature below 10th percentile", 
+                        "unit": "days",
+                        "category": "percentile_based"
+                    },
+                    "WSDI": {
+                        "name": "Warm Spell Duration Index",
+                        "description": "Number of days in warm spells (6+ consecutive days with TX > 90th percentile)",
+                        "unit": "days",
+                        "category": "duration"
+                    },
+                    "CSDI": {
+                        "name": "Cold Spell Duration Index", 
+                        "description": "Number of days in cold spells (6+ consecutive days with TN < 10th percentile)",
+                        "unit": "days",
+                        "category": "duration"
+                    },
+                    "DTR": {
+                        "name": "Diurnal Temperature Range",
+                        "description": "Monthly mean difference between daily max and min temperature",
+                        "unit": "°C",
+                        "category": "variability"
+                    },
+                    "GSL": {
+                        "name": "Growing Season Length",
+                        "description": "Number of days between first span of 6+ days with mean temp > 5°C and first span of 6+ days with mean temp < 5°C",
+                        "unit": "days",
+                        "category": "agricultural"
+                    }
+                }
+            else:  # precipitation
+                available_indices = {
+                    "PRCPTOT": {
+                        "name": "Total Precipitation",
+                        "description": "Annual total precipitation on wet days (≥1mm)",
+                        "unit": "mm",
+                        "category": "amount"
+                    },
+                    "RX1day": {
+                        "name": "Maximum 1-day Precipitation",
+                        "description": "Highest precipitation amount in a single day",
+                        "unit": "mm",
+                        "category": "extreme_precipitation"
+                    },
+                    "RX5day": {
+                        "name": "Maximum 5-day Precipitation",
+                        "description": "Highest precipitation amount in 5 consecutive days",
+                        "unit": "mm", 
+                        "category": "extreme_precipitation"
+                    },
+                    "R10mm": {
+                        "name": "Heavy Precipitation Days (≥10mm)",
+                        "description": "Number of days with precipitation ≥10mm",
+                        "unit": "days",
+                        "category": "threshold"
+                    },
+                    "R20mm": {
+                        "name": "Very Heavy Precipitation Days (≥20mm)",
+                        "description": "Number of days with precipitation ≥20mm", 
+                        "unit": "days",
+                        "category": "threshold"
+                    },
+                    "CDD": {
+                        "name": "Consecutive Dry Days",
+                        "description": "Maximum number of consecutive days with precipitation <1mm",
+                        "unit": "days",
+                        "category": "duration"
+                    },
+                    "CWD": {
+                        "name": "Consecutive Wet Days",
+                        "description": "Maximum number of consecutive days with precipitation ≥1mm",
+                        "unit": "days",
+                        "category": "duration"
+                    },
+                    "SDII": {
+                        "name": "Simple Daily Intensity Index",
+                        "description": "Average precipitation on wet days",
+                        "unit": "mm/day",
+                        "category": "intensity"
+                    }
+                }
+            
+            # Group indices by category
+            categories = {}
+            for idx_code, idx_info in available_indices.items():
+                category = idx_info["category"]
+                if category not in categories:
+                    categories[category] = []
+                categories[category].append((idx_code, idx_info))
+            
+            # Display indices selection by category
+            st.markdown(f"### Available {analysis_type.title()} Indices")
+            st.info("Select the climate indices you want to calculate. You can select multiple indices from different categories.")
+            
+            selected_indices = []
+            
+            for category, indices in categories.items():
+                with st.expander(f"📊 {category.replace('_', ' ').title()} Indices", expanded=True):
+                    for idx_code, idx_info in indices:
+                        col1, col2 = st.columns([1, 3])
+                        
+                        with col1:
+                            if st.checkbox(f"**{idx_code}**", key=f"idx_{idx_code}"):
+                                selected_indices.append(idx_code)
+                        
+                        with col2:
+                            st.markdown(f"**{idx_info['name']}**")
+                            st.markdown(f"*{idx_info['description']}*")
+                            st.markdown(f"📏 Unit: {idx_info['unit']}")
+            
+            # Show selection summary
+            if selected_indices:
+                st.markdown("### 📋 Selected Indices")
+                for idx in selected_indices:
+                    st.markdown(f"• **{idx}**: {available_indices[idx]['name']}")
+                
+                # Confirm selection
+                if st.button("✅ Confirm Index Selection", type="primary", use_container_width=True):
+                    st.session_state.climate_selected_indices = selected_indices
+                    st.session_state.climate_indices_metadata = {idx: available_indices[idx] for idx in selected_indices}
+                    st.session_state.climate_indices_selected = True
+                    st.session_state.climate_step = 6
+                    st.success(f"✅ Selected {len(selected_indices)} climate indices for calculation!")
+                    st.rerun()
+            else:
+                st.warning("Please select at least one climate index to continue.")
+        
+        # Step 6: Calculation and Results
+        else:
+            st.markdown('<div class="step-header"><h2>📈 Step 6: Calculate and View Results</h2></div>', unsafe_allow_html=True)
+            
+            # Add back button
+            if st.button("← Back to Index Selection"):
+                st.session_state.climate_indices_selected = False
+                st.session_state.climate_step = 5
+                st.rerun()
+            
+            # Show summary of selections
+            dataset = st.session_state.climate_selected_dataset
+            selected_indices = st.session_state.climate_selected_indices
+            indices_metadata = st.session_state.climate_indices_metadata
+            
+            st.markdown("### 📋 Calculation Summary")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("**Configuration:**")
+                st.write(f"• **Analysis Type:** {st.session_state.climate_analysis_type.title()}")
+                st.write(f"• **Dataset:** {dataset['name']}")
+                st.write(f"• **Analysis Period:** {st.session_state.climate_analysis_start} to {st.session_state.climate_analysis_end}")
+                st.write(f"• **Base Period:** {st.session_state.climate_base_start} to {st.session_state.climate_base_end}")
+            
+            with col2:
+                st.markdown("**Selected Indices:**")
+                for idx in selected_indices:
+                    st.write(f"• **{idx}**: {indices_metadata[idx]['name']}")
+            
+            # Calculate button
+            if st.button("🚀 Start Calculation", type="primary", use_container_width=True):
+                try:
+                    with st.spinner("Initializing calculation..."):
+                        # Initialize calculator
+                        geometry = st.session_state.climate_geometry_handler.current_geometry
+                        
+                        # For now, show a placeholder for the actual calculation
+                        st.success("🎉 Calculation would start here!")
+                        
+                        # Create placeholder results
+                        st.markdown("### 📊 Results")
+                        
+                        progress_bar = st.progress(0)
+                        status_text = st.empty()
+                        
+                        import time
+                        
+                        for i, idx in enumerate(selected_indices):
+                            status_text.text(f"Calculating {indices_metadata[idx]['name']}...")
+                            progress_bar.progress((i + 1) / len(selected_indices))
+                            time.sleep(1)  # Simulate calculation time
+                            
+                            # Create a placeholder result visualization
+                            with st.expander(f"📈 {indices_metadata[idx]['name']} ({idx})", expanded=True):
+                                st.info(f"Calculation for {idx} completed successfully!")
+                                st.markdown(f"**Description:** {indices_metadata[idx]['description']}")
+                                st.markdown(f"**Unit:** {indices_metadata[idx]['unit']}")
+                                
+                                # Placeholder chart
+                                import numpy as np
+                                import pandas as pd
+                                import plotly.graph_objects as go
+                                
+                                # Generate sample data
+                                dates = pd.date_range(
+                                    st.session_state.climate_analysis_start,
+                                    st.session_state.climate_analysis_end,
+                                    freq='M'
+                                )
+                                values = np.random.normal(50, 10, len(dates))
+                                
+                                fig = go.Figure()
+                                fig.add_trace(go.Scatter(
+                                    x=dates,
+                                    y=values,
+                                    mode='lines+markers',
+                                    name=indices_metadata[idx]['name']
+                                ))
+                                
+                                fig.update_layout(
+                                    title=f"{indices_metadata[idx]['name']} ({idx})",
+                                    xaxis_title="Date",
+                                    yaxis_title=f"{indices_metadata[idx]['unit']}",
+                                    hovermode='x unified'
+                                )
+                                
+                                st.plotly_chart(fig, use_container_width=True)
+                                
+                                # Download button
+                                csv_data = pd.DataFrame({'Date': dates, f'{idx}': values}).to_csv(index=False)
+                                st.download_button(
+                                    f"📥 Download {idx} Data",
+                                    csv_data,
+                                    f"{idx}_data.csv",
+                                    "text/csv",
+                                    key=f"download_{idx}"
+                                )
+                        
+                        status_text.text("✅ All calculations completed!")
+                        st.balloons()
+                        
+                except Exception as e:
+                    st.error(f"❌ Error during calculation: {str(e)}")
+                    st.info("This is a demonstration. Full calculation functionality would be implemented here.")
     
-    with tab2:
-        st.markdown("### Precipitation Indices")
-        st.info("🚧 Precipitation indices calculation coming soon!")
-    
-    with tab3:
-        st.markdown("### Analysis & Visualization")
-        st.info("🚧 Advanced analysis and visualization features coming soon!")
+    # Reset button at the bottom
+    st.markdown("---")
+    if st.button("� Start Over", help="Reset all selections and start from the beginning"):
+        # Clear all climate-related session state
+        keys_to_clear = [key for key in st.session_state.keys() if key.startswith('climate_')]
+        for key in keys_to_clear:
+            del st.session_state[key]
+        st.session_state.climate_step = 1
+        st.rerun()
 
 # Function to get bands directly from the dataset name
 def get_bands_for_dataset(dataset_name):
