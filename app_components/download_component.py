@@ -331,7 +331,7 @@ class DownloadHelper:
             b64 = base64.b64encode(file_data).decode()
             
             # Generate unique ID for this download
-            download_id = f"instant_download_{abs(hash(file_path + str(file_size)))}"
+            download_id = f"instant_download_{abs(hash(str(file_path) + str(file_size)))}"
             
             # Create auto-downloading link with JavaScript
             st.markdown(f"""
