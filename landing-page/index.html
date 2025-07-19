@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GeoClimate Intelligence Platform | Microsoft AUC Project</title>
+    <meta name="description" content="Advanced climate data analysis platform developed at Jackson State University through Microsoft AUC partnership">
+    <meta name="keywords" content="climate data, geospatial analysis, Google Earth Engine, Microsoft AUC, Jackson State University">
+    
+    <!-- Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    
+    <!-- CSS -->
+    <link rel="stylesheet" href="styles.css">
+    
+    <!-- Favicon -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌍</text></svg>">
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-brand">
+                <i class="fas fa-globe-americas"></i>
+                <span>GeoClimate Intelligence Platform</span>
+            </div>
+            <div class="nav-menu">
+                <a href="#home" class="nav-link">Home</a>
+                <a href="#features" class="nav-link">Features</a>
+                <a href="#team" class="nav-link">Team</a>
+                <a href="#training" class="nav-link">Training</a>
+                <a href="#media" class="nav-link">Media</a>
+                <a href="#contact" class="nav-link">Contact</a>
+                <a href="https://geeclimate.streamlit.app" class="nav-link cta-button" target="_blank">
+                    <i class="fas fa-external-link-alt"></i> Launch Platform
+                </a>
+            </div>
+            <div class="mobile-menu-toggle">
+                <i class="fas fa-bars"></i>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section id="home" class="hero">
+        <div class="hero-container">
+            <div class="hero-content">
+                <div class="hero-badge">
+                    <i class="fab fa-microsoft"></i>
+                    Microsoft AUC Partnership Project
+                </div>
+                <h1 class="hero-title">
+                    GeoClimate Intelligence Platform
+                </h1>
+                <p class="hero-subtitle">
+                    Advanced Earth Engine climate data analysis and visualization platform 
+                    developed at Jackson State University through the Microsoft AUC partnership
+                </p>
+                <div class="hero-stats">
+                    <div class="stat">
+                        <div class="stat-number">54+</div>
+                        <div class="stat-label">Climate Datasets</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-number">6</div>
+                        <div class="stat-label">Data Categories</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-number">40+</div>
+                        <div class="stat-label">Climate Indices</div>
+                    </div>
+                </div>
+                <div class="hero-buttons">
+                    <a href="https://geeclimate.streamlit.app" class="btn btn-primary" target="_blank">
+                        <i class="fas fa-rocket"></i>
+                        Launch Platform
+                    </a>
+                    <button class="btn btn-secondary" onclick="showQRCode()">
+                        <i class="fas fa-qrcode"></i>
+                        Show QR Code
+                    </button>
+                </div>
+            </div>
+            <div class="hero-visual">
+                <div class="earth-animation">
+                    <i class="fas fa-globe-americas"></i>
+                </div>
+                <div class="data-points">
+                    <div class="data-point" style="--delay: 0s;">📊</div>
+                    <div class="data-point" style="--delay: 0.5s;">🌡️</div>
+                    <div class="data-point" style="--delay: 1s;">💧</div>
+                    <div class="data-point" style="--delay: 1.5s;">🛰️</div>
+                    <div class="data-point" style="--delay: 2s;">🌿</div>
+                    <div class="data-point" style="--delay: 2.5s;">☁️</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Project Overview -->
+    <section class="project-overview">
+        <div class="container">
+            <div class="section-header">
+                <h2>Project Overview</h2>
+                <p>Transforming climate research through advanced geospatial technology</p>
+            </div>
+            <div class="overview-grid">
+                <div class="overview-card">
+                    <div class="card-icon">
+                        <i class="fab fa-microsoft"></i>
+                    </div>
+                    <h3>Microsoft AUC Partnership</h3>
+                    <p>Developed under the Microsoft AUC (Azure University Credits) program, leveraging cloud computing resources for advanced climate analytics.</p>
+                </div>
+                <div class="overview-card">
+                    <div class="card-icon">
+                        <i class="fas fa-university"></i>
+                    </div>
+                    <h3>Jackson State University</h3>
+                    <p>Research conducted at JSU's Water Resources Lab, advancing geospatial climate research and education in the Mississippi region.</p>
+                </div>
+                <div class="overview-card">
+                    <div class="card-icon">
+                        <i class="fas fa-satellite"></i>
+                    </div>
+                    <h3>Google Earth Engine</h3>
+                    <p>Harnesses the power of Google's planetary-scale geospatial analysis platform for processing petabytes of Earth observation data.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section id="features" class="features">
+        <div class="container">
+            <div class="section-header">
+                <h2>Platform Capabilities</h2>
+                <p>Comprehensive tools for climate data analysis and research</p>
+            </div>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-download"></i>
+                    </div>
+                    <h3>GeoData Explorer</h3>
+                    <p>Download and visualize Earth Engine datasets with interactive previews. Support for GeoTIFF, NetCDF, and CSV formats.</p>
+                    <ul class="feature-list">
+                        <li>54+ curated climate datasets</li>
+                        <li>Interactive area selection</li>
+                        <li>Multiple export formats</li>
+                        <li>Direct download or Google Drive export</li>
+                    </ul>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-brain"></i>
+                    </div>
+                    <h3>Climate Intelligence Hub</h3>
+                    <p>Calculate standard climate indices and analyze extreme events using ETCCDI standards.</p>
+                    <ul class="feature-list">
+                        <li>40+ climate indices</li>
+                        <li>Temperature & precipitation analysis</li>
+                        <li>Extreme events detection</li>
+                        <li>Cloud-based processing</li>
+                    </ul>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-map"></i>
+                    </div>
+                    <h3>Interactive Mapping</h3>
+                    <p>Visualize data spatially and temporally with advanced mapping tools.</p>
+                    <ul class="feature-list">
+                        <li>Draw study areas on map</li>
+                        <li>Upload shapefiles/GeoJSON</li>
+                        <li>Real-time data preview</li>
+                        <li>Time series visualization</li>
+                    </ul>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-chart-line"></i>
+                    </div>
+                    <h3>Time Series Analysis</h3>
+                    <p>Extract and analyze temporal patterns in climate data.</p>
+                    <ul class="feature-list">
+                        <li>Trend analysis</li>
+                        <li>Anomaly detection</li>
+                        <li>Statistical summaries</li>
+                        <li>Export to CSV/Excel</li>
+                    </ul>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-database"></i>
+                    </div>
+                    <h3>Extensive Data Catalog</h3>
+                    <p>Access to comprehensive climate datasets across multiple categories.</p>
+                    <ul class="feature-list">
+                        <li>Precipitation data (11 datasets)</li>
+                        <li>Temperature data (10 datasets)</li>
+                        <li>Soil moisture (8 datasets)</li>
+                        <li>Evapotranspiration (17 datasets)</li>
+                    </ul>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-cloud"></i>
+                    </div>
+                    <h3>Cloud Processing</h3>
+                    <p>Leverage Google Earth Engine's computational power for large-scale analysis.</p>
+                    <ul class="feature-list">
+                        <li>Server-side processing</li>
+                        <li>No local computation limits</li>
+                        <li>Automatic scaling</li>
+                        <li>Fast data processing</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Technical Stack -->
+    <section class="tech-stack">
+        <div class="container">
+            <div class="section-header">
+                <h2>Technology Stack</h2>
+                <p>Built with modern, robust technologies for reliable performance</p>
+            </div>
+            <div class="tech-grid">
+                <div class="tech-item">
+                    <i class="fab fa-python"></i>
+                    <span>Python</span>
+                </div>
+                <div class="tech-item">
+                    <i class="fas fa-globe"></i>
+                    <span>Google Earth Engine</span>
+                </div>
+                <div class="tech-item">
+                    <i class="fas fa-chart-bar"></i>
+                    <span>Streamlit</span>
+                </div>
+                <div class="tech-item">
+                    <i class="fas fa-map-marked-alt"></i>
+                    <span>GeoPandas</span>
+                </div>
+                <div class="tech-item">
+                    <i class="fab fa-microsoft"></i>
+                    <span>Azure</span>
+                </div>
+                <div class="tech-item">
+                    <i class="fas fa-server"></i>
+                    <span>Jupyter</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Team Section -->
+    <section id="team" class="team">
+        <div class="container">
+            <div class="section-header">
+                <h2>Research Team</h2>
+                <p>Collaborative effort bringing together expertise in climate science and technology</p>
+            </div>
+            <div class="team-grid">
+                <div class="team-member">
+                    <div class="member-photo">
+                        <img src="photos/rocky.png" alt="Dr. Rocky Talchabhadel" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                        <div class="photo-fallback" style="display: none;">
+                            <i class="fas fa-user-tie"></i>
+                        </div>
+                    </div>
+                    <h3>Dr. Rocky Talchabhadel</h3>
+                    <p class="member-role">Principal Investigator</p>
+                    <p class="member-bio">Lead researcher and supervisor overseeing the project development and research direction.</p>
+                    <div class="member-links">
+                        <a href="https://bit.ly/jsu_water" target="_blank"><i class="fas fa-globe"></i></a>
+                    </div>
+                </div>
+                <div class="team-member">
+                    <div class="member-photo">
+                        <img src="photos/saurav.jpeg" alt="Saurav Bhattarai" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                        <div class="photo-fallback" style="display: none;">
+                            <i class="fas fa-code"></i>
+                        </div>
+                    </div>
+                    <h3>Saurav Bhattarai</h3>
+                    <p class="member-role">Lead Developer</p>
+                    <p class="member-bio">Full-stack developer responsible for the entire platform architecture and implementation.</p>
+                    <div class="member-links">
+                        <a href="https://github.com/sauravbhattarai19" target="_blank"><i class="fab fa-github"></i></a>
+                        <a href="https://www.linkedin.com/in/saurav-bhattarai-7133a3176/" target="_blank"><i class="fab fa-linkedin"></i></a>
+                        <a href="mailto:saurav.bhattarai.1999@gmail.com"><i class="fas fa-envelope"></i></a>
+                    </div>
+                </div>
+                <div class="team-member">
+                    <div class="member-photo">
+                        <img src="photos/sunil.JPG" alt="Sunil Bista" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                        <div class="photo-fallback" style="display: none;">
+                            <i class="fas fa-book"></i>
+                        </div>
+                    </div>
+                    <h3>Sunil Bista</h3>
+                    <p class="member-role">Documentation Specialist</p>
+                    <p class="member-bio">Technical writer and documentation specialist for user manuals and guides.</p>
+                </div>
+                <div class="team-member">
+                    <div class="member-photo">
+                        <img src="photos/subash.JPG" alt="Subash Poudel" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                        <div class="photo-fallback" style="display: none;">
+                            <i class="fas fa-chalkboard-teacher"></i>
+                        </div>
+                    </div>
+                    <h3>Subash Poudel</h3>
+                    <p class="member-role">Training Coordinator</p>
+                    <p class="member-bio">Workshop coordinator and manual creation assistant for training programs.</p>
+                </div>
+                <div class="team-member">
+                    <div class="member-photo">
+                        <img src="photos/samuel.jpeg" alt="Samuel Terret" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                        <div class="photo-fallback" style="display: none;">
+                            <i class="fas fa-user-graduate"></i>
+                        </div>
+                    </div>
+                    <h3>Samuel Terret</h3>
+                    <p class="member-role">Undergraduate Researcher</p>
+                    <p class="member-bio">Beta tester and undergraduate researcher contributing to platform validation.</p>
+                </div>
+                <div class="team-member">
+                    <div class="member-photo">
+                        <img src="photos/douglas.jpeg" alt="Douglas Jones" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                        <div class="photo-fallback" style="display: none;">
+                            <i class="fas fa-user-graduate"></i>
+                        </div>
+                    </div>
+                    <h3>Douglas Jones</h3>
+                    <p class="member-role">Undergraduate Researcher</p>
+                    <p class="member-bio">Beta tester and undergraduate researcher contributing to platform validation.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Training Section -->
+    <section id="training" class="training">
+        <div class="container">
+            <div class="section-header">
+                <h2>Training & Workshops</h2>
+                <p>Educational programs to advance geospatial climate research skills</p>
+            </div>
+            <div class="training-content">
+                <div class="training-info">
+                    <h3>Undergraduate Training Program</h3>
+                    <p>Comprehensive workshops designed to introduce undergraduate students to advanced geospatial climate analysis techniques using the GeoClimate Intelligence Platform.</p>
+                    
+                    <div class="training-features">
+                        <div class="training-feature">
+                            <i class="fas fa-laptop-code"></i>
+                            <div>
+                                <h4>Hands-on Learning</h4>
+                                <p>Interactive sessions with real climate data analysis</p>
+                            </div>
+                        </div>
+                        <div class="training-feature">
+                            <i class="fas fa-certificate"></i>
+                            <div>
+                                <h4>Certification</h4>
+                                <p>Completion certificates for workshop participants</p>
+                            </div>
+                        </div>
+                        <div class="training-feature">
+                            <i class="fas fa-users"></i>
+                            <div>
+                                <h4>Collaborative Environment</h4>
+                                <p>Group projects and peer-to-peer learning</p>
+                            </div>
+                        </div>
+                        <div class="training-feature">
+                            <i class="fas fa-project-diagram"></i>
+                            <div>
+                                <h4>Research Projects</h4>
+                                <p>Guided research projects using the platform</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="workshop-topics">
+                        <h4>Workshop Topics Include:</h4>
+                        <ul>
+                            <li>Introduction to Google Earth Engine</li>
+                            <li>Climate Data Analysis Fundamentals</li>
+                            <li>GeoClimate Platform Tutorial</li>
+                            <li>Climate Indices Calculation</li>
+                            <li>Geospatial Data Visualization</li>
+                            <li>Research Project Development</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="training-visual">
+                    <div class="workshop-stats">
+                        <div class="workshop-stat">
+                            <h3>30+</h3>
+                            <p>Students Trained</p>
+                        </div>
+                        <div class="workshop-stat">
+                            <h3>2</h3>
+                            <p>Day Workshops Conducted</p>
+                        </div>
+                        <div class="workshop-stat">
+                            <h3>100%</h3>
+                            <p>Completion Rate</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Media & Testimonials -->
+    <section id="media" class="media-section">
+        <div class="container">
+            <div class="section-header">
+                <h2>Media & Community Voices</h2>
+                <p>Showcasing our research impact through media coverage and student experiences</p>
+            </div>
+            
+            <!-- Podcast Section -->
+            <div class="media-content">
+                <div class="podcast-section">
+                    <div class="media-card podcast-card">
+                        <div class="media-icon">
+                            <i class="fas fa-podcast"></i>
+                        </div>
+                        <div class="media-info">
+                            <h3>Research Podcast Feature</h3>
+                            <p class="media-description">Dr. Rocky Talchabhadel discusses the GeoClimate Intelligence Platform and its impact on climate research education.</p>
+                            <div class="podcast-embed">
+                                <div class="youtube-container">
+                                    <iframe 
+                                        src="https://www.youtube.com/embed/7bB4m_E4tUI" 
+                                        title="GeoClimate Platform Research Podcast" 
+                                        frameborder="0" 
+                                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" 
+                                        allowfullscreen>
+                                    </iframe>
+                                </div>
+                            </div>
+                            <a href="https://www.youtube.com/watch?v=7bB4m_E4tUI" target="_blank" class="media-link">
+                                <i class="fab fa-youtube"></i> Watch on YouTube
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Student Testimonials -->
+                <div class="testimonials-section">
+                    <h3 class="subsection-title">Student Beta Tester Testimonials</h3>
+                    <div class="testimonials-grid">
+                        <div class="testimonial-card">
+                            <div class="testimonial-icon">
+                                <i class="fas fa-video"></i>
+                            </div>
+                            <h4>Samuel Terret</h4>
+                            <p class="testimonial-role">Undergraduate Researcher</p>
+                            <p class="testimonial-text">"Working with the GeoClimate platform has transformed how I approach climate data analysis..."</p>
+                            <div class="testimonial-placeholder">
+                                <i class="fab fa-google-drive"></i>
+                                <span>Google Drive Link - Coming Soon</span>
+                            </div>
+                        </div>
+                        <div class="testimonial-card">
+                            <div class="testimonial-icon">
+                                <i class="fas fa-video"></i>
+                            </div>
+                            <h4>Douglas Jones</h4>
+                            <p class="testimonial-role">Undergraduate Researcher</p>
+                            <p class="testimonial-text">"The platform's user-friendly interface makes complex climate analysis accessible to students..."</p>
+                            <div class="testimonial-placeholder">
+                                <i class="fab fa-google-drive"></i>
+                                <span>Google Drive Link - Coming Soon</span>
+                            </div>
+                        </div>
+                        <div class="testimonial-card">
+                            <div class="testimonial-icon">
+                                <i class="fas fa-video"></i>
+                            </div>
+                            <h4>Workshop Participants</h4>
+                            <p class="testimonial-role">Student Experiences</p>
+                            <p class="testimonial-text">"Compilation of student experiences and feedback from our training workshops..."</p>
+                            <div class="testimonial-placeholder">
+                                <i class="fab fa-google-drive"></i>
+                                <span>Google Drive Link - Coming Soon</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Workshop Photos -->
+                <div class="workshop-photos-section">
+                    <h3 class="subsection-title">Workshop Gallery</h3>
+                    <p class="subsection-description">Highlights from our training sessions and student workshops</p>
+                    <div class="photo-gallery">
+                        <div class="photo-item">
+                            <img src="photos/workshop1.jpeg" alt="Workshop Photo 1" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                            <div class="photo-placeholder" style="display: none;">
+                                <i class="fas fa-image"></i>
+                                <span>Workshop Photo 1</span>
+                            </div>
+                            <p class="photo-caption">Training workshop session</p>
+                        </div>
+                        <div class="photo-item">
+                            <img src="photos/workshop2.jpeg" alt="Workshop Photo 2" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                            <div class="photo-placeholder" style="display: none;">
+                                <i class="fas fa-image"></i>
+                                <span>Workshop Photo 2</span>
+                            </div>
+                            <p class="photo-caption">Students during workshop</p>
+                        </div>
+                        <div class="photo-item">
+                            <img src="photos/workshop3.jpeg" alt="Workshop Photo 3" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                            <div class="photo-placeholder" style="display: none;">
+                                <i class="fas fa-image"></i>
+                                <span>Workshop Photo 3</span>
+                            </div>
+                            <p class="photo-caption">Workshop learning session</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Publications & Impact -->
+    <section class="impact">
+        <div class="container">
+            <div class="section-header">
+                <h2>Project Impact & Deliverables</h2>
+                <p>Measurable outcomes and contributions to climate research</p>
+            </div>
+            <div class="impact-grid">
+                <div class="impact-card">
+                    <div class="impact-icon">
+                        <i class="fas fa-code-branch"></i>
+                    </div>
+                    <h3>Open Source Platform</h3>
+                    <p>Fully open-source codebase available on GitHub for community contributions and research collaboration.</p>
+                    <a href="https://github.com/Saurav-JSU/GeoClimate-Fetcher" target="_blank" class="impact-link">
+                        View on GitHub <i class="fas fa-external-link-alt"></i>
+                    </a>
+                </div>
+                <div class="impact-card">
+                    <div class="impact-icon">
+                        <i class="fas fa-globe-americas"></i>
+                    </div>
+                    <h3>Web Application</h3>
+                    <p>Deployed web application accessible globally for researchers and students.</p>
+                    <a href="https://geeclimate.streamlit.app" target="_blank" class="impact-link">
+                        Launch Platform <i class="fas fa-external-link-alt"></i>
+                    </a>
+                </div>
+                <div class="impact-card">
+                    <div class="impact-icon">
+                        <i class="fas fa-book-open"></i>
+                    </div>
+                    <h3>Documentation & Manuals</h3>
+                    <p>Comprehensive user guides, API documentation, and training materials.</p>
+                    <div class="impact-link">
+                        Coming Soon <i class="fas fa-clock"></i>
+                    </div>
+                </div>
+                <div class="impact-card">
+                    <div class="impact-icon">
+                        <i class="fas fa-graduation-cap"></i>
+                    </div>
+                    <h3>Educational Resources</h3>
+                    <p>Training programs, workshops, and educational materials for climate data analysis.</p>
+                    <div class="impact-link">
+                        Ongoing Programs <i class="fas fa-calendar-alt"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- QR Code Modal -->
+    <div id="qrModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Access Platform</h3>
+                <span class="close" onclick="closeQRCode()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="qr-container">
+                    <canvas id="qrCanvas"></canvas>
+                    <p>Scan to access the GeoClimate Intelligence Platform</p>
+                    <p class="qr-url">geeclimate.streamlit.app</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Contact Section -->
+    <section id="contact" class="contact">
+        <div class="container">
+            <div class="section-header">
+                <h2>Contact & Resources</h2>
+                <p>Get in touch or access additional resources</p>
+            </div>
+            <div class="contact-grid">
+                <div class="contact-card">
+                    <div class="contact-icon">
+                        <i class="fas fa-university"></i>
+                    </div>
+                    <h3>JSU Water Resources Lab</h3>
+                    <p>Jackson State University<br>Jackson, MS, USA</p>
+                    <a href="https://bit.ly/jsu_water" target="_blank" class="contact-link">
+                        Visit Lab Website <i class="fas fa-external-link-alt"></i>
+                    </a>
+                </div>
+                <div class="contact-card">
+                    <div class="contact-icon">
+                        <i class="fab fa-github"></i>
+                    </div>
+                    <h3>Source Code</h3>
+                    <p>Access the complete source code, documentation, and contribute to the project.</p>
+                    <a href="https://github.com/Saurav-JSU/GeoClimate-Fetcher" target="_blank" class="contact-link">
+                        GitHub Repository <i class="fas fa-external-link-alt"></i>
+                    </a>
+                </div>
+                <div class="contact-card">
+                    <div class="contact-icon">
+                        <i class="fas fa-envelope"></i>
+                    </div>
+                    <h3>Get Support</h3>
+                    <p>Questions, feedback, or collaboration inquiries.</p>
+                    <a href="mailto:saurav.bhattarai.1999@gmail.com" class="contact-link">
+                        Email Developer <i class="fas fa-envelope"></i>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-brand">
+                    <i class="fas fa-globe-americas"></i>
+                    <span>GeoClimate Intelligence Platform</span>
+                </div>
+                <div class="footer-links">
+                    <a href="#home">Home</a>
+                    <a href="#features">Features</a>
+                    <a href="#team">Team</a>
+                    <a href="#training">Training</a>
+                    <a href="#media">Media</a>
+                    <a href="#contact">Contact</a>
+                </div>
+                <div class="footer-social">
+                    <a href="https://github.com/Saurav-JSU/GeoClimate-Fetcher" target="_blank">
+                        <i class="fab fa-github"></i>
+                    </a>
+                    <a href="https://geeclimate.streamlit.app" target="_blank">
+                        <i class="fas fa-external-link-alt"></i>
+                    </a>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>&copy; 2025 Jackson State University | Microsoft AUC Partnership Project</p>
+                <p>Built with ❤️ for advancing climate research and education</p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>

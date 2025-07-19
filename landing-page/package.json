@@ -1,0 +1,59 @@
+{
+  "name": "GeoClimate Intelligence Platform Landing Page",
+  "version": "1.0.0",
+  "description": "Landing page for the GeoClimate Intelligence Platform - Microsoft AUC Project",
+  "main": "index.html",
+  "scripts": {
+    "start": "python -m http.server 8000",
+    "build": "echo 'Static site - no build required'",
+    "test": "echo 'No tests specified'",
+    "deploy": "echo 'Deploy to your preferred static hosting service'"
+  },
+  "keywords": [
+    "climate-data",
+    "geospatial",
+    "google-earth-engine",
+    "microsoft-auc",
+    "jackson-state-university",
+    "streamlit",
+    "climate-analytics"
+  ],
+  "author": {
+    "name": "Saurav Bhattarai",
+    "email": "saurav.bhattarai.1999@gmail.com",
+    "url": "https://github.com/sauravbhattarai19"
+  },
+  "contributors": [
+    {
+      "name": "Dr. Rocky Talchabhadel",
+      "role": "Principal Investigator"
+    },
+    {
+      "name": "Sunil Bista",
+      "role": "Documentation Specialist"
+    },
+    {
+      "name": "Subash Poudel",
+      "role": "Training Coordinator"
+    }
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Saurav-JSU/GeoClimate-Fetcher.git"
+  },
+  "homepage": "https://geeclimate.streamlit.app",
+  "dependencies": {},
+  "devDependencies": {},
+  "browserslist": [
+    "last 2 Chrome versions",
+    "last 2 Firefox versions",
+    "last 2 Safari versions",
+    "last 2 Edge versions"
+  ],
+  "config": {
+    "platform_url": "https://geeclimate.streamlit.app",
+    "github_repo": "https://github.com/Saurav-JSU/GeoClimate-Fetcher",
+    "lab_website": "https://bit.ly/jsu_water"
+  }
+}
