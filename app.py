@@ -33,6 +33,7 @@ import xarray as xr
 from geoclimate_fetcher.climate_indices import ClimateIndicesCalculator
 import hashlib
 import extra_streamlit_components as stx
+from pathlib import Path
 
 # Create cookie manager (after st.set_page_config)
 cookie_manager = stx.CookieManager()
@@ -518,7 +519,7 @@ def get_bands_for_dataset(dataset_name):
 
 # Initialize session state
 if 'app_mode' not in st.session_state:
-    st.session_state.app_mode = None  # None, 'data_explorer', 'climate_analytics'
+    st.session_state.app_mode = None  # None, 'data_explorer', 'climate_analytics', 'hydrology'
 if 'auth_complete' not in st.session_state:
     st.session_state.auth_complete = False
 if 'geometry_complete' not in st.session_state:
@@ -545,6 +546,20 @@ if 'drawn_features' not in st.session_state:
     st.session_state.drawn_features = None
 if 'project_id' not in st.session_state:
     st.session_state.project_id = None
+
+# Hydrology-specific session state
+if 'hydro_geometry_complete' not in st.session_state:
+    st.session_state.hydro_geometry_complete = False
+if 'hydro_dataset_selected' not in st.session_state:
+    st.session_state.hydro_dataset_selected = False
+if 'hydro_dates_selected' not in st.session_state:
+    st.session_state.hydro_dates_selected = False
+if 'hydro_current_dataset' not in st.session_state:
+    st.session_state.hydro_current_dataset = None
+if 'hydro_precipitation_data' not in st.session_state:
+    st.session_state.hydro_precipitation_data = None
+if 'hydro_analysis_results' not in st.session_state:
+    st.session_state.hydro_analysis_results = {}
 
 # Function to go back to a previous step
 def go_back_to_step(step):
@@ -928,7 +943,7 @@ if st.session_state.app_mode is None:
     # Tool Selection
     st.markdown("### 🎯 Choose Your Tool")
     
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     
     with col1:
         st.markdown("""
@@ -960,6 +975,22 @@ if st.session_state.app_mode is None:
         
         if st.button("🚀 Launch Climate Analytics", use_container_width=True, type="primary"):
             st.session_state.app_mode = "climate_analytics"
+            st.rerun()
+    
+    with col3:
+        st.markdown("""
+        <div class="tool-card">
+            <span class="tool-icon">💧</span>
+            <div class="tool-title">Hydrology Analyzer</div>
+            <div class="tool-description">
+                Comprehensive precipitation analysis with return periods, frequency analysis, IDF curves, and drought indices. 
+                Perfect for hydrology students and professionals.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if st.button("🚀 Launch Hydrology Analyzer", use_container_width=True, type="primary"):
+            st.session_state.app_mode = "hydrology"
             st.rerun()
     
     # Author Section
@@ -3907,45 +3938,629 @@ elif st.session_state.app_mode == "climate_analytics":
         st.info("Next calculation will prepare fresh instant-download results")
         st.rerun()
 
-# Function to get bands directly from the dataset name
-def get_bands_for_dataset(dataset_name):
-    """Get bands for a dataset directly from the CSV files"""
-    import os
-    import pandas as pd
-    from pathlib import Path
+# Hydrology Analyzer Mode
+elif st.session_state.app_mode == "hydrology":
+    # Add home button
+    if st.button("🏠 Back to Home"):
+        st.session_state.app_mode = None
+        st.rerun()
     
-    # Look in the data directory for CSV files
-    data_dir = Path('data')
-    if not data_dir.exists():
-        return []
+    # App title and header
+    st.markdown('<h1 class="main-title">💧 Hydrology Analyzer</h1>', unsafe_allow_html=True)
+    st.markdown("### Comprehensive precipitation analysis for hydrology education and research")
     
-    # Try to find the dataset in any CSV file
-    for csv_file in data_dir.glob('*.csv'):
-        try:
-            df = pd.read_csv(csv_file)
-            if 'Dataset Name' not in df.columns or 'Band Names' not in df.columns:
-                continue
+    # Import hydrology analyzer
+    from geoclimate_fetcher.hydrology_analysis import HydrologyAnalyzer
+    
+    # ========================================
+    # SINGLE PAGE DESIGN - ALL CONTROLS HERE
+    # ========================================
+    
+    st.markdown("---")
+    
+    # Configuration Section in Sidebar or Expandable
+    with st.container():
+        st.markdown("## 🔧 Analysis Configuration")
+        
+        # Three columns for all the settings
+        col1, col2, col3 = st.columns([1, 1, 1])
+        
+        with col1:
+            st.markdown("### 🗺️ Area of Interest")
+            
+            # Geometry selection options
+            geometry_method = st.radio(
+                "Select area method:",
+                ["Draw on map", "Upload GeoJSON", "Enter coordinates"],
+                key="hydro_geometry_method"
+            )
+            
+            geometry_ready = False
+            
+            if geometry_method == "Draw on map":
+                st.info("💡 Draw your area of interest using the coordinates below, or use the simple drawing interface")
                 
-            # Find the dataset
-            dataset_row = df[df['Dataset Name'] == dataset_name]
-            if not dataset_row.empty:
-                bands_str = dataset_row.iloc[0].get('Band Names', '')
-                if isinstance(bands_str, str) and bands_str:
-                    return [band.strip() for band in bands_str.split(',')]
-        except Exception as e:
-            print(f"Error reading {csv_file}: {e}")
+                # Simple coordinate-based drawing interface
+                st.markdown("**Quick Rectangle Drawing:**")
+                col1a, col1b = st.columns(2)
+                with col1a:
+                    center_lat = st.number_input("Center Latitude", value=40.0, key="hydro_center_lat")
+                    center_lon = st.number_input("Center Longitude", value=-100.0, key="hydro_center_lon")
+                with col1b:
+                    width_deg = st.number_input("Width (degrees)", value=2.0, min_value=0.1, max_value=10.0, key="hydro_width")
+                    height_deg = st.number_input("Height (degrees)", value=2.0, min_value=0.1, max_value=10.0, key="hydro_height")
+                
+                # Calculate bounds
+                west = center_lon - width_deg/2
+                east = center_lon + width_deg/2
+                south = center_lat - height_deg/2
+                north = center_lat + height_deg/2
+                
+                # Show preview
+                st.info(f"📍 **Area Preview:** ({south:.2f}, {west:.2f}) to ({north:.2f}, {east:.2f})")
+                
+                if st.button("✅ Create This Area", key="hydro_create_drawn", type="primary"):
+                    try:
+                        geometry = ee.Geometry.Rectangle([west, south, east, north])
+                        st.session_state.hydro_geometry = geometry
+                        geometry_ready = True
+                        
+                        st.success("✅ Area created successfully!")
+                        
+                        # Show area info
+                        area_km2 = geometry.area().divide(1000000).getInfo()
+                        st.metric("Area", f"{area_km2:.2f} km²")
+                        
+                    except Exception as e:
+                        st.error(f"Error creating area: {str(e)}")
+                
+                # Alternative: Try folium map if available
+                try:
+                    st.markdown("**Alternative: Interactive Map Drawing**")
+                    
+                    # Create folium map
+                    m = folium.Map(
+                        location=[center_lat, center_lon],
+                        zoom_start=6,
+                        width=700,
+                        height=300
+                    )
+                    
+                    # Add drawing tools
+                    draw = Draw(
+                        export=True,
+                        filename='drawn_area.geojson',
+                        position='topleft',
+                        draw_options={
+                            'polyline': False,
+                            'polygon': True,
+                            'circle': False,
+                            'rectangle': True,
+                            'marker': False,
+                            'circlemarker': False,
+                        }
+                    )
+                    draw.add_to(m)
+                    
+                    # Display map
+                    map_data = st_folium(m, key="hydro_folium_map", height=300, width=700)
+                    
+                    # Check if something was drawn
+                    if map_data and 'all_drawings' in map_data and map_data['all_drawings']:
+                        if len(map_data['all_drawings']) > 0:
+                            try:
+                                # Get the last drawn feature
+                                drawn_features = map_data['all_drawings']
+                                last_feature = drawn_features[-1]
+                                geometry_geojson = last_feature['geometry']
+                                
+                                # Convert to Earth Engine geometry
+                                geometry = ee.Geometry(geometry_geojson)
+                                st.session_state.hydro_geometry = geometry
+                                geometry_ready = True
+                                
+                                st.success("✅ Area drawn on map successfully!")
+                                
+                                # Show area info
+                                try:
+                                    area_km2 = geometry.area().divide(1000000).getInfo()
+                                    st.metric("Area", f"{area_km2:.2f} km²")
+                                except:
+                                    st.info("Area calculated")
+                            except Exception as e:
+                                st.error(f"Error processing drawn area: {str(e)}")
+                    
+                except Exception as e:
+                    st.warning(f"Interactive map not available: {str(e)}")
+                    st.info("Please use the coordinate input method above")
+            
+            elif geometry_method == "Upload GeoJSON":
+                uploaded_file = st.file_uploader(
+                    "Upload GeoJSON file:", 
+                    type=['geojson', 'json'],
+                    key="hydro_geojson"
+                )
+                
+                if uploaded_file:
+                    try:
+                        import json
+                        geojson_data = json.load(uploaded_file)
+                        
+                        # Extract geometry from GeoJSON
+                        if geojson_data.get('type') == 'FeatureCollection':
+                            geometry_data = geojson_data['features'][0]['geometry']
+                        elif geojson_data.get('type') == 'Feature':
+                            geometry_data = geojson_data['geometry']
+                        else:
+                            geometry_data = geojson_data
+                        
+                        geometry = ee.Geometry(geometry_data)
+                        st.session_state.hydro_geometry = geometry
+                        geometry_ready = True
+                        
+                        st.success("✅ GeoJSON uploaded successfully!")
+                        
+                        # Show area info
+                        try:
+                            area_km2 = geometry.area().divide(1000000).getInfo()
+                            st.metric("Area", f"{area_km2:.2f} km²")
+                        except:
+                            st.info("Geometry loaded")
+                            
+                    except Exception as e:
+                        st.error(f"Error loading GeoJSON: {str(e)}")
+            
+            elif geometry_method == "Enter coordinates":
+                st.markdown("**Bounding box coordinates:**")
+                
+                col1a, col1b = st.columns(2)
+                with col1a:
+                    west = st.number_input("West (longitude)", value=-100.0, key="hydro_west")
+                    south = st.number_input("South (latitude)", value=35.0, key="hydro_south")
+                with col1b:
+                    east = st.number_input("East (longitude)", value=-90.0, key="hydro_east")
+                    north = st.number_input("North (latitude)", value=45.0, key="hydro_north")
+                
+                if st.button("Create Area", key="hydro_create_bbox"):
+                    try:
+                        geometry = ee.Geometry.Rectangle([west, south, east, north])
+                        st.session_state.hydro_geometry = geometry
+                        geometry_ready = True
+                        
+                        st.success("✅ Area created successfully!")
+                        
+                        # Show area info
+                        area_km2 = geometry.area().divide(1000000).getInfo()
+                        st.metric("Area", f"{area_km2:.2f} km²")
+                        
+                    except Exception as e:
+                        st.error(f"Error creating area: {str(e)}")
+            
+            # Check if we have a geometry from previous session or just created
+            if hasattr(st.session_state, 'hydro_geometry') and st.session_state.hydro_geometry is not None:
+                geometry_ready = True
+                # Only show status if not already shown in the creation process above
+                if 'hydro_geometry_shown' not in st.session_state:
+                    st.success("✅ Using stored area")
+                    try:
+                        area_km2 = st.session_state.hydro_geometry.area().divide(1000000).getInfo()
+                        st.metric("Current Area", f"{area_km2:.2f} km²")
+                    except:
+                        st.info("Area ready for analysis")
+                    st.session_state.hydro_geometry_shown = True
+                
+                # Add reset button
+                if st.button("🗑️ Reset Area", key="hydro_reset_geometry"):
+                    del st.session_state.hydro_geometry
+                    if 'hydro_geometry_shown' in st.session_state:
+                        del st.session_state.hydro_geometry_shown
+                    geometry_ready = False
+                    st.rerun()
+        
+        with col2:
+            st.markdown("### 📊 Precipitation Dataset")
+            
+            # Load precipitation datasets
+            precipitation_datasets = []
+            try:
+                precipitation_csv_path = Path("geoclimate_fetcher/data/climate_index/precipitation.csv")
+                if precipitation_csv_path.exists():
+                    df = pd.read_csv(precipitation_csv_path)
+                    precipitation_datasets = df.to_dict('records')
+                else:
+                    # Fallback to regular data directory
+                    data_dir = Path('data')
+                    if data_dir.exists():
+                        for csv_file in data_dir.glob('*precipitation*.csv'):
+                            try:
+                                df = pd.read_csv(csv_file)
+                                precipitation_datasets.extend(df.to_dict('records'))
+                            except Exception:
+                                continue
+            except Exception as e:
+                st.error(f"Error loading datasets: {str(e)}")
+            
+            if precipitation_datasets:
+                # Search functionality
+                search_term = st.text_input(
+                    "🔍 Search datasets:", 
+                    placeholder="e.g., CHIRPS, daily, monthly",
+                    key="hydro_search"
+                )
+                
+                # Filter datasets
+                filtered_datasets = precipitation_datasets
+                if search_term:
+                    search_lower = search_term.lower()
+                    filtered_datasets = [
+                        d for d in precipitation_datasets 
+                        if search_lower in d.get('Dataset Name', '').lower() or 
+                           search_lower in d.get('Description', '').lower()
+                    ]
+                
+                # Dataset selection
+                dataset_names = [d.get('Dataset Name', 'Unknown') for d in filtered_datasets]
+                
+                selected_dataset_name = st.selectbox(
+                    "Choose dataset:",
+                    dataset_names,
+                    key="hydro_dataset",
+                    help="Select precipitation dataset for analysis"
+                )
+                
+                if selected_dataset_name:
+                    selected_dataset = next(d for d in filtered_datasets if d.get('Dataset Name') == selected_dataset_name)
+                    
+                    # Store dataset info
+                    band_names = selected_dataset.get('Band Names', '')
+                    if isinstance(band_names, str) and band_names:
+                        precipitation_band = band_names.split(',')[0].strip()
+                    else:
+                        precipitation_band = 'precipitation'
+                    
+                    st.session_state.hydro_dataset_info = {
+                        'name': selected_dataset.get('Dataset Name'),
+                        'ee_id': selected_dataset.get('Earth Engine ID'),
+                        'precipitation_band': precipitation_band,
+                        'unit': selected_dataset.get('Band Units', ''),
+                        'temporal_resolution': selected_dataset.get('Temporal Resolution', ''),
+                        'start_date': selected_dataset.get('Start Date'),
+                        'end_date': selected_dataset.get('End Date'),
+                        'description': selected_dataset.get('Description', '')
+                    }
+                    
+                    # Show dataset info
+                    with st.expander("ℹ️ Dataset Details", expanded=False):
+                        st.write(f"**Provider:** {selected_dataset.get('Provider', 'N/A')}")
+                        st.write(f"**Resolution:** {selected_dataset.get('Temporal Resolution', 'N/A')}")
+                        st.write(f"**Pixel Size:** {selected_dataset.get('Pixel Size (m)', 'N/A')} m")
+                        st.write(f"**Period:** {selected_dataset.get('Start Date', 'N/A')} to {selected_dataset.get('End Date', 'N/A')}")
+                        st.write(f"**Description:** {selected_dataset.get('Description', 'N/A')}")
+            else:
+                st.error("❌ No precipitation datasets found")
+        
+        with col3:
+            st.markdown("### 📅 Analysis Period")
+            
+            # Date range selection
+            if hasattr(st.session_state, 'hydro_dataset_info'):
+                dataset_info = st.session_state.hydro_dataset_info
+                
+                # Parse available date range
+                try:
+                    available_start = pd.to_datetime(dataset_info['start_date'])
+                    available_end = pd.to_datetime(dataset_info['end_date'])
+                except:
+                    available_start = pd.to_datetime('1980-01-01')
+                    available_end = pd.to_datetime('2023-12-31')
+                
+                st.info(f"**Available:** {available_start.strftime('%Y-%m-%d')} to {available_end.strftime('%Y-%m-%d')}")
+                
+                # Date inputs
+                start_date = st.date_input(
+                    "Start Date",
+                    value=max(available_start.date(), pd.to_datetime('2000-01-01').date()),
+                    min_value=available_start.date(),
+                    max_value=available_end.date(),
+                    key="hydro_start_date"
+                )
+                
+                end_date = st.date_input(
+                    "End Date", 
+                    value=min(available_end.date(), pd.to_datetime('2023-12-31').date()),
+                    min_value=available_start.date(),
+                    max_value=available_end.date(),
+                    key="hydro_end_date"
+                )
+                
+                # Validate and show period info
+                if start_date < end_date:
+                    period_years = (end_date - start_date).days / 365.25
+                    st.metric("Analysis Period", f"{period_years:.1f} years")
+                    
+                    if period_years < 10:
+                        st.warning("⚠️ <10 years: Limited return period reliability")
+                    else:
+                        st.success("✅ Good period for analysis")
+                else:
+                    st.error("❌ End date must be after start date")
+            else:
+                st.info("👆 Select a dataset first")
     
-    # If not found, try the Datasets.csv file specifically
-    datasets_file = data_dir / 'Datasets.csv'
-    if datasets_file.exists():
-        try:
-            df = pd.read_csv(datasets_file)
-            dataset_row = df[df['Dataset Name'] == dataset_name]
-            if not dataset_row.empty:
-                bands_str = dataset_row.iloc[0].get('Band Names', '')
-                if isinstance(bands_str, str) and bands_str:
-                    return [band.strip() for band in bands_str.split(',')]
-        except Exception as e:
-            print(f"Error reading Datasets.csv: {e}")
+    st.markdown("---")
     
-    return []
+    # Analysis Button and Results
+    analysis_ready = (
+        geometry_ready and 
+        hasattr(st.session_state, 'hydro_dataset_info') and 
+        hasattr(st.session_state, 'hydro_start_date') and 
+        hasattr(st.session_state, 'hydro_end_date') and
+        st.session_state.hydro_start_date < st.session_state.hydro_end_date
+    )
+    
+    if analysis_ready:
+        col1, col2, col3 = st.columns([2, 1, 1])
+        
+        with col1:
+            if st.button("🚀 Run Hydrology Analysis", type="primary", use_container_width=True):
+                # Trigger analysis
+                st.session_state.hydro_run_analysis = True
+                st.rerun()
+        
+        with col2:
+            if st.button("🔄 Update Analysis", use_container_width=True):
+                # Re-run with current settings
+                if 'hydro_precipitation_data' in st.session_state:
+                    del st.session_state['hydro_precipitation_data']
+                st.session_state.hydro_run_analysis = True
+                st.rerun()
+        
+        with col3:
+            if st.button("🧹 Reset All", use_container_width=True):
+                # Clear everything
+                keys_to_clear = [key for key in st.session_state.keys() if key.startswith('hydro_')]
+                for key in keys_to_clear:
+                    del st.session_state[key]
+                st.rerun()
+    else:
+        st.info("📋 Please complete the configuration above to run analysis")
+        
+        # Show what's missing
+        missing = []
+        if not geometry_ready:
+            missing.append("🗺️ Area of Interest")
+        if not hasattr(st.session_state, 'hydro_dataset_info'):
+            missing.append("📊 Dataset Selection")
+        if not hasattr(st.session_state, 'hydro_start_date') or not hasattr(st.session_state, 'hydro_end_date'):
+            missing.append("📅 Date Range")
+        elif hasattr(st.session_state, 'hydro_start_date') and hasattr(st.session_state, 'hydro_end_date') and st.session_state.hydro_start_date >= st.session_state.hydro_end_date:
+            missing.append("📅 Valid Date Range")
+        
+        if missing:
+            st.warning(f"**Missing:** {', '.join(missing)}")
+    
+    # ========================================
+    # ANALYSIS RESULTS SECTION
+    # ========================================
+    
+    # Run analysis if requested
+    if st.session_state.get('hydro_run_analysis', False) and analysis_ready:
+        if 'hydro_precipitation_data' not in st.session_state or st.session_state.hydro_precipitation_data is None:
+            with st.spinner("🔄 Fetching precipitation data from Google Earth Engine..."):
+                try:
+                    # Initialize analyzer
+                    analyzer = HydrologyAnalyzer(st.session_state.hydro_geometry)
+                    
+                    # Fetch data
+                    dataset_info = st.session_state.hydro_dataset_info
+                    start_date_str = st.session_state.hydro_start_date.strftime('%Y-%m-%d')
+                    end_date_str = st.session_state.hydro_end_date.strftime('%Y-%m-%d')
+                    
+                    precipitation_df = analyzer.fetch_precipitation_data(
+                        dataset_info, start_date_str, end_date_str
+                    )
+                    
+                    if precipitation_df.empty:
+                        st.error("❌ No data found for selected area and period")
+                        st.stop()
+                    
+                    # Store results
+                    st.session_state.hydro_precipitation_data = precipitation_df
+                    st.session_state.hydro_analyzer = analyzer
+                    
+                    st.success(f"✅ Loaded {len(precipitation_df)} precipitation records!")
+                    
+                except Exception as e:
+                    st.error(f"❌ Error fetching data: {str(e)}")
+                    st.stop()
+        
+        # Clear the run flag
+        st.session_state.hydro_run_analysis = False
+    
+    # Display results if we have data
+    if 'hydro_precipitation_data' in st.session_state and st.session_state.hydro_precipitation_data is not None:
+        analyzer = st.session_state.hydro_analyzer
+        precip_data = st.session_state.hydro_precipitation_data
+        
+        st.markdown("---")
+        st.markdown("## 📊 Analysis Results")
+        
+        # Quick stats at the top
+        stats = analyzer.calculate_precipitation_statistics()
+        if stats:
+            col1, col2, col3, col4, col5 = st.columns(5)
+            
+            with col1:
+                st.metric("Records", f"{stats['count']:,}")
+            with col2:
+                st.metric("Mean Annual", f"{stats['mean']*365:.0f} mm")
+            with col3:
+                st.metric("Max Daily", f"{stats['max']:.1f} mm")
+            with col4:
+                st.metric("Wet Days", f"{stats['wet_days_percentage']:.1f}%")
+            with col5:
+                st.metric("Extreme Days", f"{stats['days_extreme_rain']}")
+        
+        # Tabbed results
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+            "📈 Time Series", "⚡ Return Periods", "📊 IDF Curves", 
+            "🌧️ Frequency Analysis", "🏜️ Drought Analysis"
+        ])
+        
+        with tab1:
+            st.plotly_chart(
+                analyzer.create_precipitation_time_series_plot(),
+                use_container_width=True
+            )
+            
+            # Additional statistics
+            if stats:
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("#### 📊 Basic Statistics")
+                    st.write(f"**Count:** {stats['count']:,} records")
+                    st.write(f"**Mean:** {stats['mean']:.2f} mm/day")
+                    st.write(f"**Median:** {stats['median']:.2f} mm/day")
+                    st.write(f"**Std Dev:** {stats['std']:.2f} mm/day")
+                    st.write(f"**Skewness:** {stats['skewness']:.2f}")
+                    st.write(f"**Kurtosis:** {stats['kurtosis']:.2f}")
+                
+                with col2:
+                    st.markdown("#### 🌧️ Precipitation Events")
+                    st.write(f"**Wet Days (>1mm):** {stats['wet_days_count']:,} ({stats['wet_days_percentage']:.1f}%)")
+                    st.write(f"**Heavy Rain (>10mm):** {stats['days_heavy_rain']:,} days")
+                    st.write(f"**Very Heavy (>20mm):** {stats['days_very_heavy_rain']:,} days")
+                    st.write(f"**Extreme (>50mm):** {stats['days_extreme_rain']:,} days")
+                    st.write(f"**95th Percentile:** {stats['p95']:.1f} mm")
+                    st.write(f"**99th Percentile:** {stats['p99']:.1f} mm")
+        
+        with tab2:
+            annual_maxima = analyzer.calculate_annual_maxima()
+            
+            if not annual_maxima.empty:
+                return_period_results = analyzer.calculate_return_periods(annual_maxima)
+                
+                if return_period_results:
+                    st.plotly_chart(
+                        analyzer.create_return_period_plot(return_period_results),
+                        use_container_width=True
+                    )
+                    
+                    # Find best distribution
+                    best_dist = min(
+                        return_period_results['distributions'].items(),
+                        key=lambda x: x[1]['aic']
+                    )
+                    
+                    st.success(f"📊 **Best fit distribution:** {best_dist[0]} (AIC: {best_dist[1]['aic']:.1f})")
+                    
+                    # Return period table
+                    st.markdown("#### 📋 Return Period Values (mm)")
+                    table_data = []
+                    for i, rp in enumerate(return_period_results['return_periods']):
+                        row = {'Return Period (years)': rp}
+                        for dist_name, dist_data in return_period_results['distributions'].items():
+                            row[f'{dist_name}'] = f"{dist_data['return_values'][i]:.1f}"
+                        table_data.append(row)
+                    
+                    st.dataframe(pd.DataFrame(table_data), use_container_width=True)
+                else:
+                    st.warning("Unable to calculate return periods")
+            else:
+                st.warning("Insufficient data for return period analysis")
+        
+        with tab3:
+            idf_data = analyzer.calculate_intensity_duration_frequency()
+            
+            if idf_data:
+                st.plotly_chart(
+                    analyzer.create_idf_curves_plot(idf_data),
+                    use_container_width=True
+                )
+                
+                # IDF table
+                st.markdown("#### 📋 IDF Values (mm/day)")
+                idf_table = pd.DataFrame.from_dict(
+                    {f"{dur} days": data['intensities'] 
+                     for dur, data in idf_data.items()},
+                    orient='index',
+                    columns=[f"{rp}-year" for rp in [2, 5, 10, 25, 50, 100]]
+                )
+                st.dataframe(idf_table.round(2), use_container_width=True)
+            else:
+                st.warning("Unable to calculate IDF curves")
+        
+        with tab4:
+            st.plotly_chart(
+                analyzer.create_frequency_analysis_plot(),
+                use_container_width=True
+            )
+        
+        with tab5:
+            drought_results = analyzer.calculate_drought_analysis()
+            
+            if drought_results:
+                # Drought metrics
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.metric("Max Consecutive Dry Days", f"{drought_results['max_consecutive_dry_days']}")
+                with col2:
+                    st.metric("Mean Dry Period", f"{drought_results['mean_dry_period_length']:.1f} days")
+                with col3:
+                    st.metric("Number of Dry Periods", f"{drought_results['number_of_dry_periods']}")
+                
+                st.plotly_chart(
+                    analyzer.create_drought_analysis_plot(drought_results),
+                    use_container_width=True
+                )
+                
+                # SPI interpretation
+                if 'spi_results' in drought_results and drought_results['spi_results']:
+                    with st.expander("📖 SPI Interpretation Guide"):
+                        st.markdown("""
+                        **Standardized Precipitation Index (SPI) Classification:**
+                        - **SPI ≥ 2.0**: Extremely wet conditions
+                        - **1.5 ≤ SPI < 2.0**: Very wet conditions  
+                        - **1.0 ≤ SPI < 1.5**: Moderately wet conditions
+                        - **-1.0 < SPI < 1.0**: Near normal conditions
+                        - **-1.5 < SPI ≤ -1.0**: Moderately dry conditions
+                        - **-2.0 < SPI ≤ -1.5**: Severely dry conditions
+                        - **SPI ≤ -2.0**: Extremely dry conditions
+                        """)
+        
+        # Educational resources
+        with st.expander("📚 Educational Resources & Concepts", expanded=False):
+            st.markdown("""
+            ### 🎓 Hydrology Concepts Explained
+            
+            **Return Period Analysis:**
+            - **Definition**: The average time interval between events of a given magnitude
+            - **Application**: Flood risk assessment, infrastructure design
+            - **Key Point**: A 100-year event has a 1% chance of occurring in any given year
+            
+            **IDF Curves (Intensity-Duration-Frequency):**
+            - **Purpose**: Relate rainfall intensity to storm duration and return period
+            - **Engineering Use**: Storm water management, drainage design
+            - **Reading**: Higher intensity for shorter durations and longer return periods
+            
+            **Statistical Distributions:**
+            - **Gumbel**: Traditional for extreme value analysis
+            - **GEV**: General extreme value, more flexible
+            - **Log-Normal**: Good for skewed precipitation data
+            - **AIC**: Lower values indicate better model fit
+            
+            **Drought Indices:**
+            - **SPI**: Standardized measure comparing current precipitation to historical
+            - **Consecutive Dry Days**: Important for agricultural and water supply planning
+            - **Time Scales**: 3, 6, 12 months capture different drought impacts
+            
+            ### 📖 Further Learning
+            - [ETCCDI Climate Indices](http://etccdi.pacificclimate.org/)
+            - [WMO Guidelines on Extreme Weather](https://www.wmo.int/)
+            - Engineering Hydrology textbooks for detailed theory
+            """)
+    
+    else:
+        st.info("👆 Configure your analysis above and click 'Run Analysis' to see results")
