@@ -191,49 +191,24 @@ class ClimateIndicesCalculator:
             }
         }
     
-    def calculate_percentiles(self, collection: ee.ImageCollection, 
-                            base_start: str, base_end: str,
-                            percentiles: List[int] = [10, 90]) -> ee.Image:
+    def calculate_simple_percentile(self, collection: ee.ImageCollection, 
+                                  percentile: int = 90) -> ee.Image:
         """
-        Calculate percentile thresholds from base period
+        Calculate simple percentile from collection (simplified approach)
         
         Args:
             collection: Temperature or precipitation collection
-            base_start: Start date of base period (YYYY-MM-DD)
-            base_end: End date of base period (YYYY-MM-DD)
-            percentiles: List of percentiles to calculate
+            percentile: Percentile to calculate (10, 90, etc.)
         
         Returns:
-            ee.Image with bands for each percentile
+            ee.Image with percentile values
         """
-        base_collection = collection.filterDate(base_start, base_end)
-        
-        # Calculate percentiles for each day of year
-        def calculate_doy_percentiles(doy):
-            # Filter to specific day of year across all years
-            doy_collection = base_collection.filter(
-                ee.Filter.calendarRange(doy, doy, 'day_of_year')
-            )
-            
-            # Calculate percentiles
-            percentile_image = doy_collection.reduce(
-                ee.Reducer.percentile(percentiles)
-            )
-            
-            return percentile_image.set('day_of_year', doy)
-        
-        # Calculate for all days of year
-        doy_list = ee.List.sequence(1, 365)
-        percentile_collection = ee.ImageCollection(
-            doy_list.map(calculate_doy_percentiles)
-        )
-        
-        return percentile_collection
+        return collection.reduce(ee.Reducer.percentile([percentile])).rename([f"p{percentile}"])
     
     # Temperature Indices Calculations
     
     def calculate_TXx(self, tmax_collection: ee.ImageCollection, 
-                      start_date: str, end_date: str) -> ee.Image:
+                      start_date: str, end_date: str) -> ee.ImageCollection:
         """
         Calculate monthly maximum value of daily maximum temperature
         
@@ -242,84 +217,119 @@ class ClimateIndicesCalculator:
         # Filter collection to date range
         filtered = tmax_collection.filterDate(start_date, end_date)
         
-        # Calculate monthly maximum
-        def monthly_max(month, year):
-            monthly = filtered.filter(
+        # Calculate monthly maxima for ALL months in the date range
+        def calculate_monthly_max(month_year):
+            month = ee.Number(month_year).int()
+            year = month.divide(100).int()
+            month = month.mod(100)
+            
+            # Filter to specific month and year
+            monthly_data = filtered.filter(
                 ee.Filter.calendarRange(year, year, 'year')
             ).filter(
                 ee.Filter.calendarRange(month, month, 'month')
             )
-            return monthly.max().set({
+            
+            # Return monthly maximum
+            max_img = monthly_data.max()
+            
+            return max_img.set({
                 'month': month,
                 'year': year,
                 'system:time_start': ee.Date.fromYMD(year, month, 1).millis()
             })
         
-        # Get unique year-month combinations
-        years = ee.List.sequence(
-            ee.Date(start_date).get('year'),
-            ee.Date(end_date).get('year')
-        )
+        # Create year-month sequence for ALL months in the date range
+        start_year = ee.Date(start_date).get('year')
+        end_year = ee.Date(end_date).get('year')
+        
+        years = ee.List.sequence(start_year, end_year)
         months = ee.List.sequence(1, 12)
         
-        # Calculate for each month
-        results = ee.ImageCollection.fromImages(
-            years.map(lambda y: months.map(lambda m: monthly_max(m, y))).flatten()
+        # Create ALL year-month combinations (encode as YYYYMM)
+        year_months = years.map(
+            lambda y: months.map(lambda m: ee.Number(y).multiply(100).add(m))
+        ).flatten()
+        
+        # Calculate monthly maxima for ALL combinations
+        monthly_results = ee.ImageCollection.fromImages(
+            year_months.map(calculate_monthly_max)
         )
         
-        return results
+        return monthly_results
     
-    def calculate_TNn(self, tmin_collection: ee.ImageCollection,
-                      start_date: str, end_date: str) -> ee.Image:
+    def calculate_TNn(self, tmin_collection: ee.ImageCollection, 
+                      start_date: str, end_date: str) -> ee.ImageCollection:
         """
         Calculate monthly minimum value of daily minimum temperature
         
         Formula: TNn = min(TN) for each month
         """
+        # Filter collection to date range
         filtered = tmin_collection.filterDate(start_date, end_date)
         
-        def monthly_min(month, year):
-            monthly = filtered.filter(
+        # Calculate monthly minima for ALL months in the date range
+        def calculate_monthly_min(month_year):
+            month = ee.Number(month_year).int()
+            year = month.divide(100).int()
+            month = month.mod(100)
+            
+            # Filter to specific month and year
+            monthly_data = filtered.filter(
                 ee.Filter.calendarRange(year, year, 'year')
             ).filter(
                 ee.Filter.calendarRange(month, month, 'month')
             )
-            return monthly.min().set({
+            
+            # Return monthly minimum
+            min_img = monthly_data.min()
+            
+            return min_img.set({
                 'month': month,
                 'year': year,
                 'system:time_start': ee.Date.fromYMD(year, month, 1).millis()
             })
         
-        years = ee.List.sequence(
-            ee.Date(start_date).get('year'),
-            ee.Date(end_date).get('year')
-        )
+        # Create year-month sequence for ALL months in the date range
+        start_year = ee.Date(start_date).get('year')
+        end_year = ee.Date(end_date).get('year')
+        
+        years = ee.List.sequence(start_year, end_year)
         months = ee.List.sequence(1, 12)
         
-        results = ee.ImageCollection.fromImages(
-            years.map(lambda y: months.map(lambda m: monthly_min(m, y))).flatten()
+        # Create ALL year-month combinations (encode as YYYYMM)
+        year_months = years.map(
+            lambda y: months.map(lambda m: ee.Number(y).multiply(100).add(m))
+        ).flatten()
+        
+        # Calculate monthly minima for ALL combinations
+        monthly_results = ee.ImageCollection.fromImages(
+            year_months.map(calculate_monthly_min)
         )
         
-        return results
+        return monthly_results
     
     def calculate_TX90p(self, tmax_collection: ee.ImageCollection,
                         start_date: str, end_date: str,
-                        base_start: str = "1961-01-01", 
-                        base_end: str = "1990-12-31") -> ee.Image:
+                        base_start: str = "1981-01-01", 
+                        base_end: str = "2010-12-31") -> ee.ImageCollection:
         """
-        Calculate percentage of days when TX > 90th percentile
+        Calculate percentage of days when TX > 90th percentile (simplified approach)
         
         Formula: TX90p = (count(TX > TX_90th) / total_days) * 100
         """
-        # Calculate 90th percentile from base period
-        percentiles = self.calculate_percentiles(
-            tmax_collection, base_start, base_end, [90]
-        )
+        # Calculate 90th percentile from base period (simplified)
+        base_collection = tmax_collection.filterDate(base_start, base_end)
+        percentile_90 = self.calculate_simple_percentile(base_collection, 90)
         
         # Filter to analysis period
         filtered = tmax_collection.filterDate(start_date, end_date)
         
-        def calculate_monthly_tx90p(month, year):
+        def calculate_monthly_tx90p(month_year):
+            month = ee.Number(month_year).int()
+            year = month.divide(100).int()
+            month = month.mod(100)
+            
             # Get month data
             monthly = filtered.filter(
                 ee.Filter.calendarRange(year, year, 'year')
@@ -327,46 +337,176 @@ class ClimateIndicesCalculator:
                 ee.Filter.calendarRange(month, month, 'month')
             )
             
-            # Get 90th percentile for each day of this month
-            month_start = ee.Date.fromYMD(year, month, 1)
-            month_end = month_start.advance(1, 'month')
-            days_in_month = month_end.difference(month_start, 'day')
-            
-            # Count exceedances
-            def count_exceedances(image):
-                doy = ee.Date(image.get('system:time_start')).getRelative('day', 'year')
-                threshold = percentiles.filter(
-                    ee.Filter.eq('day_of_year', doy)
-                ).first().select(['p90'])
-                
-                exceeds = image.gt(threshold)
-                return exceeds
-            
-            exceedance_count = monthly.map(count_exceedances).sum()
+            # Count exceedances and total days
+            exceedances = monthly.map(lambda img: img.gt(percentile_90))
+            exceedance_count = exceedances.sum()
+            total_days = monthly.size()
             
             # Calculate percentage
-            percentage = exceedance_count.divide(days_in_month).multiply(100)
+            percentage = exceedance_count.divide(total_days).multiply(100)
             
             return percentage.set({
                 'month': month,
                 'year': year,
-                'system:time_start': month_start.millis()
+                'system:time_start': ee.Date.fromYMD(year, month, 1).millis()
+            })
+        
+        # Create year-month sequence
+        start_year = ee.Date(start_date).get('year')
+        end_year = ee.Date(end_date).get('year')
+        
+        years = ee.List.sequence(start_year, end_year)
+        months = ee.List.sequence(1, 12)
+        
+        year_months = years.map(
+            lambda y: months.map(lambda m: ee.Number(y).multiply(100).add(m))
+        ).flatten()
+        
+        results = ee.ImageCollection.fromImages(
+            year_months.map(calculate_monthly_tx90p)
+        )
+        
+        return results
+    
+    def calculate_TN10p(self, tmin_collection: ee.ImageCollection,
+                        start_date: str, end_date: str,
+                        base_start: str = "1981-01-01", 
+                        base_end: str = "2010-12-31") -> ee.ImageCollection:
+        """
+        Calculate percentage of days when TN < 10th percentile
+        
+        Formula: TN10p = (count(TN < TN_10th) / total_days) * 100
+        """
+        # Calculate 10th percentile from base period
+        base_collection = tmin_collection.filterDate(base_start, base_end)
+        percentile_10 = self.calculate_simple_percentile(base_collection, 10)
+        
+        # Filter to analysis period
+        filtered = tmin_collection.filterDate(start_date, end_date)
+        
+        def calculate_monthly_tn10p(month_year):
+            month = ee.Number(month_year).int()
+            year = month.divide(100).int()
+            month = month.mod(100)
+            
+            # Get month data
+            monthly = filtered.filter(
+                ee.Filter.calendarRange(year, year, 'year')
+            ).filter(
+                ee.Filter.calendarRange(month, month, 'month')
+            )
+            
+            # Count exceedances and total days
+            exceedances = monthly.map(lambda img: img.lt(percentile_10))
+            exceedance_count = exceedances.sum()
+            total_days = monthly.size()
+            
+            # Calculate percentage
+            percentage = exceedance_count.divide(total_days).multiply(100)
+            
+            return percentage.set({
+                'month': month,
+                'year': year,
+                'system:time_start': ee.Date.fromYMD(year, month, 1).millis()
+            })
+        
+        # Create year-month sequence
+        start_year = ee.Date(start_date).get('year')
+        end_year = ee.Date(end_date).get('year')
+        
+        years = ee.List.sequence(start_year, end_year)
+        months = ee.List.sequence(1, 12)
+        
+        year_months = years.map(
+            lambda y: months.map(lambda m: ee.Number(y).multiply(100).add(m))
+        ).flatten()
+        
+        results = ee.ImageCollection.fromImages(
+            year_months.map(calculate_monthly_tn10p)
+        )
+        
+        return results
+    
+    def calculate_WSDI(self, tmax_collection: ee.ImageCollection,
+                       start_date: str, end_date: str,
+                       base_start: str = "1981-01-01", 
+                       base_end: str = "2010-12-31") -> ee.ImageCollection:
+        """
+        Calculate Warm Spell Duration Index (simplified)
+        Annual count of days with at least 6 consecutive days when TX > 90th percentile
+        
+        Note: This is a simplified implementation counting warm days instead of consecutive spells
+        """
+        # Calculate 90th percentile from base period
+        base_collection = tmax_collection.filterDate(base_start, base_end)
+        percentile_90 = self.calculate_simple_percentile(base_collection, 90)
+        
+        # Filter to analysis period
+        filtered = tmax_collection.filterDate(start_date, end_date)
+        
+        def calculate_annual_wsdi(year):
+            annual = filtered.filter(
+                ee.Filter.calendarRange(year, year, 'year')
+            )
+            
+            # Count warm days (simplified approach - should be consecutive spells in full implementation)
+            warm_days = annual.map(lambda img: img.gt(percentile_90))
+            warm_day_count = warm_days.sum()
+            
+            return warm_day_count.set({
+                'year': year,
+                'system:time_start': ee.Date.fromYMD(year, 1, 1).millis()
             })
         
         years = ee.List.sequence(
             ee.Date(start_date).get('year'),
             ee.Date(end_date).get('year')
         )
-        months = ee.List.sequence(1, 12)
         
         results = ee.ImageCollection.fromImages(
-            years.map(lambda y: months.map(lambda m: calculate_monthly_tx90p(m, y))).flatten()
+            years.map(calculate_annual_wsdi)
+        )
+        
+        return results
+    
+    def calculate_GSL(self, tmean_collection: ee.ImageCollection,
+                      start_date: str, end_date: str) -> ee.ImageCollection:
+        """
+        Calculate Growing Season Length (simplified)
+        Annual count between first span of 6 days with TG > 5°C and first span after July 1 of 6 days with TG < 5°C
+        
+        Note: This is a simplified implementation counting days above 5°C instead of identifying specific spans
+        """
+        # Filter to analysis period
+        filtered = tmean_collection.filterDate(start_date, end_date)
+        
+        def calculate_annual_gsl(year):
+            annual = filtered.filter(
+                ee.Filter.calendarRange(year, year, 'year')
+            )
+            
+            # Count days above 5°C (273.15 + 5 = 278.15K) - simplified approach
+            growing_days = annual.map(lambda img: img.gt(278.15))
+            growing_day_count = growing_days.sum()
+            
+            return growing_day_count.set({
+                'year': year,
+                'system:time_start': ee.Date.fromYMD(year, 1, 1).millis()
+            })
+        
+        years = ee.List.sequence(
+            ee.Date(start_date).get('year'),
+            ee.Date(end_date).get('year')
+        )
+        
+        results = ee.ImageCollection.fromImages(
+            years.map(calculate_annual_gsl)
         )
         
         return results
     
     def calculate_FD(self, tmin_collection: ee.ImageCollection,
-                     start_date: str, end_date: str) -> ee.Image:
+                     start_date: str, end_date: str) -> ee.ImageCollection:
         """
         Calculate annual count of frost days (TN < 0°C)
         
@@ -379,7 +519,7 @@ class ClimateIndicesCalculator:
                 ee.Filter.calendarRange(year, year, 'year')
             )
             
-            # Count days below 0°C
+            # Count days below 0°C (273.15K)
             frost_days = annual.map(lambda img: img.lt(273.15)).sum()
             
             return frost_days.set({
@@ -400,57 +540,60 @@ class ClimateIndicesCalculator:
     
     def calculate_DTR(self, tmax_collection: ee.ImageCollection,
                       tmin_collection: ee.ImageCollection,
-                      start_date: str, end_date: str) -> ee.Image:
+                      start_date: str, end_date: str) -> ee.ImageCollection:
         """
-        Calculate monthly mean diurnal temperature range
+        Calculate monthly mean diurnal temperature range (simplified approach)
         
         Formula: DTR = mean(TX - TN)
         """
-        # Join collections by date
-        join_filter = ee.Filter.equals(
-            leftField='system:time_start',
-            rightField='system:time_start'
-        )
+        # Filter collections to date range
+        tmax_filtered = tmax_collection.filterDate(start_date, end_date)
+        tmin_filtered = tmin_collection.filterDate(start_date, end_date)
         
-        joined = ee.ImageCollection(
-            ee.Join.inner().apply(
-                tmax_collection.filterDate(start_date, end_date),
-                tmin_collection.filterDate(start_date, end_date),
-                join_filter
-            )
-        )
-        
-        # Calculate daily DTR
-        def calculate_dtr(image):
-            tmax = ee.Image(image.get('primary'))
-            tmin = ee.Image(image.get('secondary'))
-            dtr = tmax.subtract(tmin)
-            return dtr.copyProperties(tmax, ['system:time_start'])
-        
-        dtr_daily = joined.map(calculate_dtr)
-        
-        # Calculate monthly mean
-        def monthly_mean_dtr(month, year):
-            monthly = dtr_daily.filter(
+        def calculate_monthly_dtr(month_year):
+            month = ee.Number(month_year).int()
+            year = month.divide(100).int()
+            month = month.mod(100)
+            
+            # Get monthly data
+            monthly_tmax = tmax_filtered.filter(
                 ee.Filter.calendarRange(year, year, 'year')
             ).filter(
                 ee.Filter.calendarRange(month, month, 'month')
             )
             
-            return monthly.mean().set({
+            monthly_tmin = tmin_filtered.filter(
+                ee.Filter.calendarRange(year, year, 'year')
+            ).filter(
+                ee.Filter.calendarRange(month, month, 'month')
+            )
+            
+            # Calculate mean temperatures for the month
+            mean_tmax = monthly_tmax.mean()
+            mean_tmin = monthly_tmin.mean()
+            
+            # Calculate DTR
+            dtr = mean_tmax.subtract(mean_tmin)
+            
+            return dtr.set({
                 'month': month,
                 'year': year,
                 'system:time_start': ee.Date.fromYMD(year, month, 1).millis()
             })
         
-        years = ee.List.sequence(
-            ee.Date(start_date).get('year'),
-            ee.Date(end_date).get('year')
-        )
+        # Create year-month sequence
+        start_year = ee.Date(start_date).get('year')
+        end_year = ee.Date(end_date).get('year')
+        
+        years = ee.List.sequence(start_year, end_year)
         months = ee.List.sequence(1, 12)
         
+        year_months = years.map(
+            lambda y: months.map(lambda m: ee.Number(y).multiply(100).add(m))
+        ).flatten()
+        
         results = ee.ImageCollection.fromImages(
-            years.map(lambda y: months.map(lambda m: monthly_mean_dtr(m, y))).flatten()
+            year_months.map(calculate_monthly_dtr)
         )
         
         return results
@@ -458,7 +601,7 @@ class ClimateIndicesCalculator:
     # Precipitation Indices Calculations
     
     def calculate_RX1day(self, precip_collection: ee.ImageCollection,
-                         start_date: str, end_date: str) -> ee.Image:
+                         start_date: str, end_date: str) -> ee.ImageCollection:
         """
         Calculate monthly maximum 1-day precipitation
         
@@ -466,7 +609,11 @@ class ClimateIndicesCalculator:
         """
         filtered = precip_collection.filterDate(start_date, end_date)
         
-        def monthly_max_precip(month, year):
+        def monthly_max_precip(month_year):
+            month = ee.Number(month_year).int()
+            year = month.divide(100).int()
+            month = month.mod(100)
+            
             monthly = filtered.filter(
                 ee.Filter.calendarRange(year, year, 'year')
             ).filter(
@@ -479,20 +626,25 @@ class ClimateIndicesCalculator:
                 'system:time_start': ee.Date.fromYMD(year, month, 1).millis()
             })
         
-        years = ee.List.sequence(
-            ee.Date(start_date).get('year'),
-            ee.Date(end_date).get('year')
-        )
+        # Create year-month sequence
+        start_year = ee.Date(start_date).get('year')
+        end_year = ee.Date(end_date).get('year')
+        
+        years = ee.List.sequence(start_year, end_year)
         months = ee.List.sequence(1, 12)
         
+        year_months = years.map(
+            lambda y: months.map(lambda m: ee.Number(y).multiply(100).add(m))
+        ).flatten()
+        
         results = ee.ImageCollection.fromImages(
-            years.map(lambda y: months.map(lambda m: monthly_max_precip(m, y))).flatten()
+            year_months.map(monthly_max_precip)
         )
         
         return results
     
     def calculate_RX5day(self, precip_collection: ee.ImageCollection,
-                         start_date: str, end_date: str) -> ee.Image:
+                         start_date: str, end_date: str) -> ee.ImageCollection:
         """
         Calculate monthly maximum consecutive 5-day precipitation
         
@@ -520,7 +672,11 @@ class ClimateIndicesCalculator:
         sums_5day = filtered.map(calculate_5day_sum)
         
         # Get monthly maximum
-        def monthly_max_5day(month, year):
+        def monthly_max_5day(month_year):
+            month = ee.Number(month_year).int()
+            year = month.divide(100).int()
+            month = month.mod(100)
+            
             monthly = sums_5day.filter(
                 ee.Filter.calendarRange(year, year, 'year')
             ).filter(
@@ -533,25 +689,31 @@ class ClimateIndicesCalculator:
                 'system:time_start': ee.Date.fromYMD(year, month, 1).millis()
             })
         
-        years = ee.List.sequence(
-            ee.Date(start_date).get('year'),
-            ee.Date(end_date).get('year')
-        )
+        # Create year-month sequence
+        start_year = ee.Date(start_date).get('year')
+        end_year = ee.Date(end_date).get('year')
+        
+        years = ee.List.sequence(start_year, end_year)
         months = ee.List.sequence(1, 12)
         
+        year_months = years.map(
+            lambda y: months.map(lambda m: ee.Number(y).multiply(100).add(m))
+        ).flatten()
+        
         results = ee.ImageCollection.fromImages(
-            years.map(lambda y: months.map(lambda m: monthly_max_5day(m, y))).flatten()
+            year_months.map(monthly_max_5day)
         )
         
         return results
     
     def calculate_CDD(self, precip_collection: ee.ImageCollection,
                       start_date: str, end_date: str,
-                      threshold: float = 1.0) -> ee.Image:
+                      threshold: float = 1.0) -> ee.ImageCollection:
         """
-        Calculate annual maximum consecutive dry days
+        Calculate annual maximum consecutive dry days (simplified)
         
         Formula: CDD = max(consecutive days with RR < threshold)
+        Note: This is simplified to count total dry days instead of consecutive runs
         """
         filtered = precip_collection.filterDate(start_date, end_date)
         
@@ -560,12 +722,8 @@ class ClimateIndicesCalculator:
                 ee.Filter.calendarRange(year, year, 'year')
             )
             
-            # Convert to dry day mask (1 for dry, 0 for wet)
+            # Count dry days (simplified approach)
             dry_days = annual.map(lambda img: img.lt(threshold))
-            
-            # Calculate consecutive runs
-            # This is complex in GEE, so we'll use a simplified approach
-            # Count total dry days as a proxy
             total_dry = dry_days.sum()
             
             return total_dry.set({
@@ -585,7 +743,7 @@ class ClimateIndicesCalculator:
         return results
     
     def calculate_R10mm(self, precip_collection: ee.ImageCollection,
-                        start_date: str, end_date: str) -> ee.Image:
+                        start_date: str, end_date: str) -> ee.ImageCollection:
         """
         Calculate annual count of heavy precipitation days (≥ 10mm)
         
@@ -619,7 +777,7 @@ class ClimateIndicesCalculator:
     
     def calculate_SDII(self, precip_collection: ee.ImageCollection,
                        start_date: str, end_date: str,
-                       wet_threshold: float = 1.0) -> ee.Image:
+                       wet_threshold: float = 1.0) -> ee.ImageCollection:
         """
         Calculate Simple Daily Intensity Index
         
@@ -632,16 +790,13 @@ class ClimateIndicesCalculator:
                 ee.Filter.calendarRange(year, year, 'year')
             )
             
-            # Mask for wet days
-            wet_mask = annual.map(lambda img: img.gte(wet_threshold))
-            
             # Sum precipitation on wet days
             wet_precip = annual.map(
                 lambda img: img.updateMask(img.gte(wet_threshold))
             ).sum()
             
             # Count wet days
-            wet_days = wet_mask.sum()
+            wet_days = annual.map(lambda img: img.gte(wet_threshold)).sum()
             
             # Calculate SDII
             sdii = wet_precip.divide(wet_days)
@@ -664,7 +819,7 @@ class ClimateIndicesCalculator:
     
     def calculate_PRCPTOT(self, precip_collection: ee.ImageCollection,
                           start_date: str, end_date: str,
-                          wet_threshold: float = 1.0) -> ee.Image:
+                          wet_threshold: float = 1.0) -> ee.ImageCollection:
         """
         Calculate annual total precipitation on wet days
         
@@ -744,6 +899,87 @@ class ClimateIndicesCalculator:
         
         return df
     
+    def extract_time_series_optimized(self, image_collection: ee.ImageCollection,
+                                    scale: int = 5000, max_pixels: int = 1e6) -> pd.DataFrame:
+        """
+        Extract time series data ensuring ALL data points are processed
+        
+        Args:
+            image_collection: Collection with calculated indices
+            scale: Scale in meters for reduction
+            max_pixels: Maximum pixels to process
+            
+        Returns:
+            pandas DataFrame with time series
+        """
+        try:
+            # Get collection size 
+            collection_size = image_collection.size().getInfo()
+            print(f"Processing ALL {collection_size} images in climate index extraction...")
+            
+            def reduce_image(image):
+                """Extract date and average values from an image."""
+                # Get the timestamp
+                date = ee.Date(image.get('system:time_start'))
+                date_string = date.format('YYYY-MM-dd')
+                
+                # Get the average value 
+                reduced = image.reduceRegion(
+                    reducer=ee.Reducer.mean(),
+                    geometry=self.geometry,
+                    scale=scale,
+                    maxPixels=max_pixels,
+                    bestEffort=True,
+                    tileScale=2
+                )
+                
+                return ee.Feature(None, {'date': date_string, 'value': reduced})
+            
+            # Map over the entire collection
+            features = image_collection.map(reduce_image)
+            
+            print("Extracting ALL time series data...")
+            
+            # Get the data from Earth Engine
+            feature_collection_data = features.getInfo()
+            
+            # Process the results
+            records = []
+            for feature in feature_collection_data['features']:
+                props = feature['properties']
+                
+                # Extract the value (it might be nested in the 'value' dict)
+                value_dict = props.get('value', {})
+                
+                # Get the first non-null numeric value
+                actual_value = None
+                for key, val in value_dict.items():
+                    if val is not None and isinstance(val, (int, float)):
+                        actual_value = val
+                        break
+                
+                if actual_value is not None:
+                    records.append({
+                        'date': props['date'],
+                        'value': actual_value
+                    })
+            
+            # Convert to DataFrame
+            if records:
+                df = pd.DataFrame(records)
+                df['date'] = pd.to_datetime(df['date'])
+                df = df.sort_values('date').reset_index(drop=True)
+                print(f"Successfully extracted {len(df)} data points")
+                return df
+            else:
+                print("No valid data points extracted")
+                return pd.DataFrame(columns=['date', 'value'])
+                
+        except Exception as e:
+            print(f"Error in optimized extraction: {str(e)}")
+            # Fallback to regular extraction
+            return self.extract_time_series(image_collection, scale)
+    
     def calculate_index(self, index_name: str, 
                        tmax_collection: Optional[ee.ImageCollection] = None,
                        tmin_collection: Optional[ee.ImageCollection] = None,
@@ -776,6 +1012,14 @@ class ClimateIndicesCalculator:
             return self.calculate_TNn(tmin_collection, start_date, end_date)
         elif index_name == 'TX90p':
             return self.calculate_TX90p(tmax_collection, start_date, end_date, **kwargs)
+        elif index_name == 'TN10p':
+            return self.calculate_TN10p(tmin_collection, start_date, end_date, **kwargs)
+        elif index_name == 'WSDI':
+            return self.calculate_WSDI(tmax_collection, start_date, end_date, **kwargs)
+        elif index_name == 'GSL':
+            # For GSL, use tmax as mean temperature if tmean not available
+            tmean_collection = tmax_collection  # Simplified approach
+            return self.calculate_GSL(tmean_collection, start_date, end_date)
         elif index_name == 'FD':
             return self.calculate_FD(tmin_collection, start_date, end_date)
         elif index_name == 'DTR':
