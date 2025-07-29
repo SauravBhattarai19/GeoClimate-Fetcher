@@ -943,7 +943,8 @@ if st.session_state.app_mode is None:
     # Tool Selection
     st.markdown("### 🎯 Choose Your Tool")
     
-    col1, col2, col3 = st.columns(3)
+    # First row of tools
+    col1, col2 = st.columns(2)
     
     with col1:
         st.markdown("""
@@ -977,6 +978,9 @@ if st.session_state.app_mode is None:
             st.session_state.app_mode = "climate_analytics"
             st.rerun()
     
+    # Second row of tools
+    col3, col4 = st.columns(2)
+    
     with col3:
         st.markdown("""
         <div class="tool-card">
@@ -992,6 +996,56 @@ if st.session_state.app_mode is None:
         if st.button("🚀 Launch Hydrology Analyzer", use_container_width=True, type="primary"):
             st.session_state.app_mode = "hydrology"
             st.rerun()
+    
+    with col4:
+        st.markdown("""
+        <div class="tool-card">
+            <span class="tool-icon">✅</span>
+            <div class="tool-title">Data Source Validator</div>
+            <div class="tool-description">
+                Compare weather station data with gridded satellite datasets. Statistical validation using 
+                Meteostat API with RMSE, R², correlation, bias analysis, and outlier detection.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if st.button("🚀 Launch Data Validator", use_container_width=True, type="primary"):
+            st.session_state.app_mode = "data_validator"
+            st.rerun()
+    
+    # Third row of tools
+    col5, col6 = st.columns(2)
+    
+    with col5:
+        st.markdown("""
+        <div class="tool-card">
+            <span class="tool-icon">🎯</span>
+            <div class="tool-title">Optimal Product Selector</div>
+            <div class="tool-description">
+                Compare meteostat station data with multiple gridded datasets to find the best data source. 
+                Comprehensive statistical analysis with daily, monthly, yearly, seasonal, and extreme value comparisons.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if st.button("🚀 Launch Product Selector", use_container_width=True, type="primary"):
+            st.session_state.app_mode = "product_selector"
+            st.rerun()
+    
+    with col6:
+        # Placeholder for future tools
+        st.markdown("""
+        <div class="tool-card" style="opacity: 0.6; border: 2px dashed #666;">
+            <span class="tool-icon">🔮</span>
+            <div class="tool-title">Future Tool</div>
+            <div class="tool-description">
+                More powerful analysis tools coming soon! Have suggestions? 
+                Contact us with your ideas for new climate analysis capabilities.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.button("💡 Suggest a Tool", use_container_width=True, disabled=True)
     
     # Author Section
     st.markdown("""
@@ -1027,10 +1081,25 @@ if st.session_state.app_mode is None:
         4. Set parameters and time period
         5. Visualize results and export
         
+        **💧 Hydrology Analyzer**
+        1. Authenticate with Google Earth Engine
+        2. Define study area and select precipitation dataset
+        3. Set analysis period
+        4. Run comprehensive precipitation analysis
+        5. View return periods, IDF curves, and drought indices
+        
+        **✅ Data Source Validator**
+        1. Select study area of interest
+        2. Load weather stations (Meteostat API or custom data)
+        3. Choose gridded dataset for comparison
+        4. Configure analysis period and variables
+        5. Run statistical validation and view comparison metrics
+        
         ### 🔑 Requirements
         - Google Earth Engine account ([Sign up free](https://earthengine.google.com/signup/))
         - Basic understanding of climate data
         - Internet connection for cloud processing
+        - For Data Validator: Optional Meteostat library (`pip install meteostat`)
         """)
 
 # Data Explorer Mode
@@ -4564,3 +4633,190 @@ elif st.session_state.app_mode == "hydrology":
     
     else:
         st.info("👆 Configure your analysis above and click 'Run Analysis' to see results")
+
+# Data Source Validator Mode
+elif st.session_state.app_mode == "data_validator":
+    # Add home button
+    if st.button("🏠 Back to Home"):
+        st.session_state.app_mode = None
+        st.rerun()
+    
+    # App title and header
+    st.markdown('<h1 class="main-title">✅ Data Source Validator</h1>', unsafe_allow_html=True)
+    st.markdown("### Compare weather station data with gridded satellite datasets")
+    
+    # Import and initialize the validator component
+    from app_components.validator_component import DataSourceValidatorComponent
+    
+    try:
+        validator = DataSourceValidatorComponent()
+        validator.render()
+    except Exception as e:
+        st.error(f"❌ Error initializing Data Source Validator: {str(e)}")
+        
+        # Show helpful information
+        st.markdown("""
+        ### 🔧 Setup Requirements
+        
+        The Data Source Validator requires additional dependencies:
+        
+        ```bash
+        pip install meteostat scikit-learn
+        ```
+        
+        **Features:**
+        - 🌐 **Meteostat Integration**: Access to global weather station network
+        - 📊 **Statistical Analysis**: RMSE, R², MAE, correlation, and bias metrics
+        - 🔍 **Outlier Detection**: Z-score and IQR methods for data quality
+        - 📈 **Seasonal Analysis**: Compare performance across seasons
+        - 📅 **Temporal Alignment**: Find common periods between datasets
+        - 📁 **Custom Upload**: Support for your own station data
+        
+        **Workflow:**
+        1. Select study area
+        2. Load weather stations (Meteostat API or custom upload)
+        3. Choose gridded comparison dataset
+        4. Configure analysis period (automatic temporal alignment)
+        5. Run statistical validation with customizable metrics
+        6. View results with interactive plots and download reports
+        
+        """)
+        
+        # Add information about Meteostat
+        with st.expander("🌐 About Meteostat", expanded=False):
+            st.markdown("""
+            **Meteostat** is a comprehensive weather data platform providing:
+            
+            - 📍 **Global Coverage**: Weather stations worldwide
+            - 📅 **Historical Data**: Long-term weather records
+            - 🌡️ **Multiple Variables**: Temperature, precipitation, wind, pressure
+            - 🔄 **Regular Updates**: Near real-time data availability
+            - 🆓 **Open Access**: Free for research and educational use
+            
+            **Station Metadata Includes:**
+            - Station ID and coordinates
+            - Elevation and location details
+            - Data availability periods
+            - Variable coverage information
+            
+            This tool automatically handles station discovery, data fetching, and temporal alignment
+            to make validation analysis straightforward and reliable.
+            """)
+        
+        # Performance information
+        with st.expander("⚡ Performance Features", expanded=False):
+            st.markdown("""
+            ### 🚀 **Intelligent Caching System**
+            
+            **Station Metadata Caching:**
+            - 📁 Stations are cached locally after first search
+            - ⚡ Subsequent searches are instant within cached area
+            - 🔄 Smart expansion of cached regions
+            
+            **Data Quality Assurance:**
+            - 🔍 Automatic outlier detection (Z-score and IQR methods)
+            - 📊 Missing data analysis and reporting
+            - ⏰ Temporal alignment optimization
+            - 🎯 Nearest grid point matching
+            
+            **Statistical Metrics:**
+            - **RMSE**: Root Mean Square Error
+            - **R²**: Coefficient of determination  
+            - **MAE**: Mean Absolute Error
+            - **Correlation**: Pearson correlation coefficient
+            - **Bias**: Mean difference (gridded - station)
+            - **Percentiles**: User-configurable (default: 5th and 95th)
+            
+            **Real-time Comparison:**
+            - 📈 Interactive time series plots
+            - 📊 Scatter plots with trend lines
+            - 🌱 Seasonal boxplots
+            - 📋 Comprehensive statistics tables
+            - 📥 Downloadable reports and data
+            """)
+
+# Optimal Product Selector Mode
+elif st.session_state.app_mode == "product_selector":
+    # Add home button
+    if st.button("🏠 Back to Home"):
+        st.session_state.app_mode = None
+        st.rerun()
+    
+    # App title and header
+    st.markdown('<h1 class="main-title">🎯 Optimal Product Selector</h1>', unsafe_allow_html=True)
+    st.markdown("### Compare meteostat station data with gridded datasets to find optimal data sources")
+    
+    # Import and initialize the product selector component
+    from app_components.product_selector_component import ProductSelectorComponent
+    
+    try:
+        product_selector = ProductSelectorComponent()
+        product_selector.render()
+    except Exception as e:
+        st.error(f"❌ Error initializing Product Selector: {str(e)}")
+        
+        # Show helpful information
+        st.markdown("""
+        ### 🔧 Setup Requirements
+        
+        The Optimal Product Selector requires additional dependencies:
+        
+        ```bash
+        pip install meteostat scikit-learn pandas numpy plotly
+        ```
+        
+        **Features:**
+        - 🌐 **Station Discovery**: Find meteostat stations within your area of interest
+        - 📊 **Multi-Dataset Comparison**: Compare with multiple gridded climate datasets
+        - 🎯 **Variable-Specific Analysis**: Separate analysis for precipitation, tmax, and tmin
+        - 📈 **Comprehensive Statistics**: Daily, monthly, yearly, seasonal, and extreme value analysis
+        - ⏰ **Smart Temporal Alignment**: Automatic detection of common data periods
+        - 📁 **Custom Data Support**: Upload your own station data with simple format
+        - 📥 **Results Export**: Download all analysis results and data as CSV files
+        
+        **Workflow:**
+        1. Select study area (draw polygon, upload GeoJSON, or enter coordinates)
+        2. Discover meteostat stations within the area (or upload custom station data)
+        3. Select variable for analysis (precipitation, tmax, or tmin - one at a time)
+        4. Choose gridded datasets for comparison from curated catalogs
+        5. Set analysis period (auto-detected optimal overlap or custom range)
+        6. Run comprehensive statistical analysis with multiple metrics
+        7. View individual station results with interactive plots
+        8. Download all results and data as organized CSV files
+        
+        **Statistical Analysis Includes:**
+        - **Daily Metrics**: RMSE, MAE, R², Correlation, Bias
+        - **Monthly Analysis**: Aggregated monthly comparisons and trends  
+        - **Yearly Analysis**: Annual totals/averages with long-term trends
+        - **Seasonal Breakdown**: Spring/Summer/Fall/Winter performance
+        - **Extreme Events**: P95/P99 precipitation, temperature extremes
+        """)
+        
+        # Add information about supported data formats
+        with st.expander("📁 Custom Data Format", expanded=False):
+            st.markdown("""
+            **Required Columns for Custom Station Data:**
+            
+            **Metadata File (CSV):**
+            ```
+            id,latitude,longitude,daily_start,daily_end
+            STATION_001,40.123,-75.456,2010-01-01,2023-12-31
+            STATION_002,40.234,-75.567,2015-01-01,2023-12-31
+            ```
+            
+            **Data File (CSV):**
+            ```
+            date,station_id,value
+            2020-01-01,STATION_001,5.2
+            2020-01-02,STATION_001,3.1
+            2020-01-01,STATION_002,4.8
+            ```
+            
+            **Notes:**
+            - Date format: YYYY-MM-DD
+            - Station IDs must match between metadata and data files
+            - Missing values: leave blank or use NaN
+            - Value units: mm for precipitation, °C for temperature
+            """)
+
+# Add any additional modes here if needed...
