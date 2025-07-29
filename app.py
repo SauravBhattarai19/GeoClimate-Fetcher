@@ -998,20 +998,19 @@ if st.session_state.app_mode is None:
             st.rerun()
     
     with col4:
+        # Placeholder for future tools
         st.markdown("""
-        <div class="tool-card">
-            <span class="tool-icon">✅</span>
-            <div class="tool-title">Data Source Validator</div>
+        <div class="tool-card" style="opacity: 0.6; border: 2px dashed #666;">
+            <span class="tool-icon">🔮</span>
+            <div class="tool-title">Future Tool</div>
             <div class="tool-description">
-                Compare weather station data with gridded satellite datasets. Statistical validation using 
-                Meteostat API with RMSE, R², correlation, bias analysis, and outlier detection.
+                More powerful analysis tools coming soon! Have suggestions? 
+                Contact us with your ideas for new climate analysis capabilities.
             </div>
         </div>
         """, unsafe_allow_html=True)
         
-        if st.button("🚀 Launch Data Validator", use_container_width=True, type="primary"):
-            st.session_state.app_mode = "data_validator"
-            st.rerun()
+        st.button("� Suggest a Tool", use_container_width=True, disabled=True)
     
     # Third row of tools
     col5, col6 = st.columns(2)
@@ -1088,18 +1087,10 @@ if st.session_state.app_mode is None:
         4. Run comprehensive precipitation analysis
         5. View return periods, IDF curves, and drought indices
         
-        **✅ Data Source Validator**
-        1. Select study area of interest
-        2. Load weather stations (Meteostat API or custom data)
-        3. Choose gridded dataset for comparison
-        4. Configure analysis period and variables
-        5. Run statistical validation and view comparison metrics
-        
         ### 🔑 Requirements
         - Google Earth Engine account ([Sign up free](https://earthengine.google.com/signup/))
         - Basic understanding of climate data
         - Internet connection for cloud processing
-        - For Data Validator: Optional Meteostat library (`pip install meteostat`)
         """)
 
 # Data Explorer Mode
@@ -4633,107 +4624,6 @@ elif st.session_state.app_mode == "hydrology":
     
     else:
         st.info("👆 Configure your analysis above and click 'Run Analysis' to see results")
-
-# Data Source Validator Mode
-elif st.session_state.app_mode == "data_validator":
-    # Add home button
-    if st.button("🏠 Back to Home"):
-        st.session_state.app_mode = None
-        st.rerun()
-    
-    # App title and header
-    st.markdown('<h1 class="main-title">✅ Data Source Validator</h1>', unsafe_allow_html=True)
-    st.markdown("### Compare weather station data with gridded satellite datasets")
-    
-    # Import and initialize the validator component
-    from app_components.validator_component import DataSourceValidatorComponent
-    
-    try:
-        validator = DataSourceValidatorComponent()
-        validator.render()
-    except Exception as e:
-        st.error(f"❌ Error initializing Data Source Validator: {str(e)}")
-        
-        # Show helpful information
-        st.markdown("""
-        ### 🔧 Setup Requirements
-        
-        The Data Source Validator requires additional dependencies:
-        
-        ```bash
-        pip install meteostat scikit-learn
-        ```
-        
-        **Features:**
-        - 🌐 **Meteostat Integration**: Access to global weather station network
-        - 📊 **Statistical Analysis**: RMSE, R², MAE, correlation, and bias metrics
-        - 🔍 **Outlier Detection**: Z-score and IQR methods for data quality
-        - 📈 **Seasonal Analysis**: Compare performance across seasons
-        - 📅 **Temporal Alignment**: Find common periods between datasets
-        - 📁 **Custom Upload**: Support for your own station data
-        
-        **Workflow:**
-        1. Select study area
-        2. Load weather stations (Meteostat API or custom upload)
-        3. Choose gridded comparison dataset
-        4. Configure analysis period (automatic temporal alignment)
-        5. Run statistical validation with customizable metrics
-        6. View results with interactive plots and download reports
-        
-        """)
-        
-        # Add information about Meteostat
-        with st.expander("🌐 About Meteostat", expanded=False):
-            st.markdown("""
-            **Meteostat** is a comprehensive weather data platform providing:
-            
-            - 📍 **Global Coverage**: Weather stations worldwide
-            - 📅 **Historical Data**: Long-term weather records
-            - 🌡️ **Multiple Variables**: Temperature, precipitation, wind, pressure
-            - 🔄 **Regular Updates**: Near real-time data availability
-            - 🆓 **Open Access**: Free for research and educational use
-            
-            **Station Metadata Includes:**
-            - Station ID and coordinates
-            - Elevation and location details
-            - Data availability periods
-            - Variable coverage information
-            
-            This tool automatically handles station discovery, data fetching, and temporal alignment
-            to make validation analysis straightforward and reliable.
-            """)
-        
-        # Performance information
-        with st.expander("⚡ Performance Features", expanded=False):
-            st.markdown("""
-            ### 🚀 **Intelligent Caching System**
-            
-            **Station Metadata Caching:**
-            - 📁 Stations are cached locally after first search
-            - ⚡ Subsequent searches are instant within cached area
-            - 🔄 Smart expansion of cached regions
-            
-            **Data Quality Assurance:**
-            - 🔍 Automatic outlier detection (Z-score and IQR methods)
-            - 📊 Missing data analysis and reporting
-            - ⏰ Temporal alignment optimization
-            - 🎯 Nearest grid point matching
-            
-            **Statistical Metrics:**
-            - **RMSE**: Root Mean Square Error
-            - **R²**: Coefficient of determination  
-            - **MAE**: Mean Absolute Error
-            - **Correlation**: Pearson correlation coefficient
-            - **Bias**: Mean difference (gridded - station)
-            - **Percentiles**: User-configurable (default: 5th and 95th)
-            
-            **Real-time Comparison:**
-            - 📈 Interactive time series plots
-            - 📊 Scatter plots with trend lines
-            - 🌱 Seasonal boxplots
-            - 📋 Comprehensive statistics tables
-            - 📥 Downloadable reports and data
-            """)
 
 # Optimal Product Selector Mode
 elif st.session_state.app_mode == "product_selector":
