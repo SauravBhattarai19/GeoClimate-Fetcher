@@ -1032,19 +1032,20 @@ if st.session_state.app_mode is None:
             st.rerun()
     
     with col6:
-        # Placeholder for future tools
         st.markdown("""
-        <div class="tool-card" style="opacity: 0.6; border: 2px dashed #666;">
-            <span class="tool-icon">🔮</span>
-            <div class="tool-title">Future Tool</div>
+        <div class="tool-card">
+            <span class="tool-icon">⏰</span>
+            <div class="tool-title">Temporal Disaggregation</div>
             <div class="tool-description">
-                More powerful analysis tools coming soon! Have suggestions? 
-                Contact us with your ideas for new climate analysis capabilities.
+                High-resolution precipitation analysis with hourly/30-minute satellite data. 
+                Compare daily station data with sub-daily products, apply bias correction, and perform temporal disaggregation.
             </div>
         </div>
         """, unsafe_allow_html=True)
         
-        st.button("💡 Suggest a Tool", use_container_width=True, disabled=True)
+        if st.button("� Launch Temporal Disaggregation", use_container_width=True, type="primary"):
+            st.session_state.app_mode = "temporal_disaggregation"
+            st.rerun()
     
     # Author Section
     st.markdown("""
@@ -4707,6 +4708,92 @@ elif st.session_state.app_mode == "product_selector":
             - Station IDs must match between metadata and data files
             - Missing values: leave blank or use NaN
             - Value units: mm for precipitation, °C for temperature
+            """)
+
+# Temporal Disaggregation Mode
+elif st.session_state.app_mode == "temporal_disaggregation":
+    # Add home button
+    if st.button("🏠 Back to Home"):
+        st.session_state.app_mode = None
+        st.rerun()
+    
+    # App title and header
+    st.markdown('<h1 class="main-title">⏰ Temporal Disaggregation</h1>', unsafe_allow_html=True)
+    st.markdown("### High-resolution precipitation analysis with hourly/30-minute satellite data")
+    
+    # Import and initialize the temporal disaggregation component
+    from app_components.temporal_disaggregation_component import TemporalDisaggregationComponent
+    
+    try:
+        temporal_disaggregation = TemporalDisaggregationComponent()
+        temporal_disaggregation.render()
+    except Exception as e:
+        st.error(f"❌ Error initializing Temporal Disaggregation: {str(e)}")
+        
+        # Show helpful information
+        st.markdown("""
+        ### 🔧 Setup Requirements
+        
+        The Temporal Disaggregation tool requires additional dependencies:
+        
+        ```bash
+        pip install scikit-learn pandas numpy plotly earthengine-api
+        ```
+        
+        **Features:**
+        - ⏰ **Sub-daily Analysis**: Work with hourly and 30-minute satellite precipitation data
+        - 🛰️ **Fixed Datasets**: ERA5-Land (hourly), GPM IMERG (30-min), GSMaP (hourly)
+        - 🎯 **Bias Correction**: Apply systematic bias correction using ground observations
+        - 📈 **Optimal Selection**: Weighted scoring system to select best satellite product
+        - ⬇️ **Temporal Disaggregation**: Convert hourly to 30-minute resolution
+        - 📥 **Corrected Data Export**: Download bias-corrected high-resolution datasets
+        
+        **Workflow:**
+        1. Upload daily precipitation station data (Date, Prcp format)
+        2. Upload station metadata (id, lat, long, start_date, end_date format)
+        3. Select analysis time period
+        4. Download sub-daily satellite data for station locations
+        5. Aggregate satellite data to daily for comparison
+        6. Calculate optimal dataset selection using weighted scoring
+        7. Apply bias correction using regression through origin
+        8. Perform temporal disaggregation to 30-minute resolution
+        9. Export corrected high-resolution precipitation datasets
+        
+        **Pre-configured Datasets:**
+        - **ERA5-Land Hourly**: Total precipitation (1950-2025)
+        - **GPM IMERG V07**: 30-minute precipitation (2000-2025)  
+        - **GSMaP Operational**: Hourly precipitation (1998-2025)
+        
+        **Statistical Methods:**
+        - **Composite Score**: 2/(1+RMSE) + 2×Corr + 1/(1+|Bias|) + 1.5×KGE
+        - **Bias Correction**: P_corrected = α × P_satellite
+        - **Temporal Disaggregation**: Pattern-based and statistical methods
+        """)
+        
+        # Add information about data format requirements
+        with st.expander("📁 Required Data Formats", expanded=False):
+            st.markdown("""
+            **Daily Precipitation Data (CSV):**
+            ```
+            Date,STATION_001,STATION_002,STATION_003
+            2020-01-01,0.0,0.0,0.0
+            2020-01-02,5.2,4.8,5.7
+            2020-01-03,0.0,0.0,0.0
+            ```
+            
+            **Station Metadata (CSV):**
+            ```
+            id,lat,long,start_date,end_date
+            STATION_001,40.123,-75.456,2010-01-01,2023-12-31
+            STATION_002,40.234,-75.567,2015-01-01,2023-12-31
+            ```
+            
+            **Notes:**
+            - Date format: YYYY-MM-DD
+            - Precipitation units: mm/day
+            - Coordinates: decimal degrees (WGS84)
+            - Station IDs must match between precipitation data columns and metadata
+            - Missing values: use 0.0 for precipitation, leave blank for metadata
             """)
 
 # Add any additional modes here if needed...
