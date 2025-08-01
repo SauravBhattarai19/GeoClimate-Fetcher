@@ -183,6 +183,7 @@ class TemporalDisaggregationComponent:
                         else:
                             # Show preview
                             st.success(f"✅ Loaded {len(precip_df)} records for {len(station_columns)} station(s)")
+                            st.write(f"**Date range:** {precip_df['Date'].min().date()} to {precip_df['Date'].max().date()}")
                             st.write(f"**Stations found:** {', '.join(station_columns)}")
                             st.dataframe(precip_df.head(), use_container_width=True)
                             
@@ -190,19 +191,42 @@ class TemporalDisaggregationComponent:
                             st.session_state.td_station_data = precip_df
                             st.session_state.td_station_columns = station_columns
                             st.session_state.td_data_uploaded = True
+                            
+                            # If metadata is already loaded, enhance it with start/end dates
+                            if (st.session_state.td_metadata_uploaded and 
+                                st.session_state.td_station_metadata is not None):
+                                metadata_df = st.session_state.td_station_metadata.copy()
+                                
+                                # Add start_date and end_date for each station
+                                for idx, row in metadata_df.iterrows():
+                                    station_id = str(row['id'])
+                                    if station_id in station_columns:
+                                        # Find first and last non-null precipitation values
+                                        station_precip = precip_df[['Date', station_id]].dropna()
+                                        if not station_precip.empty:
+                                            metadata_df.loc[idx, 'start_date'] = station_precip['Date'].min()
+                                            metadata_df.loc[idx, 'end_date'] = station_precip['Date'].max()
+                                        else:
+                                            # If no valid data, use full date range
+                                            metadata_df.loc[idx, 'start_date'] = precip_df['Date'].min()
+                                            metadata_df.loc[idx, 'end_date'] = precip_df['Date'].max()
+                                
+                                # Update stored metadata
+                                st.session_state.td_station_metadata = metadata_df
+                                st.info("✨ Metadata enhanced with start/end dates from precipitation data")
                         
                 except Exception as e:
                     st.error(f"Error reading precipitation file: {str(e)}")
         
         with col2:
             st.markdown("**Station Metadata:**")
-            st.markdown("Format: id, lat, long, start_date, end_date")
+            st.markdown("Format: id, lat, long")
             
             metadata_file = st.file_uploader(
                 "Upload metadata CSV",
                 type=['csv'],
                 key="metadata_upload",
-                help="CSV file with station information"
+                help="CSV file with station coordinates (id, lat, long)"
             )
             
             if metadata_file is not None:
@@ -210,15 +234,46 @@ class TemporalDisaggregationComponent:
                     metadata_df = pd.read_csv(metadata_file)
                     
                     # Validate required columns
-                    required_cols = ['id', 'lat', 'long', 'start_date', 'end_date']
+                    required_cols = ['id', 'lat', 'long']
                     missing_cols = [col for col in required_cols if col not in metadata_df.columns]
                     
                     if missing_cols:
                         st.error(f"❌ Missing required columns: {missing_cols}")
                     else:
-                        # Convert date columns
-                        metadata_df['start_date'] = pd.to_datetime(metadata_df['start_date'])
-                        metadata_df['end_date'] = pd.to_datetime(metadata_df['end_date'])
+                        # Convert id to string to match precipitation data column names
+                        metadata_df['id'] = metadata_df['id'].astype(str)
+                        
+                        # If precipitation data is already loaded, add start/end dates from precipitation data
+                        if st.session_state.td_data_uploaded and st.session_state.td_station_data is not None:
+                            precip_data = st.session_state.td_station_data
+                            station_columns = st.session_state.td_station_columns
+                            
+                            # Add start_date and end_date for each station based on precipitation data
+                            metadata_enhanced = []
+                            for _, row in metadata_df.iterrows():
+                                station_id = str(row['id'])
+                                if station_id in station_columns:
+                                    # Find first and last non-null precipitation values for this station
+                                    station_precip = precip_data[['Date', station_id]].dropna()
+                                    if not station_precip.empty:
+                                        start_date = station_precip['Date'].min()
+                                        end_date = station_precip['Date'].max()
+                                    else:
+                                        # If no valid data, use full precipitation date range
+                                        start_date = precip_data['Date'].min()
+                                        end_date = precip_data['Date'].max()
+                                    
+                                    metadata_enhanced.append({
+                                        'id': station_id,
+                                        'lat': row['lat'],
+                                        'long': row['long'],
+                                        'start_date': start_date,
+                                        'end_date': end_date
+                                    })
+                            
+                            if metadata_enhanced:
+                                metadata_df = pd.DataFrame(metadata_enhanced)
+                                st.info("✨ Start and end dates automatically determined from precipitation data")
                         
                         # Show preview
                         st.success(f"✅ Loaded {len(metadata_df)} station(s)")
@@ -233,8 +288,44 @@ class TemporalDisaggregationComponent:
         
         # Continue button
         if st.session_state.td_data_uploaded and st.session_state.td_metadata_uploaded:
+            # Ensure metadata has start_date and end_date columns
+            metadata_df = st.session_state.td_station_metadata
+            if 'start_date' not in metadata_df.columns or 'end_date' not in metadata_df.columns:
+                st.warning("⚠️ Enhancing metadata with date ranges from precipitation data...")
+                
+                # Enhance metadata with dates from precipitation data
+                precip_data = st.session_state.td_station_data
+                station_columns = st.session_state.td_station_columns
+                
+                metadata_enhanced = []
+                for _, row in metadata_df.iterrows():
+                    station_id = str(row['id'])
+                    if station_id in station_columns:
+                        # Find first and last non-null precipitation values
+                        station_precip = precip_data[['Date', station_id]].dropna()
+                        if not station_precip.empty:
+                            start_date = station_precip['Date'].min()
+                            end_date = station_precip['Date'].max()
+                        else:
+                            # If no valid data, use full date range
+                            start_date = precip_data['Date'].min()
+                            end_date = precip_data['Date'].max()
+                        
+                        metadata_enhanced.append({
+                            'id': station_id,
+                            'lat': row['lat'],
+                            'long': row['long'],
+                            'start_date': start_date,
+                            'end_date': end_date
+                        })
+                
+                if metadata_enhanced:
+                    st.session_state.td_station_metadata = pd.DataFrame(metadata_enhanced)
+                    metadata_df = st.session_state.td_station_metadata
+                    st.success("✅ Metadata enhanced with automatic date ranges")
+            
             # Validate that station IDs match between metadata and precipitation data
-            metadata_stations = set(st.session_state.td_station_metadata['id'].tolist())
+            metadata_stations = set(metadata_df['id'].astype(str).tolist())
             precip_stations = set(st.session_state.td_station_columns)
             
             missing_in_precip = metadata_stations - precip_stations
@@ -270,17 +361,24 @@ class TemporalDisaggregationComponent:
         precip_data = st.session_state.td_station_data
         metadata = st.session_state.td_station_metadata
         
-        # Calculate available date range
+        # Calculate available date range from precipitation data and metadata
         precip_start = precip_data['Date'].min().date()
         precip_end = precip_data['Date'].max().date()
         
-        meta_start = metadata['start_date'].min().date()
-        meta_end = metadata['end_date'].max().date()
-        
-        available_start = max(precip_start, meta_start)
-        available_end = min(precip_end, meta_end)
+        # Get the date range from metadata (automatically calculated from precipitation data)
+        if 'start_date' in metadata.columns and 'end_date' in metadata.columns:
+            meta_start = pd.to_datetime(metadata['start_date']).min().date()
+            meta_end = pd.to_datetime(metadata['end_date']).max().date()
+            
+            available_start = max(precip_start, meta_start)
+            available_end = min(precip_end, meta_end)
+        else:
+            # Fallback to precipitation data range only
+            available_start = precip_start
+            available_end = precip_end
         
         st.info(f"📊 Available data period: **{available_start}** to **{available_end}**")
+        st.info(f"📈 Total precipitation records: **{len(precip_data):,}** days across **{len(metadata)}** stations")
         
         # Date range selection
         col1, col2 = st.columns(2)
