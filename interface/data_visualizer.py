@@ -153,7 +153,6 @@ def render_direct_data_visualization():
         return
 
     # Show file previews
-    st.markdown("#### 📋 Available Data:")
 
     for file_name, file_data in processed_data.items():
         with st.expander(f"📄 {file_name}", expanded=len(processed_data) == 1):
