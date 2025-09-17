@@ -427,21 +427,27 @@ def _render_climate_results():
         if 'time_series_data' in results:
             _display_climate_results(results['time_series_data'])
 
-        # Show download options - results should persist
-        _show_download_options(results)
-
-        # Add visualization option
+        # IMPROVED UX: Show analysis options immediately after results
         st.markdown("---")
-        st.markdown("### 📊 Data Analysis Options")
+        st.markdown("### 📊 Analysis Options")
+        st.markdown("Choose how you want to work with your climate analysis results:")
 
         col1, col2, col3 = st.columns(3)
         with col1:
-            if st.button("📊 Visualize Results", use_container_width=True, type="primary"):
+            if st.button("🗺️ Visualize Spatial Data", use_container_width=True, type="primary",
+                        help="Create interactive maps and spatial visualizations"):
                 # Launch visualization with climate results
                 _launch_climate_visualization(results)
 
         with col2:
-            if st.button("🔄 Re-run Analysis", use_container_width=True):
+            if st.button("📁 Download Files", use_container_width=True,
+                        help="Download data files for offline analysis"):
+                # Scroll to download section
+                st.markdown('<div id="download-section"></div>', unsafe_allow_html=True)
+
+        with col3:
+            if st.button("🔄 Re-run Analysis", use_container_width=True,
+                        help="Start over with different parameters"):
                 # Clear existing results and re-run with current selections
                 st.session_state.climate_analysis_complete = False
                 st.session_state.climate_results = None
@@ -450,6 +456,16 @@ def _render_climate_results():
                 for key in list(st.session_state.keys()):
                     if key.startswith('show_') and 'climate' in key:
                         del st.session_state[key]
+                st.rerun()
+
+        # Download section (appears below analysis options)
+        st.markdown("---")
+        st.markdown('<div id="download-section"></div>', unsafe_allow_html=True)
+        st.markdown("### 📁 Download Options")
+        st.markdown("Download your analysis results for offline use or further processing:")
+
+        # Show download options - results should persist
+        _show_download_options(results)
 
                 # Trigger rerun to refresh the interface before starting analysis
                 st.rerun()
@@ -1103,6 +1119,43 @@ def _run_climate_analysis():
                 # Display time series if available
                 if 'time_series_data' in results:
                     _display_climate_results(results['time_series_data'])
+
+                # IMPROVED UX: Show analysis options immediately after results
+                st.markdown("---")
+                st.markdown("### 📊 Analysis Options")
+                st.markdown("Choose how you want to work with your climate analysis results:")
+
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    if st.button("🗺️ Visualize Spatial Data", use_container_width=True, type="primary",
+                                help="Create interactive maps and spatial visualizations", key="viz_new_results"):
+                        # Launch visualization with climate results
+                        _launch_climate_visualization(results)
+
+                with col2:
+                    if st.button("📁 Download Files", use_container_width=True,
+                                help="Download data files for offline analysis", key="download_new_results"):
+                        # Scroll to download section
+                        st.markdown('<div id="download-section-new"></div>', unsafe_allow_html=True)
+
+                with col3:
+                    if st.button("🔄 Re-run Analysis", use_container_width=True,
+                                help="Start over with different parameters", key="rerun_new_results"):
+                        # Clear existing results and re-run with current selections
+                        st.session_state.climate_analysis_complete = False
+                        st.session_state.climate_results = None
+
+                        # Clear any visualization states to ensure fresh display
+                        for key in list(st.session_state.keys()):
+                            if key.startswith('show_') and 'climate' in key:
+                                del st.session_state[key]
+                        st.rerun()
+
+                # Download section (appears below analysis options)
+                st.markdown("---")
+                st.markdown('<div id="download-section-new"></div>', unsafe_allow_html=True)
+                st.markdown("### 📁 Download Options")
+                st.markdown("Download your analysis results for offline use or further processing:")
 
                 # Show download options
                 _show_download_options(results)

@@ -162,9 +162,37 @@ def render_direct_data_visualization():
             elif file_data['type'] == 'tiff':
                 _render_direct_tiff_preview(file_data)
 
-    # Show visualization section if data is available
+    # Direct visualization - skip complex selection interface
     if processed_data:
-        render_visualization_section()
+        st.markdown("---")
+
+        # If single file, show it directly
+        if len(processed_data) == 1:
+            file_name, file_data = next(iter(processed_data.items()))
+            st.markdown(f"### 🗺️ {file_name}")
+
+            if file_data['type'] == 'tiff':
+                render_tiff_visualization(file_data, file_name)
+            elif file_data['type'] == 'csv':
+                render_csv_visualization(file_data, file_name)
+        else:
+            # Multiple files - simple selector
+            st.markdown("### 📊 Select Data to Visualize")
+            file_options = list(processed_data.keys())
+            selected_file = st.selectbox(
+                "Choose file:",
+                file_options,
+                key="direct_file_selector"
+            )
+
+            if selected_file:
+                file_data = processed_data[selected_file]
+                st.markdown("---")
+
+                if file_data['type'] == 'tiff':
+                    render_tiff_visualization(file_data, selected_file)
+                elif file_data['type'] == 'csv':
+                    render_csv_visualization(file_data, selected_file)
 
     # Option to clear and start fresh
     st.markdown("---")
@@ -937,8 +965,11 @@ def render_summary_viz(df: pd.DataFrame, file_data: Dict):
         st.dataframe(full_stats, use_container_width=True)
 
 
+# Removed complex band naming and categorization functions to keep it simple
+
+
 def render_tiff_visualization(file_data: Dict, file_name: str):
-    """Render simplified TIFF spatial visualization focused on the map"""
+    """Render simple TIFF spatial visualization with basic band selection"""
 
     file_path = file_data['file_path']
     metadata = file_data['metadata']
@@ -950,70 +981,51 @@ def render_tiff_visualization(file_data: Dict, file_name: str):
     else:
         st.markdown("#### 🗺️ Spatial Map")
 
-    # Simple band selection (minimal UI for zip files)
+    # Simple band selection - no complex naming
     band_count = metadata.get('band_count', metadata.get('bands', 1))
-    if band_count > 1 and not file_name.startswith('[ZIP]'):
-        # Only show band selector for non-zip files
-        band_options = [f"Band {i}" for i in range(1, band_count + 1)]
-        selected_band_label = st.radio(
-            f"📡 **Bands ({band_count} available):**",
-            band_options,
-            horizontal=True,
-            key=f"band_selector_{file_name}"
+    selected_band = 1
+
+    if band_count > 1:
+        # Simple band toggle
+        st.markdown(f"### 📡 Band Selection ({band_count} available)")
+
+        selected_band = st.radio(
+            "Select band to visualize:",
+            range(1, band_count + 1),
+            format_func=lambda x: f"Band {x}",
+            horizontal=True if band_count <= 4 else False,
+            key=f"band_selector_{file_name}",
+            help="Toggle between different bands in your multi-band file"
         )
-        selected_band = int(selected_band_label.split()[-1])
-    else:
-        selected_band = 1
 
     try:
-        # Colormap selection - simplified for zip files, full options for others
-        if file_name.startswith('[ZIP]'):
-            # Simplified colormap options for climate data
-            colormap_options = {
-                'viridis': 'Climate (Viridis)',
-                'RdYlBu_r': 'Temperature (Blue-Red)',
-                'Blues': 'Precipitation (Blues)',
-                'plasma': 'General (Plasma)'
-            }
-            selected_colormap = st.selectbox(
-                "🎨 Color Scheme:",
-                options=list(colormap_options.keys()),
-                format_func=lambda x: colormap_options[x],
-                index=0,
-                key=f"colormap_{file_name}"
-            )
-        else:
-            # Full colormap selection for other files
-            temporal_info = file_data.get('temporal_info', {})
-            if temporal_info.get('has_temporal'):
-                colormap_options = {
-                    'RdYlBu_r': 'Temperature (Blue-White-Red)',
-                    'Blues': 'Precipitation (Blue)',
-                    'viridis': 'General Climate (Viridis)',
-                    'plasma': 'Anomalies (Plasma)',
-                    'coolwarm': 'Deviations (Cool-Warm)'
-                }
-                selected_colormap = st.selectbox(
-                    "🎨 **Color Scheme:**",
-                    options=list(colormap_options.keys()),
-                    format_func=lambda x: colormap_options[x],
-                    index=0
-                )
-            else:
-                selected_colormap = 'viridis'
+        # Simple colormap selection - no smart recommendations
+        st.markdown("### 🎨 Color Scheme")
 
-        # Create and display spatial map
+        colormap_options = {
+            'viridis': 'Viridis',
+            'plasma': 'Plasma',
+            'RdYlBu_r': 'Red-Blue',
+            'Blues': 'Blues',
+            'coolwarm': 'Cool-Warm',
+            'terrain': 'Terrain'
+        }
+
+        selected_colormap = st.selectbox(
+            "Choose color scheme:",
+            options=list(colormap_options.keys()),
+            format_func=lambda x: colormap_options[x],
+            index=0,
+            key=f"colormap_{file_name}_{selected_band}"
+        )
+
+        # Create and display single spatial map
         with st.spinner("🗺️ Loading map..."):
-            # Simple title for zip files
-            if file_name.startswith('[ZIP]'):
-                map_title = file_name.replace('[ZIP] ', '').replace('.tif', '')
+            # Simple map title
+            if band_count > 1:
+                map_title = f"{file_name} - Band {selected_band}"
             else:
-                temporal_info = file_data.get('temporal_info', {})
-                map_title = f"{file_name}"
-                if temporal_info.get('has_temporal'):
-                    map_title += f" - {temporal_info['datetime'].strftime('%Y-%m-%d')}"
-                else:
-                    map_title += f" - Band {selected_band}"
+                map_title = file_name
 
             spatial_map = create_spatial_map(
                 file_path,
@@ -1025,22 +1037,52 @@ def render_tiff_visualization(file_data: Dict, file_name: str):
             # Display map with full width
             folium_static(spatial_map, width=800, height=600)
 
-        # Show basic info only for non-zip files
+        # Show basic file info
         if not file_name.startswith('[ZIP]'):
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("Width", f"{metadata['width']} px")
+                st.metric("Width", f"{metadata.get('width', 'N/A')} px")
             with col2:
-                st.metric("Height", f"{metadata['height']} px")
+                st.metric("Height", f"{metadata.get('height', 'N/A')} px")
             with col3:
-                st.metric("Data Type", metadata.get('dtype', 'Unknown'))
+                st.metric("Current Band", f"{selected_band}/{band_count}")
 
     except Exception as e:
         st.error(f"❌ Error loading map: {str(e)}")
         st.info("💡 Try refreshing the page if the error persists.")
 
 
-# Cleanup function (called when app closes)
+def render_csv_visualization(file_data: Dict, file_name: str):
+    """Render CSV data visualization"""
+    try:
+        # Get the data and metadata
+        df = file_data['data']
+        metadata = file_data.get('metadata', {})
+
+        # Basic info
+        st.markdown(f"### 📊 {file_name}")
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Rows", len(df))
+        with col2:
+            st.metric("Columns", len(df.columns))
+        with col3:
+            st.metric("Data Type", "CSV")
+
+        # Show data preview
+        st.markdown("#### 📋 Data Preview")
+        st.dataframe(df.head(10), use_container_width=True)
+
+        # Basic statistics
+        if len(df.select_dtypes(include=['number']).columns) > 0:
+            st.markdown("#### 📊 Statistics")
+            st.dataframe(df.describe(), use_container_width=True)
+
+    except Exception as e:
+        st.error(f"❌ Error displaying CSV data: {str(e)}")
+
+
 def _extract_temporal_info(filename: str) -> Dict:
     """Extract temporal information from climate data filenames"""
     import re

@@ -791,6 +791,137 @@ def _prepare_data_for_visualization(df, metadata=None):
         }
 
 
+def _launch_early_visualization(result, dataset, export_format, scale):
+    """Launch data visualizer with processing results immediately after completion"""
+    try:
+        # Prepare data for visualization based on format
+        visualization_data = []
+
+        if export_format == 'CSV':
+            # For CSV data, convert file_data back to DataFrame and prepare with full metadata
+            try:
+                import pandas as pd
+                import io
+                from datetime import datetime
+
+                # Convert file_data to DataFrame
+                if isinstance(result['file_data'], bytes):
+                    csv_string = result['file_data'].decode('utf-8')
+                    df = pd.read_csv(io.StringIO(csv_string))
+                elif isinstance(result['file_data'], str):
+                    df = pd.read_csv(io.StringIO(result['file_data']))
+                else:
+                    # Assume it's already a DataFrame
+                    df = result['file_data']
+
+                # Prepare metadata with rich band information
+                source_metadata = {
+                    'dataset': dataset.get('name', 'Unknown'),
+                    'export_format': export_format,
+                    'resolution': f"{scale}m",
+                    'size_mb': len(result['file_data']) / (1024 * 1024) if isinstance(result['file_data'], bytes) else 0,
+                    'download_timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'source': 'geodata_explorer_early',
+                    'selected_bands': getattr(st.session_state, 'selected_bands', []),
+                    'band_names': dataset.get('band_names', ''),
+                    'band_units': dataset.get('band_units', ''),
+                    'dataset_type': dataset.get('snippet_type', 'Unknown')
+                }
+
+                # Use helper function to prepare complete data structure
+                prepared_data = _prepare_data_for_visualization(df, source_metadata)
+
+                # Generate filename
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                dataset_name = dataset.get('name', 'data').replace(' ', '_').replace('/', '_')
+                filename = f"{dataset_name}_{timestamp}.csv"
+
+                visualization_data.append({
+                    'file_name': filename,
+                    'data': prepared_data['data'],
+                    'data_type': 'csv',
+                    'transfer_method': 'data_object',
+                    'column_suggestions': prepared_data['column_suggestions'],
+                    'quality_report': prepared_data['quality_report'],
+                    'summary': prepared_data['summary'],
+                    'metadata': prepared_data['metadata']
+                })
+            except Exception as e:
+                st.error(f"❌ Error preparing CSV data for visualization: {str(e)}")
+                raise e
+
+        elif export_format in ['GeoTIFF', 'NetCDF']:
+            # For spatial data, create a temporary file
+            try:
+                import tempfile
+                from datetime import datetime
+
+                # Check if the result indicates a ZIP file (multiple GeoTIFF files)
+                if 'ZIP archive' in result.get('message', ''):
+                    file_extension = '.zip'
+                    data_type = 'zip'
+                elif export_format == 'GeoTIFF':
+                    file_extension = '.tif'
+                    data_type = 'tiff'
+                else:  # NetCDF
+                    file_extension = '.nc'
+                    data_type = 'netcdf'
+
+                with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
+                    temp_file.write(result['file_data'])
+                    temp_path = temp_file.name
+
+                # Generate filename
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                dataset_name = dataset.get('name', 'data').replace(' ', '_').replace('/', '_')
+                filename = f"{dataset_name}_{timestamp}{file_extension}"
+
+                visualization_data.append({
+                    'file_name': filename,
+                    'data_type': data_type,
+                    'file_path': temp_path,
+                    'transfer_method': 'temp_file',
+                    'metadata': {
+                        'dataset': dataset.get('name', 'Unknown'),
+                        'export_format': export_format,
+                        'resolution': f"{scale}m",
+                        'size_mb': len(result['file_data']) / (1024 * 1024),
+                        'download_timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        'source': 'geodata_explorer_early',
+                        'selected_bands': getattr(st.session_state, 'selected_bands', []),
+                        'band_names': dataset.get('band_names', ''),
+                        'band_units': dataset.get('band_units', ''),
+                        'dataset_type': dataset.get('snippet_type', 'Unknown')
+                    }
+                })
+            except Exception as e:
+                st.error(f"❌ Error preparing {export_format} data for visualization: {str(e)}")
+                raise e
+
+        # Set up direct visualization data
+        st.session_state.direct_visualization_data = {
+            'results': visualization_data,
+            'source_module': 'geodata_explorer'
+        }
+
+        # Switch to data visualizer
+        st.session_state.app_mode = "data_visualizer"
+        st.rerun()
+
+    except Exception as e:
+        # If any error occurs, show warning and redirect to upload interface
+        st.warning(f"⚠️ Error transferring data to visualization: {str(e)}")
+        st.info("🔄 Redirecting to Data Visualizer upload interface. Please upload your downloaded file manually.")
+
+        # Clear any failed direct visualization data
+        if 'direct_visualization_data' in st.session_state:
+            del st.session_state.direct_visualization_data
+
+        # Redirect to data visualizer with clean state
+        st.session_state.app_mode = "data_visualizer"
+        st.rerun()
+
+
 def _launch_visualization_from_results():
     """Launch data visualizer with current download results"""
     try:
@@ -822,7 +953,11 @@ def _launch_visualization_from_results():
                     'resolution': f"{results['scale']}m",
                     'size_mb': results['file_size_mb'],
                     'download_timestamp': results['download_timestamp'],
-                    'source': 'geodata_explorer'
+                    'source': 'geodata_explorer',
+                    'selected_bands': results.get('selected_bands', getattr(st.session_state, 'selected_bands', [])),
+                    'band_names': results.get('band_names', ''),
+                    'band_units': results.get('band_units', ''),
+                    'dataset_type': results.get('dataset_type', 'Unknown')
                 }
 
                 # Use helper function to prepare complete data structure
@@ -873,7 +1008,11 @@ def _launch_visualization_from_results():
                         'resolution': f"{results['scale']}m",
                         'size_mb': results['file_size_mb'],
                         'download_timestamp': results['download_timestamp'],
-                        'source': 'geodata_explorer'
+                        'source': 'geodata_explorer',
+                        'selected_bands': results.get('selected_bands', getattr(st.session_state, 'selected_bands', [])),
+                        'band_names': results.get('band_names', ''),
+                        'band_units': results.get('band_units', ''),
+                        'dataset_type': results.get('dataset_type', 'Unknown')
                     }
                 })
             except Exception as e:
@@ -973,6 +1112,24 @@ def _process_download(export_format, scale):
                 # Display result message
                 st.info(result['message'])
 
+                # Add early visualization option
+                st.markdown("---")
+                st.markdown("### 🎯 Quick Actions")
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    if st.button("📊 Visualize Data", type="primary", use_container_width=True):
+                        # Prepare data for immediate visualization
+                        try:
+                            _launch_early_visualization(result, dataset, export_format, scale)
+                        except Exception as e:
+                            st.warning(f"⚠️ Could not transfer data to visualizer: {str(e)}")
+                            st.info("💡 You can still download the file and upload it manually to the visualizer.")
+
+                with col2:
+                    st.markdown("**Or download first:**")
+
                 # Create download button
                 file_data = result['file_data']
 
@@ -1001,7 +1158,7 @@ def _process_download(export_format, scale):
 
                 file_size_mb = len(file_data) / (1024 * 1024)
 
-                # Store download results for persistent interface
+                # Store download results for persistent interface with rich band information
                 download_results = {
                     'file_data': file_data,
                     'filename': filename,
@@ -1011,7 +1168,11 @@ def _process_download(export_format, scale):
                     'dataset_name': dataset.get('name', 'Unknown'),
                     'success_message': result['message'],
                     'scale': scale,
-                    'download_timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    'download_timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'selected_bands': getattr(st.session_state, 'selected_bands', []),
+                    'band_names': dataset.get('band_names', ''),
+                    'band_units': dataset.get('band_units', ''),
+                    'dataset_type': dataset.get('snippet_type', 'Unknown')
                 }
 
                 st.session_state.download_complete = True
@@ -1515,6 +1676,28 @@ def _process_smart_download(export_format, scale, export_preference):
 
                     st.session_state.download_complete = True
                     st.session_state.download_results = download_results
+
+                    # Add early visualization option for smart downloads
+                    st.markdown("---")
+                    st.markdown("### 🎯 Quick Actions")
+
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        if st.button("📊 Visualize Smart Download", type="primary", use_container_width=True):
+                            # Prepare data for immediate visualization
+                            try:
+                                _launch_visualization_from_results()
+                            except Exception as e:
+                                st.warning(f"⚠️ Could not transfer data to visualizer: {str(e)}")
+                                st.info("💡 Redirecting to visualizer for manual upload...")
+                                st.session_state.direct_visualization_data = None
+                                st.session_state.app_mode = "data_visualizer"
+                                st.rerun()
+
+                    with col2:
+                        st.markdown("**Or check downloads section:**")
+
                 elif result['export_method'] == 'drive':
                     # Drive export submitted - show task information
                     st.success("🎉 Export completed successfully!")
