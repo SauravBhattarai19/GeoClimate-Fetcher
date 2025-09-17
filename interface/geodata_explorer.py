@@ -848,14 +848,23 @@ def _launch_visualization_from_results():
                 import tempfile
                 import os
 
-                file_extension = '.tif' if results['export_format'] == 'GeoTIFF' else '.nc'
+                # Check if the filename indicates a ZIP file (multiple GeoTIFF files)
+                if results['filename'].lower().endswith('.zip'):
+                    # Handle ZIP file containing multiple GeoTIFF files
+                    file_extension = '.zip'
+                    data_type = 'zip'
+                else:
+                    # Handle single file
+                    file_extension = '.tif' if results['export_format'] == 'GeoTIFF' else '.nc'
+                    data_type = 'tiff' if results['export_format'] == 'GeoTIFF' else 'netcdf'
+
                 with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
                     temp_file.write(results['file_data'])
                     temp_path = temp_file.name
 
                 visualization_data.append({
                     'file_name': results['filename'],
-                    'data_type': 'tiff' if results['export_format'] == 'GeoTIFF' else 'netcdf',
+                    'data_type': data_type,
                     'file_path': temp_path,
                     'transfer_method': 'temp_file',
                     'metadata': {

@@ -132,8 +132,8 @@ def render_direct_data_visualization():
                     }
 
             elif data_type == 'zip':
-                # Handle ZIP files from file path (from climate analytics)
-                if transfer_method == 'file_path':
+                # Handle ZIP files from file path (from climate analytics or geodata explorer)
+                if transfer_method in ['file_path', 'temp_file']:
                     zip_results = process_zip_file_from_path(result.get('file_path'), metadata)
                     processed_data.update(zip_results)
 
