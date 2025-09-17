@@ -468,10 +468,8 @@ def _create_combined_spatial_zip(all_spatial_data: Dict[str, Dict],
             for index_name, spatial_result in all_spatial_data.items():
                 if spatial_result['success'] and 'file_data' in spatial_result:
                     # Add each index's spatial data as a separate entry
-                    master_zip.writestr(
-                        f"{index_name}_spatial_data.zip",
-                        spatial_result['file_data']
-                    )
+                    zip_entry_name = f"{index_name}_spatial_data.zip"
+                    master_zip.writestr(zip_entry_name, spatial_result['file_data'])
 
         # Read master ZIP as bytes
         with open(temp_zip_path, 'rb') as f:

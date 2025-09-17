@@ -2959,66 +2959,77 @@ def _prepare_climate_data_for_visualization(df, metadata=None):
 
 def _launch_climate_visualization(results):
     """Launch data visualizer with climate analysis results"""
+    try:
+        # Prepare data for visualization
+        visualization_data = []
 
-    # Prepare data for visualization
-    visualization_data = []
+        # Note: CSV time series data is already visualized in climate analytics
+        # Only transfer TIFF files (spatial data) to the data visualizer
 
-    # Note: CSV time series data is already visualized in climate analytics
-    # Only transfer TIFF files (spatial data) to the data visualizer
+        # Use individual downloadable ZIP files (same as manual downloads)
+        if 'individual_results' in results and results['individual_results']:
+            individual_results = results['individual_results']
 
-    # Get download results for spatial data (ZIP files with TIFF)
-    if 'download_results' in results:
-        download_results = results['download_results']
+            # Look for individual results with downloadable file_data
+            for index_name, index_data in individual_results.items():
+                if isinstance(index_data, dict) and index_data.get('success'):
+                    spatial_data = index_data.get('spatial_data')
 
-        # Process local downloads that are ready - focus on spatial data (TIFF/ZIP)
-        for index_name, download_result in download_results.items():
-            if (download_result.get('method') == 'local' and
-                download_result.get('status') == 'ready' and
-                'file_path' in download_result):
+                    if spatial_data and isinstance(spatial_data, dict):
+                        export_method = spatial_data.get('export_method')
+                        file_data = spatial_data.get('file_data')
 
-                file_path = download_result['file_path']
+                        if export_method == 'local' and file_data:
+                            # Create temp file for this individual ZIP (same as manual download)
+                            import tempfile
+                            import os
 
-                # Only process TIFF files and ZIP files (skip CSV as they're already visualized)
-                if file_path.endswith(('.tif', '.tiff')):
-                    visualization_data.append({
-                        'file_name': f'{index_name}_spatial.tif',
-                        'data_type': 'tiff',
-                        'file_path': file_path,
-                        'transfer_method': 'file_path',
-                        'metadata': {
-                            'climate_index': index_name,
-                            'analysis_type': st.session_state.get('climate_analysis_type', 'Unknown'),
-                            'source': 'climate_analytics'
-                        }
-                    })
+                            with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as temp_file:
+                                temp_file.write(file_data)
+                                temp_path = temp_file.name
 
-                elif file_path.endswith('.zip'):
-                    # ZIP files containing TIFF data (spatial climate data)
-                    visualization_data.append({
-                        'file_name': f'{index_name}_spatial_data.zip',
-                        'data_type': 'zip',
-                        'file_path': file_path,
-                        'transfer_method': 'file_path',
-                        'metadata': {
-                            'climate_index': index_name,
-                            'analysis_type': st.session_state.get('climate_analysis_type', 'Unknown'),
-                            'source': 'climate_analytics',
-                            'content_type': 'spatial_climate_data'
-                        }
-                    })
+                            filename = spatial_data.get('filename', f'{index_name}_spatial.zip')
+                            file_size_mb = spatial_data.get('actual_size_mb', len(file_data) / (1024 * 1024))
 
-                # Skip CSV files - they are already visualized in climate analytics interface
+                            viz_entry = {
+                                'file_name': filename,
+                                'data_type': 'zip',
+                                'file_path': temp_path,
+                                'transfer_method': 'temp_file',
+                                'metadata': {
+                                    'climate_index': index_name,
+                                    'analysis_type': st.session_state.get('climate_analysis_type', 'Unknown'),
+                                    'source': 'climate_analytics',
+                                    'content_type': 'individual_spatial_climate_data',
+                                    'file_size_mb': file_size_mb,
+                                    'export_method': export_method
+                                }
+                            }
+                            visualization_data.append(viz_entry)
 
-    if not visualization_data:
-        # No data available, but still go to visualizer (user can upload manually)
-        st.session_state.direct_visualization_data = None
-    else:
-        # Set up direct visualization data
-        st.session_state.direct_visualization_data = {
-            'results': visualization_data,
-            'source_module': 'climate_analytics'
-        }
+        if not visualization_data:
+            # No data available, but still go to visualizer (user can upload manually)
+            st.session_state.direct_visualization_data = None
+        else:
+            # Set up direct visualization data
+            st.session_state.direct_visualization_data = {
+                'results': visualization_data,
+                'source_module': 'climate_analytics'
+            }
 
-    # Always switch to data visualizer (with or without data)
-    st.session_state.app_mode = "data_visualizer"
-    st.rerun()
+        # Switch to data visualizer
+        st.session_state.app_mode = "data_visualizer"
+        st.rerun()
+
+    except Exception as e:
+        # If any error occurs, show warning and redirect to upload interface
+        st.warning(f"⚠️ Error transferring data to visualization: {str(e)}")
+        st.info("🔄 Redirecting to Data Visualizer upload interface. Please upload your downloaded files manually.")
+
+        # Clear any failed direct visualization data
+        if 'direct_visualization_data' in st.session_state:
+            del st.session_state.direct_visualization_data
+
+        # Redirect to data visualizer with clean state
+        st.session_state.app_mode = "data_visualizer"
+        st.rerun()

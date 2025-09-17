@@ -1171,6 +1171,7 @@ def process_zip_file_from_path(file_path: str, metadata: Dict = None) -> Dict:
     try:
         import zipfile
         import tempfile
+        import os
 
         processed_files = {}
 
