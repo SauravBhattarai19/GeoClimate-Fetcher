@@ -4,6 +4,7 @@ Core module for Optimal Product Selection functionality
 import pandas as pd
 import numpy as np
 import ee
+import json
 from datetime import datetime, date
 from typing import Dict, List, Tuple, Optional, Union
 import logging
@@ -259,7 +260,366 @@ class GriddedDataHandler:
     
     def __init__(self):
         """Initialize GriddedDataHandler"""
-        pass
+        # Define unit conversion mappings
+        self.unit_conversions = {
+            # Temperature conversions
+            'temperature': {
+                'K': {'target': '°C', 'func': self._kelvin_to_celsius},
+                '°C': {'target': '°C', 'func': lambda x: x},  # Already in Celsius
+                'degrees': {'target': '°C', 'func': lambda x: x}  # Assume degrees = Celsius
+            },
+            # Precipitation conversions  
+            'precipitation': {
+                'm': {'target': 'mm', 'func': self._meters_to_mm},
+                'mm': {'target': 'mm', 'func': lambda x: x},  # Already in mm
+                'mm/day': {'target': 'mm/day', 'func': lambda x: x},  # Keep as daily rate
+                'mm/hr': {'target': 'mm/hr', 'func': lambda x: x},  # Keep as hourly rate
+                '0.1 mm': {'target': 'mm', 'func': self._tenth_mm_to_mm},
+                'kg/m^2/s': {'target': 'mm/day', 'func': self._kg_m2_s_to_mm_day},
+                'kg/m²/s': {'target': 'mm/day', 'func': self._kg_m2_s_to_mm_day},
+            }
+        }
+        
+        # Dataset-specific unit mappings
+        self.dataset_units = {
+            # Temperature datasets
+            'ECMWF/ERA5/DAILY': {'variable_type': 'temperature', 'units': 'K'},
+            'ECMWF/ERA5_LAND/HOURLY': {'variable_type': 'temperature', 'units': 'K'},
+            'ECMWF/ERA5_LAND/DAILY_AGGR': {'variable_type': 'temperature', 'units': 'K'},  # Missing hardcoded ID
+            'IDAHO_EPSCOR/GRIDMET': {'variable_type': 'temperature', 'units': 'K'},
+            'MODIS/061/MOD11A1': {'variable_type': 'temperature', 'units': 'K'},
+            'NASA/FLDAS/NOAH01/C/GL/M/V001': {'variable_type': 'temperature', 'units': 'K'},
+            'NASA/GDDP-CMIP6': {'variable_type': 'temperature', 'units': 'K'},
+            'NASA/GLDAS/V021/NOAH/G025/T3H': {'variable_type': 'temperature', 'units': 'K'},
+            'NCEP_RE/surface_temp': {'variable_type': 'temperature', 'units': 'K'},
+            'IDAHO_EPSCOR/TERRACLIMATE': {'variable_type': 'temperature', 'units': '°C'},
+            'NASA/ORNL/DAYMET_V4': {'variable_type': 'temperature', 'units': '°C'},
+            
+            # Precipitation datasets  
+            'ECMWF/ERA5/DAILY': {'variable_type': 'precipitation', 'units': 'm'},
+            'ECMWF/ERA5_LAND/HOURLY': {'variable_type': 'precipitation', 'units': 'm'},
+            'ECMWF/ERA5_LAND/DAILY_AGGR': {'variable_type': 'precipitation', 'units': 'm'},  # Missing hardcoded ID
+            'IDAHO_EPSCOR/TERRACLIMATE': {'variable_type': 'precipitation', 'units': 'mm'},
+            'NASA/FLDAS/NOAH01/C/GL/M/V001': {'variable_type': 'precipitation', 'units': 'kg/m^2/s'},
+            'NASA/GLDAS/V021/NOAH/G025/T3H': {'variable_type': 'precipitation', 'units': 'kg/m^2/s'},
+            'NASA/GLDAS/V022/CLSM/G025/DA1D': {'variable_type': 'precipitation', 'units': 'kg/m^2/s'},
+            'NASA/GPM_L3/IMERG_MONTHLY_V07': {'variable_type': 'precipitation', 'units': 'mm/hr'},
+            'NASA/ORNL/DAYMET_V4': {'variable_type': 'precipitation', 'units': 'mm'},
+            'NOAA/CPC/Precipitation': {'variable_type': 'precipitation', 'units': '0.1 mm'},  # CSV version
+            'NOAA/CPC/PRECIPITATION': {'variable_type': 'precipitation', 'units': '0.1 mm'},  # Hardcoded version
+            'NOAA/PERSIANN-CDR': {'variable_type': 'precipitation', 'units': 'mm/day'},
+            'UCSB-CHG/CHIRPS/DAILY': {'variable_type': 'precipitation', 'units': 'mm/day'},
+        }
+    
+    def _kelvin_to_celsius(self, temp_k):
+        """Convert Kelvin to Celsius"""
+        return temp_k - 273.15
+    
+    def _meters_to_mm(self, meters):
+        """Convert meters to millimeters"""
+        return meters * 1000.0
+    
+    def _tenth_mm_to_mm(self, tenth_mm):
+        """Convert 0.1 mm units to mm"""
+        return tenth_mm * 0.1
+    
+    def _kg_m2_s_to_mm_day(self, kg_m2_s):
+        """Convert kg/m²/s to mm/day
+        
+        kg/m²/s is equivalent to mm/s, so multiply by seconds per day (86400)
+        """
+        return kg_m2_s * 86400.0
+    
+    def apply_unit_conversion(self, df: pd.DataFrame, dataset_id: str, variable: str) -> pd.DataFrame:
+        """Apply unit conversions to dataset values using JSON metadata first
+
+        Args:
+            df: DataFrame with data values
+            dataset_id: Earth Engine dataset ID
+            variable: Variable type (prcp, tmax, tmin)
+
+        Returns:
+            DataFrame with converted units
+        """
+        if df.empty:
+            return df
+
+        # Try to get conversion from JSON first
+        json_conversion = self._get_conversion_from_json(dataset_id, variable)
+
+        if json_conversion:
+            try:
+                df_converted = df.copy()
+                df_converted['value'] = (df_converted['value'] * json_conversion["scaling_factor"]) + json_conversion["offset"]
+                df_converted['original_units'] = json_conversion["original_unit"]
+                df_converted['converted_units'] = json_conversion["unit"]
+
+                logging.info(f"Converted {dataset_id} using JSON: {json_conversion['original_unit']} -> {json_conversion['unit']}")
+                return df_converted
+
+            except Exception as e:
+                logging.warning(f"Error applying JSON unit conversion for {dataset_id}: {str(e)}, falling back to hardcoded")
+
+        # Fallback to existing hardcoded conversions
+        return self._apply_unit_conversion_fallback(df, dataset_id, variable)
+
+    def _get_conversion_from_json(self, dataset_id, variable):
+        """Get unit conversion from datasets.json"""
+        try:
+            datasets_path = Path(__file__).parent.parent / "data" / "datasets.json"
+
+            if datasets_path.exists():
+                with open(datasets_path, 'r') as f:
+                    datasets_config = json.load(f)
+
+                # Variable mapping
+                variable_map = {
+                    'prcp': 'precipitation',
+                    'tmax': 'temperature_max',
+                    'tmin': 'temperature_min'
+                }
+
+                json_variable = variable_map.get(variable)
+                if not json_variable:
+                    return None
+
+                # Find dataset and get conversion info
+                for ee_id, dataset_info in datasets_config["datasets"].items():
+                    if dataset_id == ee_id or \
+                       (dataset_id == "daymet" and "daymet" in dataset_info["name"].lower()) or \
+                       (dataset_id == "era5" and "era5" in dataset_info["name"].lower()):
+
+                        if json_variable in dataset_info["bands"]:
+                            band_info = dataset_info["bands"][json_variable]
+                            return {
+                                "scaling_factor": band_info["scaling_factor"],
+                                "offset": band_info["offset"],
+                                "original_unit": band_info["original_unit"],
+                                "unit": band_info["unit"]
+                            }
+
+        except Exception as e:
+            logging.error(f"Error loading JSON conversion: {str(e)}")
+
+        return None
+
+    def _apply_unit_conversion_fallback(self, df: pd.DataFrame, dataset_id: str, variable: str) -> pd.DataFrame:
+        """Fallback unit conversion using hardcoded mappings"""
+
+        # Determine variable type for conversion
+        if variable in ['prcp']:
+            variable_type = 'precipitation'
+        elif variable in ['tmax', 'tmin', 'temperature_2m', 'mean_2m_air_temperature', 'LST_Day_1km', 'LST_Night_1km']:
+            variable_type = 'temperature'
+        else:
+            # Try to determine from dataset configuration
+            dataset_config = self.dataset_units.get(dataset_id)
+            if dataset_config:
+                variable_type = dataset_config['variable_type']
+            else:
+                # No conversion needed
+                return df
+
+        # Get dataset unit information
+        dataset_config = self.dataset_units.get(dataset_id)
+        if not dataset_config:
+            # Try to infer units from common patterns or variable names
+            inferred_config = self._infer_dataset_units(dataset_id, variable_type)
+            if inferred_config:
+                logging.info(f"Inferred unit conversion for {dataset_id}: {inferred_config}")
+                dataset_config = inferred_config
+            else:
+                # No unit information available
+                logging.warning(f"No unit conversion info for dataset {dataset_id}")
+                return df
+
+        source_units = dataset_config['units']
+        conversion_config = self.unit_conversions.get(variable_type, {}).get(source_units)
+
+        if not conversion_config:
+            logging.warning(f"No conversion available from {source_units} for {variable_type}")
+            return df
+
+        # Apply conversion
+        try:
+            df_converted = df.copy()
+            df_converted['value'] = df_converted['value'].apply(conversion_config['func'])
+
+            # Add unit information to the DataFrame
+            df_converted['original_units'] = source_units
+            df_converted['converted_units'] = conversion_config['target']
+
+            logging.info(f"Converted {dataset_id} from {source_units} to {conversion_config['target']}")
+
+            return df_converted
+
+        except Exception as e:
+            logging.error(f"Error applying unit conversion for {dataset_id}: {str(e)}")
+            return df
+    
+    def test_unit_conversions(self):
+        """Test unit conversion functions with sample data"""
+        import pandas as pd
+        
+        # Test temperature conversions
+        test_temp_k = pd.DataFrame({
+            'date': pd.date_range('2020-01-01', periods=3),
+            'dataset': 'ECMWF/ERA5/DAILY',
+            'value': [273.15, 283.15, 293.15]  # 0°C, 10°C, 20°C in Kelvin
+        })
+        
+        converted_temp = self.apply_unit_conversion(test_temp_k, 'ECMWF/ERA5/DAILY', 'tmax')
+        logging.info(f"Temperature conversion test: {converted_temp['value'].tolist()}")  # Should be [0, 10, 20]
+        
+        # Test precipitation conversions
+        test_precip_m = pd.DataFrame({
+            'date': pd.date_range('2020-01-01', periods=3),
+            'dataset': 'ECMWF/ERA5/DAILY',
+            'value': [0.001, 0.01, 0.05]  # 1mm, 10mm, 50mm in meters
+        })
+        
+        converted_precip = self.apply_unit_conversion(test_precip_m, 'ECMWF/ERA5/DAILY', 'prcp')
+        logging.info(f"Precipitation conversion test: {converted_precip['value'].tolist()}")  # Should be [1, 10, 50]
+        
+        return True
+    
+    def test_missing_dataset_conversions(self):
+        """Test unit conversions for previously missing dataset IDs"""
+        import pandas as pd
+        
+        # Test the specific missing dataset: ECMWF/ERA5_LAND/DAILY_AGGR
+        test_missing_temp = pd.DataFrame({
+            'date': pd.date_range('2020-01-01', periods=2),
+            'dataset': 'ECMWF/ERA5_LAND/DAILY_AGGR',
+            'value': [273.15, 293.15]  # 0°C, 20°C in Kelvin
+        })
+        
+        converted_missing_temp = self.apply_unit_conversion(test_missing_temp, 'ECMWF/ERA5_LAND/DAILY_AGGR', 'tmax')
+        logging.info(f"Missing dataset temperature conversion test: {converted_missing_temp['value'].tolist()}")  # Should be [0, 20]
+        
+        # Test case sensitivity issue: NOAA/CPC/PRECIPITATION vs NOAA/CPC/Precipitation
+        test_cpc_upper = pd.DataFrame({
+            'date': pd.date_range('2020-01-01', periods=2),
+            'dataset': 'NOAA/CPC/PRECIPITATION',
+            'value': [10, 50]  # 1mm, 5mm in 0.1mm units
+        })
+        
+        converted_cpc_upper = self.apply_unit_conversion(test_cpc_upper, 'NOAA/CPC/PRECIPITATION', 'prcp')
+        logging.info(f"CPC uppercase conversion test: {converted_cpc_upper['value'].tolist()}")  # Should be [1, 5]
+        
+        # Test inference mechanism with a completely unknown dataset
+        test_unknown_ecmwf = pd.DataFrame({
+            'date': pd.date_range('2020-01-01', periods=2),
+            'dataset': 'ECMWF/UNKNOWN_DATASET',
+            'value': [0.002, 0.01]  # 2mm, 10mm in meters
+        })
+        
+        converted_unknown = self.apply_unit_conversion(test_unknown_ecmwf, 'ECMWF/UNKNOWN_DATASET', 'prcp')
+        logging.info(f"Unknown ECMWF dataset inference test: {converted_unknown['value'].tolist()}")  # Should be [2, 10]
+        
+        return True
+    
+    def diagnose_unit_conversion_coverage(self):
+        """Diagnose unit conversion coverage for all known dataset IDs"""
+        
+        # Hardcoded dataset IDs from the code
+        hardcoded_ids = [
+            'NASA/ORNL/DAYMET_V4',
+            'UCSB-CHG/CHIRPS/DAILY', 
+            'ECMWF/ERA5_LAND/DAILY_AGGR',
+            'IDAHO_EPSCOR/GRIDMET',
+            'NASA/GLDAS/V021/NOAH/G025/T3H',
+            'IDAHO_EPSCOR/TERRACLIMATE',
+            'NASA/GPM_L3/IMERG_MONTHLY_V07',
+            'NOAA/CPC/PRECIPITATION'
+        ]
+        
+        logging.info("=== Unit Conversion Coverage Diagnostic ===")
+        
+        for dataset_id in hardcoded_ids:
+            temp_covered = dataset_id in self.dataset_units and self.dataset_units[dataset_id].get('variable_type') == 'temperature'
+            precip_covered = dataset_id in self.dataset_units and self.dataset_units[dataset_id].get('variable_type') == 'precipitation'
+            
+            # Test inference for both types if not explicitly covered
+            temp_inferred = self._infer_dataset_units(dataset_id, 'temperature') is not None
+            precip_inferred = self._infer_dataset_units(dataset_id, 'precipitation') is not None
+            
+            status = []
+            if temp_covered:
+                status.append("TEMP:explicit")
+            elif temp_inferred:
+                status.append("TEMP:inferred")
+            else:
+                status.append("TEMP:missing")
+                
+            if precip_covered:
+                status.append("PRECIP:explicit")
+            elif precip_inferred:
+                status.append("PRECIP:inferred")
+            else:
+                status.append("PRECIP:missing")
+            
+            logging.info(f"{dataset_id}: {', '.join(status)}")
+        
+        return True
+    
+    def _infer_dataset_units(self, dataset_id: str, variable_type: str) -> Optional[Dict]:
+        """Infer units for unknown datasets based on common patterns"""
+        
+        # Common unit patterns for different providers
+        unit_patterns = {
+            # Temperature patterns
+            'temperature': {
+                'ECMWF': 'K',        # European Centre datasets usually use Kelvin
+                'NASA': 'K',         # NASA datasets usually use Kelvin
+                'NOAA': 'K',         # NOAA reanalysis usually uses Kelvin
+                'MODIS': 'K',        # MODIS temperature products use Kelvin
+                'DAYMET': '°C',      # Daymet uses Celsius
+                'TERRACLIMATE': '°C', # TerraClimate uses Celsius
+            },
+            # Precipitation patterns
+            'precipitation': {
+                'ECMWF': 'm',        # European Centre uses meters
+                'NASA/GLDAS': 'kg/m^2/s',  # GLDAS uses kg/m²/s
+                'NASA/FLDAS': 'kg/m^2/s',  # FLDAS uses kg/m²/s
+                'NASA/GPM': 'mm/hr', # GPM uses mm/hr
+                'NOAA/CPC': '0.1 mm', # CPC uses 0.1 mm
+                'DAYMET': 'mm',      # Daymet uses mm
+                'TERRACLIMATE': 'mm', # TerraClimate uses mm
+                'CHIRPS': 'mm/day',  # CHIRPS uses mm/day
+                'PERSIANN': 'mm/day', # PERSIANN uses mm/day
+            }
+        }
+        
+        if variable_type not in unit_patterns:
+            return None
+        
+        patterns = unit_patterns[variable_type]
+        
+        # Check for exact matches first
+        for pattern, units in patterns.items():
+            if pattern in dataset_id:
+                return {'variable_type': variable_type, 'units': units}
+        
+        # Default fallbacks based on common provider patterns
+        if variable_type == 'temperature':
+            if any(provider in dataset_id for provider in ['ECMWF', 'NASA', 'NOAA', 'MODIS']):
+                return {'variable_type': variable_type, 'units': 'K'}
+            else:
+                return {'variable_type': variable_type, 'units': '°C'}
+        elif variable_type == 'precipitation':
+            if 'ECMWF' in dataset_id:
+                return {'variable_type': variable_type, 'units': 'm'}
+            elif any(gldas in dataset_id for gldas in ['GLDAS', 'FLDAS']):
+                return {'variable_type': variable_type, 'units': 'kg/m^2/s'}
+            elif 'CPC' in dataset_id:
+                return {'variable_type': variable_type, 'units': '0.1 mm'}
+            elif any(daily in dataset_id for daily in ['CHIRPS', 'PERSIANN']):
+                return {'variable_type': variable_type, 'units': 'mm/day'}
+            else:
+                return {'variable_type': variable_type, 'units': 'mm'}
+        
+        return None
     
     def get_point_data(self, ee_id: str, bands: List[str], point_coords: Tuple[float, float], 
                       start_date: date, end_date: date, variable: str) -> pd.DataFrame:
@@ -364,6 +724,9 @@ class GriddedDataHandler:
             if not df.empty:
                 df = df.dropna(subset=['value'])
             
+            # Apply unit conversions
+            df = self.apply_unit_conversion(df, ee_id, variable)
+            
             logging.info(f"Retrieved {len(df)} records from {ee_id}")
             return df
             
@@ -401,6 +764,10 @@ class GriddedDataHandler:
             if all_results:
                 final_df = pd.concat(all_results, ignore_index=True)
                 final_df = final_df.sort_values('date').reset_index(drop=True)
+                
+                # Apply unit conversions
+                final_df = self.apply_unit_conversion(final_df, ee_id, variable)
+                
                 logging.info(f"Retrieved {len(final_df)} records from {ee_id} using chunked processing")
                 return final_df
             else:
@@ -497,66 +864,36 @@ class GriddedDataHandler:
             DataFrame with gridded data
         """
         try:
-            # Map dataset IDs to Earth Engine collections and bands
-            dataset_mapping = {
-                'daymet': {
-                    'ee_id': 'NASA/ORNL/DAYMET_V4',
-                    'bands': {'prcp': 'prcp', 'tmax': 'tmax', 'tmin': 'tmin'}
-                },
-                'chirps': {
-                    'ee_id': 'UCSB-CHG/CHIRPS/DAILY',
-                    'bands': {'prcp': 'precipitation'}
-                },
-                'era5': {
-                    'ee_id': 'ECMWF/ERA5_LAND/DAILY_AGGR',
-                    'bands': {'prcp': 'total_precipitation_sum', 'tmax': 'temperature_2m_max', 'tmin': 'temperature_2m_min'}
-                },
-                'gridmet': {
-                    'ee_id': 'IDAHO_EPSCOR/GRIDMET',
-                    'bands': {'prcp': 'pr', 'tmax': 'tmmx', 'tmin': 'tmmn'}
-                },
-                'gldas': {
-                    'ee_id': 'NASA/GLDAS/V021/NOAH/G025/T3H',
-                    'bands': {'prcp': 'Rainf_f_tavg', 'tmax': 'Tair_f_inst', 'tmin': 'Tair_f_inst'}
-                },
-                'terraclimate': {
-                    'ee_id': 'IDAHO_EPSCOR/TERRACLIMATE',
-                    'bands': {'prcp': 'ppt', 'tmax': 'tmmx', 'tmin': 'tmmn'}
-                },
-                'imerg': {
-                    'ee_id': 'NASA/GPM_L3/IMERG_MONTHLY_V07',
-                    'bands': {'prcp': 'precipitation'}
-                },
-                'cpc': {
-                    'ee_id': 'NOAA/CPC/PRECIPITATION',
-                    'bands': {'prcp': 'precipitation'}
-                }
-            }
-            
-            # Get dataset configuration
-            if dataset_id not in dataset_mapping:
-                logging.warning(f"Dataset {dataset_id} not in predefined mapping, creating fallback sample data")
-                # Create fallback sample data for unsupported datasets
+            # Load datasets.json (required - no fallback)
+            datasets_path = Path(__file__).parent.parent / "data" / "datasets.json"
+
+            if not datasets_path.exists():
+                logging.error("datasets.json not found! Cannot proceed without dataset configuration.")
                 return self._create_sample_gridded_data(dataset_id, variable, start_date, end_date)
-            
-            config = dataset_mapping[dataset_id]
-            ee_id = config['ee_id']
-            
-            if variable not in config['bands']:
-                logging.error(f"Variable {variable} not available for dataset {dataset_id}")
-                return pd.DataFrame()
-            
-            band_name = config['bands'][variable]
-            
-            # Get point data using the existing method
-            return self.get_point_data(
-                ee_id=ee_id,
-                bands=[band_name],
-                point_coords=(longitude, latitude),
-                start_date=start_date,
-                end_date=end_date,
-                variable=variable
-            )
+
+            try:
+                with open(datasets_path, 'r') as f:
+                    datasets_config = json.load(f)
+
+                # Map dataset_id to Earth Engine ID and get band info
+                ee_mapping = self._get_ee_mapping_from_json(datasets_config["datasets"], dataset_id, variable)
+
+                if ee_mapping:
+                    return self.get_point_data(
+                        ee_id=ee_mapping["ee_id"],
+                        bands=[ee_mapping["band_name"]],
+                        point_coords=(longitude, latitude),
+                        start_date=start_date,
+                        end_date=end_date,
+                        variable=variable
+                    )
+                else:
+                    logging.warning(f"Dataset {dataset_id} with variable {variable} not found in datasets.json")
+                    return self._create_sample_gridded_data(dataset_id, variable, start_date, end_date)
+
+            except Exception as e:
+                logging.error(f"Error loading datasets.json: {str(e)}")
+                return self._create_sample_gridded_data(dataset_id, variable, start_date, end_date)
             
         except Exception as e:
             logging.error(f"Error getting gridded data: {str(e)}")
@@ -616,7 +953,63 @@ class GriddedDataHandler:
         except Exception as e:
             logging.error(f"Error creating sample gridded data: {str(e)}")
             return pd.DataFrame()
-    
+
+    def _get_ee_mapping_from_json(self, datasets_dict, dataset_id, variable):
+        """Map dataset_id to Earth Engine collection and band from JSON"""
+
+        # Variable mapping: Product Selector -> JSON
+        variable_map = {
+            'prcp': 'precipitation',
+            'tmax': 'temperature_max',
+            'tmin': 'temperature_min'
+        }
+
+        json_variable = variable_map.get(variable)
+        if not json_variable:
+            logging.error(f"Unknown variable type: {variable}")
+            return None
+
+        # Try to find dataset by exact match first
+        for ee_id, dataset_info in datasets_dict.items():
+            if dataset_id == ee_id:
+                if json_variable in dataset_info["bands"]:
+                    band_info = dataset_info["bands"][json_variable]
+                    return {
+                        "ee_id": ee_id,
+                        "band_name": band_info["band_name"],
+                        "scaling_factor": band_info["scaling_factor"],
+                        "offset": band_info["offset"]
+                    }
+
+        # Try to find dataset by name patterns
+        for ee_id, dataset_info in datasets_dict.items():
+            dataset_name_lower = dataset_info["name"].lower()
+            dataset_id_lower = dataset_id.lower()
+
+            # Match by common name patterns
+            if (dataset_id_lower == "daymet" and "daymet" in dataset_name_lower) or \
+               (dataset_id_lower == "era5" and "era5" in dataset_name_lower) or \
+               (dataset_id_lower == "chirps" and "chirps" in dataset_name_lower) or \
+               (dataset_id_lower == "terraclimate" and "terraclimate" in dataset_name_lower) or \
+               (dataset_id_lower == "gridmet" and "gridmet" in dataset_name_lower) or \
+               (dataset_id_lower == "gldas" and "gldas" in dataset_name_lower) or \
+               (dataset_id_lower == "imerg" and "imerg" in dataset_name_lower) or \
+               (dataset_id_lower == "cpc" and "cpc" in dataset_name_lower) or \
+               (dataset_id_lower in dataset_name_lower) or \
+               (dataset_id == dataset_info["name"]):
+
+                if json_variable in dataset_info["bands"]:
+                    band_info = dataset_info["bands"][json_variable]
+                    return {
+                        "ee_id": ee_id,
+                        "band_name": band_info["band_name"],
+                        "scaling_factor": band_info["scaling_factor"],
+                        "offset": band_info["offset"]
+                    }
+
+        logging.warning(f"Dataset {dataset_id} not found in JSON or doesn't support variable {variable}")
+        return None
+
     def detect_optimal_timerange(self, datasets: List[Dict], stations_df: pd.DataFrame) -> Optional[Tuple[date, date]]:
         """Detect optimal overlapping time range between datasets and stations
         

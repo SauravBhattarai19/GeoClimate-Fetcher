@@ -1,0 +1,312 @@
+{
+  "datasets": {
+    "ECMWF/ERA5/DAILY": {
+      "name": "ERA5 Daily Aggregates",
+      "provider": "ECMWF",
+      "start_date": "1979-01-02",
+      "end_date": "2020-07-09",
+      "temporal_resolution": "daily",
+      "pixel_size_m": 27830,
+      "snippet_type": "ImageCollection",
+      "geographic_coverage": "Global",
+      "description": "ERA5 daily surface climate variables - automatically converted units",
+      "bands": {
+        "temperature_max": {
+          "band_name": "maximum_2m_air_temperature",
+          "unit": "°C",
+          "original_unit": "K",
+          "scaling_factor": 1.0,
+          "offset": -273.15,
+          "description": "Daily maximum 2m air temperature"
+        },
+        "temperature_min": {
+          "band_name": "minimum_2m_air_temperature",
+          "unit": "°C",
+          "original_unit": "K",
+          "scaling_factor": 1.0,
+          "offset": -273.15,
+          "description": "Daily minimum 2m air temperature"
+        },
+        "temperature_mean": {
+          "band_name": "mean_2m_air_temperature",
+          "unit": "°C",
+          "original_unit": "K",
+          "scaling_factor": 1.0,
+          "offset": -273.15,
+          "description": "Daily mean 2m air temperature"
+        },
+        "precipitation": {
+          "band_name": "total_precipitation",
+          "unit": "mm/day",
+          "original_unit": "m",
+          "scaling_factor": 1000.0,
+          "offset": 0.0,
+          "description": "Daily total precipitation"
+        }
+      },
+      "supports_analysis": ["temperature", "precipitation"],
+      "recommended_indices": {
+        "temperature": ["TXx", "TNn", "DTR", "TX90p", "TN10p", "FD", "SU"],
+        "precipitation": ["RX1day", "CDD", "PRCPTOT", "R95p", "R10mm", "SDII"]
+      }
+    },
+    "NASA/ORNL/DAYMET_V4": {
+      "name": "Daymet V4 Daily Meteorology",
+      "provider": "ORNL DAAC (US DOE)",
+      "start_date": "1980-01-01",
+      "end_date": "2023-12-31",
+      "temporal_resolution": "daily",
+      "pixel_size_m": 1000,
+      "snippet_type": "ImageCollection",
+      "geographic_coverage": "North America",
+      "description": "Daily 1-km gridded weather data for North America",
+      "bands": {
+        "temperature_max": {
+          "band_name": "tmax",
+          "unit": "°C",
+          "original_unit": "°C",
+          "scaling_factor": 1.0,
+          "offset": 0.0,
+          "description": "Daily maximum temperature"
+        },
+        "temperature_min": {
+          "band_name": "tmin",
+          "unit": "°C",
+          "original_unit": "°C",
+          "scaling_factor": 1.0,
+          "offset": 0.0,
+          "description": "Daily minimum temperature"
+        },
+        "precipitation": {
+          "band_name": "prcp",
+          "unit": "mm/day",
+          "original_unit": "mm",
+          "scaling_factor": 1.0,
+          "offset": 0.0,
+          "description": "Daily precipitation"
+        }
+      },
+      "supports_analysis": ["temperature", "precipitation"],
+      "recommended_indices": {
+        "temperature": ["TXx", "TNn", "DTR", "TX90p", "TN10p", "FD", "SU"],
+        "precipitation": ["RX1day", "CDD", "PRCPTOT", "R95p", "R10mm", "SDII"]
+      }
+    }
+  },
+  "climate_indices": {
+    "TXx": {
+      "name": "Maximum Temperature",
+      "description": "Monthly maximum value of daily maximum temperature",
+      "unit": "°C",
+      "category": "temperature",
+      "complexity": "simple",
+      "required_bands": ["temperature_max"],
+      "temporal_aggregation": "monthly",
+      "etccdi_standard": true
+    },
+    "TNn": {
+      "name": "Minimum Temperature",
+      "description": "Monthly minimum value of daily minimum temperature",
+      "unit": "°C",
+      "category": "temperature",
+      "complexity": "simple",
+      "required_bands": ["temperature_min"],
+      "temporal_aggregation": "monthly",
+      "etccdi_standard": true
+    },
+    "DTR": {
+      "name": "Diurnal Temperature Range",
+      "description": "Monthly mean difference between daily maximum and minimum temperature",
+      "unit": "°C",
+      "category": "temperature",
+      "complexity": "simple",
+      "required_bands": ["temperature_max", "temperature_min"],
+      "temporal_aggregation": "monthly",
+      "etccdi_standard": true
+    },
+    "RX1day": {
+      "name": "Maximum 1-day Precipitation",
+      "description": "Monthly maximum 1-day precipitation amount",
+      "unit": "mm",
+      "category": "precipitation",
+      "complexity": "simple",
+      "required_bands": ["precipitation"],
+      "temporal_aggregation": "monthly",
+      "etccdi_standard": true
+    },
+    "CDD": {
+      "name": "Consecutive Dry Days",
+      "description": "Annual maximum number of consecutive days with precipitation < 1mm",
+      "unit": "days",
+      "category": "precipitation",
+      "complexity": "simple",
+      "required_bands": ["precipitation"],
+      "temporal_aggregation": "annual",
+      "etccdi_standard": true
+    },
+    "PRCPTOT": {
+      "name": "Annual Total Wet-day Precipitation",
+      "description": "Annual total precipitation in wet days (precipitation ≥ 1mm)",
+      "unit": "mm",
+      "category": "precipitation",
+      "complexity": "simple",
+      "required_bands": ["precipitation"],
+      "temporal_aggregation": "annual",
+      "etccdi_standard": true
+    },
+    "TX90p": {
+      "name": "Warm Days",
+      "description": "Annual count of days when Tmax > 90th percentile of 1980-2000 base period",
+      "unit": "days",
+      "category": "temperature",
+      "complexity": "percentile",
+      "required_bands": ["temperature_max"],
+      "base_period": "1980-2000",
+      "temporal_aggregation": "annual",
+      "etccdi_standard": true
+    },
+    "TX10p": {
+      "name": "Cool Days",
+      "description": "Annual count of days when Tmax < 10th percentile of 1980-2000 base period",
+      "unit": "days",
+      "category": "temperature",
+      "complexity": "percentile",
+      "required_bands": ["temperature_max"],
+      "base_period": "1980-2000",
+      "temporal_aggregation": "annual",
+      "etccdi_standard": true
+    },
+    "TN90p": {
+      "name": "Warm Nights",
+      "description": "Annual count of days when Tmin > 90th percentile of 1980-2000 base period",
+      "unit": "days",
+      "category": "temperature",
+      "complexity": "percentile",
+      "required_bands": ["temperature_min"],
+      "base_period": "1980-2000",
+      "temporal_aggregation": "annual",
+      "etccdi_standard": true
+    },
+    "TN10p": {
+      "name": "Cool Nights",
+      "description": "Annual count of days when Tmin < 10th percentile of 1980-2000 base period",
+      "unit": "days",
+      "category": "temperature",
+      "complexity": "percentile",
+      "required_bands": ["temperature_min"],
+      "base_period": "1980-2000",
+      "temporal_aggregation": "annual",
+      "etccdi_standard": true
+    },
+    "R95p": {
+      "name": "Very Wet Days Precipitation",
+      "description": "Annual total precipitation when daily precipitation > 95th percentile of 1980-2000 base period",
+      "unit": "mm",
+      "category": "precipitation",
+      "complexity": "percentile",
+      "required_bands": ["precipitation"],
+      "base_period": "1980-2000",
+      "temporal_aggregation": "annual",
+      "etccdi_standard": true
+    },
+    "R99p": {
+      "name": "Extremely Wet Days Precipitation",
+      "description": "Annual total precipitation when daily precipitation > 99th percentile of 1980-2000 base period",
+      "unit": "mm",
+      "category": "precipitation",
+      "complexity": "percentile",
+      "required_bands": ["precipitation"],
+      "base_period": "1980-2000",
+      "temporal_aggregation": "annual",
+      "etccdi_standard": true
+    },
+    "R75p": {
+      "name": "Moderately Wet Days Precipitation",
+      "description": "Annual total precipitation when daily precipitation > 75th percentile of 1980-2000 base period",
+      "unit": "mm",
+      "category": "precipitation",
+      "complexity": "percentile",
+      "required_bands": ["precipitation"],
+      "base_period": "1980-2000",
+      "temporal_aggregation": "annual",
+      "etccdi_standard": true
+    },
+    "TXn": {
+      "name": "Coldest Day",
+      "description": "Monthly minimum value of daily maximum temperature",
+      "unit": "°C",
+      "category": "temperature",
+      "complexity": "simple",
+      "required_bands": ["temperature_max"],
+      "temporal_aggregation": "monthly",
+      "etccdi_standard": true
+    },
+    "TNx": {
+      "name": "Warmest Night",
+      "description": "Monthly maximum value of daily minimum temperature",
+      "unit": "°C",
+      "category": "temperature",
+      "complexity": "simple",
+      "required_bands": ["temperature_min"],
+      "temporal_aggregation": "monthly",
+      "etccdi_standard": true
+    },
+    "FD": {
+      "name": "Frost Days",
+      "description": "Annual count of days when daily minimum temperature < 0°C",
+      "unit": "days",
+      "category": "temperature",
+      "complexity": "simple",
+      "required_bands": ["temperature_min"],
+      "temporal_aggregation": "annual",
+      "etccdi_standard": true
+    },
+    "SU": {
+      "name": "Summer Days",
+      "description": "Annual count of days when daily maximum temperature > 25°C",
+      "unit": "days",
+      "category": "temperature",
+      "complexity": "simple",
+      "required_bands": ["temperature_max"],
+      "temporal_aggregation": "annual",
+      "etccdi_standard": true
+    },
+    "R10mm": {
+      "name": "Heavy Rain Days",
+      "description": "Annual count of days when daily precipitation ≥ 10mm",
+      "unit": "days",
+      "category": "precipitation",
+      "complexity": "simple",
+      "required_bands": ["precipitation"],
+      "temporal_aggregation": "annual",
+      "etccdi_standard": true
+    },
+    "R20mm": {
+      "name": "Very Heavy Rain Days",
+      "description": "Annual count of days when daily precipitation ≥ 20mm",
+      "unit": "days",
+      "category": "precipitation",
+      "complexity": "simple",
+      "required_bands": ["precipitation"],
+      "temporal_aggregation": "annual",
+      "etccdi_standard": true
+    },
+    "SDII": {
+      "name": "Simple Daily Intensity Index",
+      "description": "Annual total precipitation divided by the number of wet days (precipitation ≥ 1mm)",
+      "unit": "mm/day",
+      "category": "precipitation",
+      "complexity": "simple",
+      "required_bands": ["precipitation"],
+      "temporal_aggregation": "annual",
+      "etccdi_standard": true
+    }
+  },
+  "metadata": {
+    "version": "1.0",
+    "created": "2025-01-13",
+    "description": "Climate datasets and indices configuration for GeoClimate Intelligence Platform",
+    "supported_analysis_types": ["temperature", "precipitation"],
+    "etccdi_compliance": true
+  }
+}

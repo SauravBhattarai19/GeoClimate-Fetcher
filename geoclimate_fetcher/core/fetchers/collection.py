@@ -96,7 +96,7 @@ class ImageCollectionFetcher:
                 reducer=ee.Reducer.mean(),
                 geometry=self.geometry,
                 scale=1000,  # Can be adjusted based on data resolution
-                maxPixels=1e9
+                maxPixels=2e9
             )
             
             # Create properties object with bands
@@ -534,7 +534,7 @@ class ImageCollectionFetcher:
                 reducer=ee.Reducer.mean(),
                 geometry=self.geometry,
                 scale=1000,
-                maxPixels=1e9
+                maxPixels=2e9
             ).getInfo()
             
             return {band: result.get(band) for band in self.bands}

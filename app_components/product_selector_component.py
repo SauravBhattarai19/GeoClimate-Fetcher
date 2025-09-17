@@ -24,10 +24,9 @@ geoclimate_path = project_root / "geoclimate_fetcher"
 if str(geoclimate_path) not in sys.path:
     sys.path.insert(0, str(geoclimate_path))
 
-from geoclimate_fetcher.core import GeometryHandler, MetadataCatalog, GEEExporter
+from geoclimate_fetcher.core import GeometryHandler, MetadataCatalog, GEEExporter, GeometrySelectionWidget
 from geoclimate_fetcher.core.product_selector import MeteostatHandler, GriddedDataHandler, StatisticalAnalyzer
 from streamlit_folium import st_folium
-from app_components.geometry_component import GeometryComponent
 from app_components.product_selector_visualizer import ProductSelectorVisualizer
 from app_components.product_selector_data_manager import DataManager
 
@@ -40,7 +39,7 @@ class ProductSelectorComponent:
         self._init_session_state()
         
         # Initialize components
-        self.geometry_component = GeometryComponent()
+        # Geometry selection will be handled by GeometrySelectionWidget
         
         # Initialize analysis components
         self.meteostat_handler = MeteostatHandler()
@@ -72,6 +71,8 @@ class ProductSelectorComponent:
             st.session_state.ps_selected_geometry = None
         if 'ps_available_stations' not in st.session_state:
             st.session_state.ps_available_stations = None
+        if 'ps_selected_stations' not in st.session_state:
+            st.session_state.ps_selected_stations = None
         if 'ps_selected_variable' not in st.session_state:
             st.session_state.ps_selected_variable = None
         if 'ps_selected_datasets' not in st.session_state:
@@ -92,29 +93,77 @@ class ProductSelectorComponent:
             else:
                 self.meteostat_stations = None
                 st.session_state.meteostat_available = False
-            
-            # Load climate datasets
-            climate_index_path = project_root / "geoclimate_fetcher" / "data" / "climate_index"
-            
-            precipitation_path = climate_index_path / "precipitation.csv"
-            temperature_path = climate_index_path / "temperature.csv"
-            
-            if precipitation_path.exists():
-                self.precipitation_datasets = pd.read_csv(precipitation_path)
+
+            # Load climate datasets from datasets.json
+            datasets_path = project_root / "geoclimate_fetcher" / "data" / "datasets.json"
+
+            if datasets_path.exists():
+                with open(datasets_path, 'r') as f:
+                    datasets_config = json.load(f)
+
+                # Transform JSON to CSV-like format for existing UI
+                self.precipitation_datasets = self._extract_datasets_by_type(
+                    datasets_config["datasets"], "precipitation"
+                )
+                self.temperature_datasets = self._extract_datasets_by_type(
+                    datasets_config["datasets"], "temperature"
+                )
             else:
                 self.precipitation_datasets = pd.DataFrame()
-            
-            if temperature_path.exists():
-                self.temperature_datasets = pd.read_csv(temperature_path)
-            else:
                 self.temperature_datasets = pd.DataFrame()
-                
+
         except Exception as e:
             st.error(f"Error loading data catalogs: {str(e)}")
             self.meteostat_stations = None
             self.precipitation_datasets = pd.DataFrame()
             self.temperature_datasets = pd.DataFrame()
-    
+
+    def _extract_datasets_by_type(self, datasets_dict, analysis_type):
+        """Extract datasets supporting a specific analysis type"""
+        extracted_datasets = []
+
+        for ee_id, dataset_info in datasets_dict.items():
+            if analysis_type in dataset_info.get("supports_analysis", []):
+                # Transform JSON structure to match CSV expectations
+                csv_row = self._transform_dataset_to_csv_format(ee_id, dataset_info, analysis_type)
+                extracted_datasets.append(csv_row)
+
+        return pd.DataFrame(extracted_datasets)
+
+    def _transform_dataset_to_csv_format(self, ee_id, dataset_info, analysis_type):
+        """Transform JSON dataset to CSV-like format"""
+
+        # Get band info for the analysis type
+        band_info = self._get_band_for_analysis_type(dataset_info["bands"], analysis_type)
+
+        return {
+            "Dataset Name": dataset_info["name"],
+            "Earth Engine ID": ee_id,
+            "Provider": dataset_info["provider"],
+            "Start Date": dataset_info["start_date"],
+            "End Date": dataset_info["end_date"],
+            "Pixel Size (m)": dataset_info["pixel_size_m"],
+            "Temporal Resolution": dataset_info["temporal_resolution"],
+            "Band Names": band_info["band_name"],
+            "Band Units": band_info["unit"],
+            "Original Units": f"{band_info['original_unit']} (auto-converted)" if band_info["scaling_factor"] != 1.0 or band_info["offset"] != 0.0 else f"{band_info['original_unit']} (native)",
+            "Description": dataset_info["description"]
+        }
+
+    def _get_band_for_analysis_type(self, bands_dict, analysis_type):
+        """Get appropriate band for analysis type"""
+        if analysis_type == "precipitation":
+            return bands_dict["precipitation"]
+        elif analysis_type == "temperature":
+            # For temperature, prioritize temperature_max, fallback to temperature_min
+            if "temperature_max" in bands_dict:
+                return bands_dict["temperature_max"]
+            elif "temperature_min" in bands_dict:
+                return bands_dict["temperature_min"]
+
+        # Fallback - return first available band
+        return list(bands_dict.values())[0]
+
     def render(self):
         """Render the main component interface"""
         # Add home button
@@ -172,123 +221,21 @@ class ProductSelectorComponent:
     
     def _render_geometry_selection(self):
         """Render area selection interface"""
-        st.markdown("### 🗺️ Step 1: Select Area of Interest")
-        st.markdown("Choose your study area using one of the methods below:")
-        
-        # Geometry selection options
-        geometry_method = st.radio(
-            "Select method:",
-            ["🗺️ Draw on Map", "📁 Upload GeoJSON", "📍 Enter Coordinates"],
-            horizontal=True
-        )
-        
-        if geometry_method == "🗺️ Draw on Map":
-            self._render_map_selection()
-        elif geometry_method == "📁 Upload GeoJSON":
-            self._render_geojson_upload()
-        else:
-            self._render_coordinate_input()
-    
-    def _render_map_selection(self):
-        """Render interactive map for area selection"""
-        st.markdown("**Draw a polygon on the map to define your area of interest:**")
-        
-        # Create map
-        m = self.geometry_component.create_map()
-        
-        # Get map data
-        map_data = st_folium(
-            m,
-            key="product_selector_map",
-            width=700,
-            height=500,
-            returned_objects=["all_drawings"]
-        )
-        
-        # Process map selection
-        if map_data["all_drawings"]:
-            if len(map_data["all_drawings"]) > 0:
-                geometry = map_data["all_drawings"][-1]["geometry"]
-                st.session_state.ps_selected_geometry = geometry
-                
-                st.success("✅ Area selected successfully!")
-                if st.button("Continue to Station Discovery", type="primary", key="map_continue"):
-                    st.session_state.ps_geometry_complete = True
-                    st.rerun()
-            else:
-                st.info("👆 Draw a polygon on the map to select your area of interest")
-        else:
-            st.info("👆 Draw a polygon on the map to select your area of interest")
-    
-    def _render_geojson_upload(self):
-        """Render GeoJSON upload interface"""
-        st.markdown("**Upload a GeoJSON file:**")
-        
-        uploaded_file = st.file_uploader(
-            "Choose GeoJSON file", 
-            type=['geojson', 'json'],
-            key="geojson_upload",
-            help="Upload a GeoJSON file containing your area of interest"
-        )
-        
-        if uploaded_file is not None:
-            try:
-                geojson_data = json.loads(uploaded_file.read().decode())
-                
-                # Extract geometry
-                if geojson_data.get("type") == "FeatureCollection":
-                    if len(geojson_data["features"]) > 0:
-                        geometry = geojson_data["features"][0]["geometry"]
-                    else:
-                        st.error("No features found in GeoJSON")
-                        return
-                elif geojson_data.get("type") == "Feature":
-                    geometry = geojson_data["geometry"]
-                else:
-                    geometry = geojson_data
-                
-                st.session_state.ps_selected_geometry = geometry
-                st.success("✅ GeoJSON uploaded successfully!")
-                
-                if st.button("Continue to Station Discovery", type="primary", key="geojson_continue"):
-                    st.session_state.ps_geometry_complete = True
-                    st.rerun()
-                    
-            except Exception as e:
-                st.error(f"Error reading GeoJSON: {str(e)}")
-    
-    def _render_coordinate_input(self):
-        """Render coordinate input interface"""
-        st.markdown("**Enter bounding box coordinates:**")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            min_lat = st.number_input("Minimum Latitude", value=40.0, step=0.001, format="%.3f")
-            min_lon = st.number_input("Minimum Longitude", value=-75.0, step=0.001, format="%.3f")
-        
-        with col2:
-            max_lat = st.number_input("Maximum Latitude", value=41.0, step=0.001, format="%.3f")
-            max_lon = st.number_input("Maximum Longitude", value=-74.0, step=0.001, format="%.3f")
-        
-        if st.button("Create Bounding Box", type="primary", key="create_bbox"):
-            # Create polygon geometry from bounding box
-            geometry = {
-                "type": "Polygon",
-                "coordinates": [[
-                    [min_lon, min_lat],
-                    [max_lon, min_lat],
-                    [max_lon, max_lat],
-                    [min_lon, max_lat],
-                    [min_lon, min_lat]
-                ]]
-            }
-            
+        def on_geometry_selected(geometry):
+            """Callback when geometry is selected"""
             st.session_state.ps_selected_geometry = geometry
-            st.success("✅ Bounding box created successfully!")
-            
-            if st.button("Continue to Station Discovery", type="primary", key="bbox_continue"):
-                st.session_state.ps_geometry_complete = True
-                st.rerun()
+            st.session_state.ps_geometry_complete = True
+            st.success("✅ Area of interest selected successfully!")
+        
+        # Use the unified geometry selection widget
+        geometry_widget = GeometrySelectionWidget(
+            session_prefix="ps_",
+            title="🗺️ Step 1: Select Area of Interest"
+        )
+        
+        if geometry_widget.render_complete_interface(on_geometry_selected=on_geometry_selected):
+            st.rerun()
+    
     
     def _render_station_selection(self):
         """Render station discovery/upload interface"""
@@ -347,9 +294,156 @@ class ProductSelectorComponent:
                 # Store stations
                 st.session_state.ps_available_stations = filtered_stations
                 
-                if st.button("Continue with These Stations", type="primary", key="continue_stations"):
-                    st.session_state.ps_stations_loaded = True
-                    st.rerun()
+                # Station selection interface
+                st.markdown("---")
+                st.markdown("**Select Stations to Use:**")
+                
+                # Add selection options
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    selection_mode = st.radio(
+                        "Selection method:",
+                        ["Select all stations", "Choose specific stations"],
+                        key="station_selection_mode"
+                    )
+                
+                with col2:
+                    if st.button("Clear Selection", key="clear_station_selection"):
+                        if 'selected_station_ids' in st.session_state:
+                            del st.session_state['selected_station_ids']
+                        st.rerun()
+                
+                if selection_mode == "Select all stations":
+                    selected_stations = filtered_stations
+                    st.info(f"✅ All {len(filtered_stations)} stations will be used")
+                    
+                else:  # Choose specific stations
+                    st.markdown("**Check the stations you want to include:**")
+                    
+                    # Show helpful tips
+                    with st.expander("💡 Tips for Station Selection", expanded=False):
+                        st.markdown("""
+                        - **Quality matters**: Choose stations with longer data records
+                        - **Spatial coverage**: Select stations that represent your study area well
+                        - **Data availability**: Check the start/end dates match your analysis period
+                        - **Local knowledge**: Consider stations in different elevation zones or climate types
+                        """)
+                    
+                    # Add sorting and filtering options
+                    st.markdown("**🔧 Sorting & Filtering Options:**")
+                    sort_col1, sort_col2, sort_col3 = st.columns([1, 1, 1])
+                    
+                    with sort_col1:
+                        sort_by = st.selectbox(
+                            "Sort stations by:",
+                            ["Station Name", "Data Years Available", "Start Date (Oldest First)", "Start Date (Newest First)", "End Date (Latest First)", "End Date (Earliest First)", "Distance (if available)"],
+                            key="station_sort_by"
+                        )
+                    
+                    with sort_col2:
+                        min_years = st.number_input(
+                            "Min. years of data:",
+                            min_value=0,
+                            max_value=100,
+                            value=1,
+                            step=1,
+                            key="station_min_years",
+                            help="Filter stations with at least this many years of data"
+                        )
+                    
+                    with sort_col3:
+                        show_data_summary = st.checkbox(
+                            "Show data summary",
+                            value=True,
+                            key="show_station_data_summary",
+                            help="Display data availability info for each station"
+                        )
+                    
+                    # Calculate data availability and sort stations
+                    sorted_filtered_stations = self._sort_and_filter_stations(filtered_stations, sort_by, min_years)
+                    
+                    if sorted_filtered_stations.empty:
+                        st.warning(f"⚠️ No stations meet the criteria (minimum {min_years} years of data)")
+                        st.markdown("Try reducing the minimum years requirement.")
+                        sorted_filtered_stations = filtered_stations  # Fallback to show all
+                    else:
+                        st.info(f"📊 Showing {len(sorted_filtered_stations)} stations (filtered from {len(filtered_stations)} total)")
+                    
+                    # Initialize selected stations if not exists
+                    if 'selected_station_ids' not in st.session_state:
+                        st.session_state.selected_station_ids = []
+                    
+                    # Add bulk selection options
+                    bulk_col1, bulk_col2, bulk_col3 = st.columns([1, 1, 1])
+                    with bulk_col1:
+                        if st.button("✅ Select All Visible", key="select_all_visible"):
+                            st.session_state.selected_station_ids = sorted_filtered_stations['id'].tolist()
+                            st.rerun()
+                    
+                    with bulk_col2:
+                        if st.button("❌ Clear All", key="clear_all_visible"):
+                            st.session_state.selected_station_ids = []
+                            st.rerun()
+                    
+                    with bulk_col3:
+                        if st.button("🔄 Invert Selection", key="invert_selection"):
+                            current_selected = set(st.session_state.selected_station_ids)
+                            all_visible = set(sorted_filtered_stations['id'].tolist())
+                            st.session_state.selected_station_ids = list(all_visible - current_selected)
+                            st.rerun()
+                    
+                    # Create selection checkboxes
+                    selected_ids = []
+                    for idx, row in sorted_filtered_stations.iterrows():
+                        station_id = row['id']
+                        station_name = row.get('name', f'Station {station_id}')
+                        
+                        # Create a readable label with data availability info
+                        label = f"**{station_name}** (ID: {station_id})"
+                        if 'latitude' in row and 'longitude' in row:
+                            label += f" - [{row['latitude']:.3f}, {row['longitude']:.3f}]"
+                        
+                        # Add data availability info if requested
+                        if show_data_summary:
+                            years_available = row.get('data_years', 'N/A')
+                            start_date = row.get('daily_start', 'N/A')
+                            end_date = row.get('daily_end', 'N/A')
+                            label += f"\n  📅 Data: {start_date} to {end_date} ({years_available} years)"
+                        
+                        is_selected = st.checkbox(
+                            label,
+                            value=station_id in st.session_state.selected_station_ids,
+                            key=f"station_checkbox_{station_id}"
+                        )
+                        
+                        if is_selected:
+                            selected_ids.append(station_id)
+                    
+                    # Update session state
+                    st.session_state.selected_station_ids = selected_ids
+                    
+                    # Filter to selected stations
+                    if selected_ids:
+                        selected_stations = filtered_stations[filtered_stations['id'].isin(selected_ids)]
+                        st.success(f"✅ {len(selected_stations)} station(s) selected")
+                    else:
+                        selected_stations = pd.DataFrame()
+                        st.warning("⚠️ No stations selected. Please select at least one station.")
+                
+                # Show selected stations summary
+                if not selected_stations.empty:
+                    with st.expander("View Selected Stations", expanded=False):
+                        st.dataframe(
+                            selected_stations[available_cols],
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                    
+                    # Continue button
+                    if st.button("Continue with Selected Stations", type="primary", key="continue_stations"):
+                        st.session_state.ps_selected_stations = selected_stations
+                        st.session_state.ps_stations_loaded = True
+                        st.rerun()
             else:
                 st.warning("⚠️ No meteostat stations found in the selected area.")
                 st.markdown("**Options:**")
@@ -431,9 +525,146 @@ class ProductSelectorComponent:
                         st.session_state.ps_available_stations = filtered_metadata
                         st.session_state.ps_custom_station_data = data_df
                         
-                        if st.button("Continue with Custom Data", type="primary", key="continue_custom"):
-                            st.session_state.ps_stations_loaded = True
-                            st.rerun()
+                        # Station selection interface for custom data
+                        st.markdown("---")
+                        st.markdown("**Select Stations to Use:**")
+                        
+                        # Add selection options
+                        col1, col2 = st.columns([2, 1])
+                        with col1:
+                            custom_selection_mode = st.radio(
+                                "Selection method:",
+                                ["Select all stations", "Choose specific stations"],
+                                key="custom_station_selection_mode"
+                            )
+                        
+                        with col2:
+                            if st.button("Clear Selection", key="clear_custom_station_selection"):
+                                if 'selected_custom_station_ids' in st.session_state:
+                                    del st.session_state['selected_custom_station_ids']
+                                st.rerun()
+                        
+                        if custom_selection_mode == "Select all stations":
+                            selected_custom_stations = filtered_metadata
+                            st.info(f"✅ All {len(filtered_metadata)} stations will be used")
+                            
+                        else:  # Choose specific stations
+                            st.markdown("**Check the stations you want to include:**")
+                            
+                            # Add sorting and filtering options for custom data
+                            st.markdown("**🔧 Sorting & Filtering Options:**")
+                            custom_sort_col1, custom_sort_col2, custom_sort_col3 = st.columns([1, 1, 1])
+                            
+                            with custom_sort_col1:
+                                custom_sort_by = st.selectbox(
+                                    "Sort stations by:",
+                                    ["Station Name", "Data Years Available", "Start Date (Oldest First)", "Start Date (Newest First)", "End Date (Latest First)", "End Date (Earliest First)"],
+                                    key="custom_station_sort_by"
+                                )
+                            
+                            with custom_sort_col2:
+                                custom_min_years = st.number_input(
+                                    "Min. years of data:",
+                                    min_value=0,
+                                    max_value=100,
+                                    value=1,
+                                    step=1,
+                                    key="custom_station_min_years",
+                                    help="Filter stations with at least this many years of data"
+                                )
+                            
+                            with custom_sort_col3:
+                                custom_show_data_summary = st.checkbox(
+                                    "Show data summary",
+                                    value=True,
+                                    key="show_custom_station_data_summary",
+                                    help="Display data availability info for each station"
+                                )
+                            
+                            # Calculate data availability and sort stations
+                            sorted_filtered_custom_stations = self._sort_and_filter_stations(filtered_metadata, custom_sort_by, custom_min_years)
+                            
+                            if sorted_filtered_custom_stations.empty:
+                                st.warning(f"⚠️ No stations meet the criteria (minimum {custom_min_years} years of data)")
+                                st.markdown("Try reducing the minimum years requirement.")
+                                sorted_filtered_custom_stations = filtered_metadata  # Fallback to show all
+                            else:
+                                st.info(f"📊 Showing {len(sorted_filtered_custom_stations)} stations (filtered from {len(filtered_metadata)} total)")
+                            
+                            # Initialize selected stations if not exists
+                            if 'selected_custom_station_ids' not in st.session_state:
+                                st.session_state.selected_custom_station_ids = []
+                            
+                            # Add bulk selection options for custom data
+                            custom_bulk_col1, custom_bulk_col2, custom_bulk_col3 = st.columns([1, 1, 1])
+                            with custom_bulk_col1:
+                                if st.button("✅ Select All Visible", key="custom_select_all_visible"):
+                                    st.session_state.selected_custom_station_ids = sorted_filtered_custom_stations['id'].tolist()
+                                    st.rerun()
+                            
+                            with custom_bulk_col2:
+                                if st.button("❌ Clear All", key="custom_clear_all_visible"):
+                                    st.session_state.selected_custom_station_ids = []
+                                    st.rerun()
+                            
+                            with custom_bulk_col3:
+                                if st.button("🔄 Invert Selection", key="custom_invert_selection"):
+                                    current_selected = set(st.session_state.selected_custom_station_ids)
+                                    all_visible = set(sorted_filtered_custom_stations['id'].tolist())
+                                    st.session_state.selected_custom_station_ids = list(all_visible - current_selected)
+                                    st.rerun()
+                            
+                            # Create selection checkboxes for custom data
+                            selected_custom_ids = []
+                            for idx, row in sorted_filtered_custom_stations.iterrows():
+                                station_id = row['id']
+                                station_name = row.get('name', f'Station {station_id}')
+                                
+                                # Create a readable label with data availability info
+                                label = f"**{station_name}** (ID: {station_id})"
+                                if 'latitude' in row and 'longitude' in row:
+                                    label += f" - [{row['latitude']:.3f}, {row['longitude']:.3f}]"
+                                
+                                # Add data availability info if requested
+                                if custom_show_data_summary:
+                                    years_available = row.get('data_years', 'N/A')
+                                    start_date = row.get('daily_start', 'N/A')
+                                    end_date = row.get('daily_end', 'N/A')
+                                    label += f"\n  📅 Data: {start_date} to {end_date} ({years_available} years)"
+                                
+                                is_selected = st.checkbox(
+                                    label,
+                                    value=station_id in st.session_state.selected_custom_station_ids,
+                                    key=f"custom_station_checkbox_{station_id}"
+                                )
+                                
+                                if is_selected:
+                                    selected_custom_ids.append(station_id)
+                            
+                            # Update session state
+                            st.session_state.selected_custom_station_ids = selected_custom_ids
+                            
+                            # Filter to selected stations
+                            if selected_custom_ids:
+                                selected_custom_stations = sorted_filtered_custom_stations[sorted_filtered_custom_stations['id'].isin(selected_custom_ids)]
+                                st.success(f"✅ {len(selected_custom_stations)} station(s) selected")
+                            else:
+                                selected_custom_stations = pd.DataFrame()
+                                st.warning("⚠️ No stations selected. Please select at least one station.")
+                        
+                        # Show selected stations summary
+                        if not selected_custom_stations.empty:
+                            with st.expander("View Selected Stations", expanded=False):
+                                st.dataframe(
+                                    selected_custom_stations,
+                                    use_container_width=True,
+                                    hide_index=True
+                                )
+                            
+                            if st.button("Continue with Selected Custom Stations", type="primary", key="continue_custom"):
+                                st.session_state.ps_selected_stations = selected_custom_stations
+                                st.session_state.ps_stations_loaded = True
+                                st.rerun()
                     else:
                         st.warning("⚠️ No stations found within the selected area")
                         
@@ -501,6 +732,9 @@ class ProductSelectorComponent:
             st.error("❌ No datasets available for the selected variable")
             return
         
+        # Add unit conversion info
+        st.info("🔄 **Automatic Unit Conversion**: All datasets will be automatically converted to standard units (°C for temperature, mm for precipitation) for accurate comparison.")
+        
         # Display datasets for selection
         st.markdown("Select one or more datasets to compare:")
         
@@ -510,12 +744,21 @@ class ProductSelectorComponent:
             description = row.get('Description', 'No description available')
             temporal_res = row.get('Temporal Resolution', 'Unknown')
             pixel_size = row.get('Pixel Size (m)', 'Unknown')
+            band_units = row.get('Band Units', 'Unknown')
+            original_units = row.get('Original Units', band_units)
+            
+            # Create enhanced checkbox label with unit info
+            unit_indicator = ""
+            if original_units and "(auto-converted)" in str(original_units):
+                unit_indicator = " 🔄"
+            elif original_units and "(native)" in str(original_units):
+                unit_indicator = " ✅"
             
             # Create checkbox for each dataset
             if st.checkbox(
-                f"**{dataset_name}**",
+                f"**{dataset_name}**{unit_indicator}",
                 key=f"dataset_{idx}",
-                help=f"Temporal Resolution: {temporal_res} | Pixel Size: {pixel_size}m"
+                help=f"Units: {band_units} | Original: {original_units} | Temporal Resolution: {temporal_res} | Pixel Size: {pixel_size}m"
             ):
                 selected_datasets.append(row.to_dict())
                 
@@ -552,40 +795,91 @@ class ProductSelectorComponent:
             st.session_state.ps_datasets_selected = False
             st.rerun()
         
-        # Auto-detect optimal time range
+        # Auto-detect optimal time range for suggestion
         optimal_range = self._detect_optimal_timerange()
         
+        # Get overall data availability ranges for context
+        overall_ranges = self._get_overall_data_ranges()
+        
+        # Display information about optimal overlapping period
         if optimal_range:
             start_date, end_date = optimal_range
-            st.success(f"✅ Optimal time period detected: {start_date} to {end_date}")
+            period_days = (end_date - start_date).days
+            period_years = period_days / 365.25
             
-            # Allow user to modify the range
-            st.markdown("**Adjust time period if needed:**")
+            st.info(f"📊 **Recommended (Overlapping Period)**: {start_date} to {end_date} ({period_years:.1f} years)")
+            st.markdown("*This is the period where all selected stations and datasets have data available. Using this period will give you the most complete analysis.*")
             
-            col1, col2 = st.columns(2)
-            with col1:
-                user_start = st.date_input("Start Date", value=start_date, min_value=start_date)
-            with col2:
-                user_end = st.date_input("End Date", value=end_date, max_value=end_date)
-            
-            # Validate date range
-            if user_start <= user_end:
-                st.session_state.ps_analysis_start_date = user_start
-                st.session_state.ps_analysis_end_date = user_end
-                
-                period_days = (user_end - user_start).days
-                st.info(f"📊 Analysis period: {period_days} days")
-                
-                if st.button("Start Analysis", type="primary", key="start_analysis"):
-                    st.session_state.ps_timerange_selected = True
-                    st.rerun()
-            else:
-                st.error("❌ Start date must be before end date")
+            # Quick use recommended period button
+            if st.button("✅ Use Recommended Period", key="use_recommended", help="Quickly set the optimal overlapping period as your analysis timeframe"):
+                st.session_state.ps_analysis_start_date = start_date
+                st.session_state.ps_analysis_end_date = end_date
+                st.session_state.ps_timerange_selected = True
+                st.success(f"Selected optimal period: {start_date} to {end_date}")
+                st.rerun()
         else:
-            st.error("❌ Could not detect optimal time period. No overlapping data found.")
-            st.markdown("**Possible issues:**")
-            st.markdown("- Selected datasets have no temporal overlap with station data")
-            st.markdown("- Station data periods don't overlap with gridded data periods")
+            st.warning("⚠️ **No Overlapping Period Found**: Selected stations and datasets don't have a common time period with complete data.")
+            start_date, end_date = date(2000, 1, 1), date(2023, 12, 31)  # Default fallback
+        
+        # Show data availability context
+        if overall_ranges:
+            with st.expander("📋 Data Availability Information", expanded=False):
+                station_range, dataset_range = overall_ranges
+                if station_range:
+                    st.write(f"**Station Data Available**: {station_range[0]} to {station_range[1]}")
+                if dataset_range:
+                    st.write(f"**Dataset Coverage**: {dataset_range[0]} to {dataset_range[1]}")
+                
+                st.markdown("**Note**: You can select any time period, but periods outside the overlapping range may have missing data for some stations or datasets.")
+        
+        # Allow user complete freedom in date selection
+        st.markdown("---")
+        st.markdown("**🗓️ Choose Your Analysis Period:**")
+        st.markdown("*You have complete freedom to select any time range. The system will work with whatever data is available during your chosen period.*")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            # Set default to optimal range if available, otherwise reasonable defaults
+            default_start = start_date if optimal_range else date(2010, 1, 1)
+            user_start = st.date_input(
+                "Start Date", 
+                value=default_start,
+                min_value=date(1900, 1, 1),  # Very permissive range
+                max_value=date(2030, 12, 31),
+                help="Select any start date - system will use available data"
+            )
+            
+        with col2:
+            default_end = end_date if optimal_range else date(2023, 12, 31)
+            user_end = st.date_input(
+                "End Date", 
+                value=default_end,
+                min_value=date(1900, 1, 1),  # Very permissive range  
+                max_value=date(2030, 12, 31),
+                help="Select any end date - system will use available data"
+            )
+        
+        # Validate date range and provide analysis
+        if user_start <= user_end:
+            st.session_state.ps_analysis_start_date = user_start
+            st.session_state.ps_analysis_end_date = user_end
+            
+            period_days = (user_end - user_start).days
+            period_years = period_days / 365.25
+            
+            # Analyze the selected period
+            self._analyze_selected_period(user_start, user_end, optimal_range)
+            
+            # Show period summary
+            st.markdown("---")
+            st.markdown(f"**📈 Selected Analysis Period**: {user_start} to {user_end}")
+            st.markdown(f"**Duration**: {period_days:,} days ({period_years:.1f} years)")
+            
+            if st.button("Start Analysis with Selected Period", type="primary", key="start_analysis"):
+                st.session_state.ps_timerange_selected = True
+                st.rerun()
+        else:
+            st.error("❌ Start date must be before end date")
     
     def _render_analysis_results(self):
         """Render analysis and results interface"""
@@ -646,7 +940,7 @@ class ProductSelectorComponent:
         """Detect optimal overlapping time range"""
         try:
             # Get station data periods
-            stations = st.session_state.ps_available_stations
+            stations = st.session_state.ps_selected_stations
             station_starts = []
             station_ends = []
             
@@ -703,6 +997,114 @@ class ProductSelectorComponent:
         
         return None
     
+    def _get_overall_data_ranges(self) -> Optional[Tuple[Tuple[date, date], Tuple[date, date]]]:
+        """Get overall data availability ranges for stations and datasets"""
+        try:
+            # Get station data ranges
+            stations = st.session_state.ps_selected_stations
+            station_starts = []
+            station_ends = []
+            
+            for _, station in stations.iterrows():
+                if pd.notna(station.get('daily_start')):
+                    station_starts.append(pd.to_datetime(station['daily_start']).date())
+                if pd.notna(station.get('daily_end')):
+                    station_ends.append(pd.to_datetime(station['daily_end']).date())
+            
+            # Get dataset data ranges
+            datasets = st.session_state.ps_selected_datasets
+            dataset_starts = []
+            dataset_ends = []
+            
+            for dataset in datasets:
+                if dataset.get('Start Date'):
+                    try:
+                        start_str = str(dataset['Start Date'])
+                        if '/' in start_str:
+                            start_date = datetime.strptime(start_str, '%m/%d/%Y').date()
+                        else:
+                            start_date = pd.to_datetime(start_str).date()
+                        dataset_starts.append(start_date)
+                    except:
+                        continue
+                
+                if dataset.get('End Date'):
+                    try:
+                        end_str = str(dataset['End Date'])
+                        if '/' in end_str:
+                            end_date = datetime.strptime(end_str, '%m/%d/%Y').date()
+                        else:
+                            end_date = pd.to_datetime(end_str).date()
+                        dataset_ends.append(end_date)
+                    except:
+                        continue
+            
+            station_range = None
+            if station_starts and station_ends:
+                station_range = (min(station_starts), max(station_ends))
+            
+            dataset_range = None
+            if dataset_starts and dataset_ends:
+                dataset_range = (min(dataset_starts), max(dataset_ends))
+            
+            if station_range or dataset_range:
+                return (station_range, dataset_range)
+                
+        except Exception as e:
+            logging.error(f"Error getting overall data ranges: {str(e)}")
+        
+        return None
+    
+    def _analyze_selected_period(self, user_start: date, user_end: date, optimal_range: Optional[Tuple[date, date]]):
+        """Analyze the user's selected time period and provide feedback"""
+        
+        if not optimal_range:
+            st.warning("⚠️ **Analysis Note**: No overlapping period was detected. The analysis will use whatever data is available during your selected period.")
+            return
+        
+        opt_start, opt_end = optimal_range
+        
+        # Check if user selection is within optimal range
+        if user_start >= opt_start and user_end <= opt_end:
+            st.success("✅ **Excellent Choice!** Your selected period is within the optimal overlapping range. All stations and datasets should have complete data.")
+        
+        # Check if user selection partially overlaps
+        elif (user_start <= opt_end and user_end >= opt_start):
+            # Calculate overlap
+            overlap_start = max(user_start, opt_start)
+            overlap_end = min(user_end, opt_end)
+            overlap_days = (overlap_end - overlap_start).days
+            total_days = (user_end - user_start).days
+            overlap_percent = (overlap_days / total_days) * 100
+            
+            st.warning(f"⚠️ **Partial Overlap**: {overlap_percent:.1f}% of your selected period overlaps with the optimal range ({overlap_start} to {overlap_end}). Some data may be missing outside this range.")
+        
+        # No overlap
+        else:
+            if user_end < opt_start:
+                st.error(f"❌ **No Overlap**: Your selected period ends before the optimal range begins ({opt_start}). Limited data may be available.")
+            elif user_start > opt_end:
+                st.error(f"❌ **No Overlap**: Your selected period starts after the optimal range ends ({opt_end}). Limited data may be available.")
+        
+        # Additional guidance
+        with st.expander("💡 Period Selection Guidance", expanded=False):
+            st.markdown(f"""
+            **Optimal Period**: {opt_start} to {opt_end}
+            
+            **What this means**:
+            - **Within optimal range**: All selected stations and datasets have data
+            - **Partially overlapping**: Some stations/datasets may have missing data  
+            - **Outside optimal range**: Significant data gaps are likely
+            
+            **Recommendations**:
+            - For best results, stay within the optimal range
+            - Longer periods provide more statistical power
+            - Consider seasonal patterns in your analysis period
+            - Check individual station/dataset availability if needed
+            """)
+        
+        return None
+    
     def _run_analysis(self):
         """Run the statistical analysis"""
         st.markdown("🔄 **Running Analysis...**")
@@ -712,7 +1114,7 @@ class ProductSelectorComponent:
         
         try:
             # Get analysis parameters
-            stations = st.session_state.ps_available_stations
+            stations = st.session_state.ps_selected_stations
             datasets = st.session_state.ps_selected_datasets
             variable = st.session_state.ps_selected_variable
             start_date = st.session_state.ps_analysis_start_date
@@ -1067,3 +1469,95 @@ class ProductSelectorComponent:
         except Exception as e:
             st.error(f"❌ Error preparing download: {str(e)}")
             logging.error(f"Download preparation error: {str(e)}")
+    
+    def _sort_and_filter_stations(self, stations_df: pd.DataFrame, sort_by: str, min_years: int) -> pd.DataFrame:
+        """Sort and filter stations based on user preferences"""
+        if stations_df.empty:
+            return stations_df
+        
+        # Make a copy to avoid modifying original
+        df = stations_df.copy()
+        
+        # Calculate data years if not already present
+        if 'data_years' not in df.columns:
+            df['data_years'] = self._calculate_data_years(df)
+        
+        # Apply minimum years filter
+        if min_years > 0:
+            df = df[df['data_years'] >= min_years]
+        
+        # Apply sorting
+        if sort_by == "Station Name":
+            if 'name' in df.columns:
+                df = df.sort_values('name', na_position='last')
+            else:
+                df = df.sort_values('id')
+        
+        elif sort_by == "Data Years Available":
+            df = df.sort_values('data_years', ascending=False, na_position='last')
+        
+        elif sort_by == "Start Date (Oldest First)":
+            if 'daily_start' in df.columns:
+                df['daily_start_dt'] = pd.to_datetime(df['daily_start'], errors='coerce')
+                df = df.sort_values('daily_start_dt', ascending=True, na_position='last')
+                df = df.drop('daily_start_dt', axis=1)
+        
+        elif sort_by == "Start Date (Newest First)":
+            if 'daily_start' in df.columns:
+                df['daily_start_dt'] = pd.to_datetime(df['daily_start'], errors='coerce')
+                df = df.sort_values('daily_start_dt', ascending=False, na_position='last')
+                df = df.drop('daily_start_dt', axis=1)
+        
+        elif sort_by == "End Date (Latest First)":
+            if 'daily_end' in df.columns:
+                df['daily_end_dt'] = pd.to_datetime(df['daily_end'], errors='coerce')
+                df = df.sort_values('daily_end_dt', ascending=False, na_position='last')
+                df = df.drop('daily_end_dt', axis=1)
+        
+        elif sort_by == "End Date (Earliest First)":
+            if 'daily_end' in df.columns:
+                df['daily_end_dt'] = pd.to_datetime(df['daily_end'], errors='coerce')
+                df = df.sort_values('daily_end_dt', ascending=True, na_position='last')
+                df = df.drop('daily_end_dt', axis=1)
+        
+        elif sort_by == "Distance (if available)":
+            # If distance column exists, sort by it, otherwise by name
+            if 'distance' in df.columns:
+                df = df.sort_values('distance', ascending=True, na_position='last')
+            elif 'name' in df.columns:
+                df = df.sort_values('name', na_position='last')
+            else:
+                df = df.sort_values('id')
+        
+        return df
+    
+    def _calculate_data_years(self, stations_df: pd.DataFrame) -> pd.Series:
+        """Calculate number of data years for each station"""
+        years = []
+        
+        for idx, row in stations_df.iterrows():
+            try:
+                start_str = row.get('daily_start', '')
+                end_str = row.get('daily_end', '')
+                
+                if pd.isna(start_str) or pd.isna(end_str) or start_str == '' or end_str == '':
+                    years.append(0)
+                    continue
+                
+                # Convert to datetime
+                start_date = pd.to_datetime(start_str, errors='coerce')
+                end_date = pd.to_datetime(end_str, errors='coerce')
+                
+                if pd.isna(start_date) or pd.isna(end_date):
+                    years.append(0)
+                    continue
+                
+                # Calculate years (as float for partial years)
+                days_diff = (end_date - start_date).days
+                years_diff = round(days_diff / 365.25, 1)
+                years.append(max(0, years_diff))
+                
+            except Exception:
+                years.append(0)
+        
+        return pd.Series(years, index=stations_df.index)

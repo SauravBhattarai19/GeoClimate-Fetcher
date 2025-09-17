@@ -12,6 +12,7 @@ import numpy as np
 from typing import Dict, List, Union, Optional, Any, Tuple, Callable
 from pathlib import Path
 from tqdm import tqdm
+from datetime import datetime
 
 class GEEExporter:
     """Class for exporting Earth Engine data."""
@@ -19,14 +20,216 @@ class GEEExporter:
     def __init__(self, max_chunk_size: int = 500000000, timeout: int = 300):
         """
         Initialize the exporter.
-        
+
         Args:
             max_chunk_size: Maximum file size for direct downloads (bytes)
             timeout: Maximum time to wait for exports to complete (seconds)
         """
         self.max_chunk_size = max_chunk_size
         self.timeout = timeout
-        
+
+        # Smart export configuration
+        self.local_size_threshold = 50 * 1024 * 1024  # 50MB in bytes
+        self.drive_folder_prefix = "GeoClimate_Exports"
+
+    def smart_export_with_fallback(self, image: ee.Image, filename: str,
+                                 region: ee.Geometry, scale: float = 30.0,
+                                 export_preference: str = 'auto') -> Dict[str, Any]:
+        """
+        Smart export method with automatic fallback to Google Drive for large files.
+
+        Args:
+            image: Earth Engine Image to export
+            filename: Output filename (without extension)
+            region: Region to export
+            scale: Pixel resolution in meters
+            export_preference: 'auto', 'local', or 'drive'
+
+        Returns:
+            Dictionary with export results and metadata
+        """
+        try:
+            # Clean filename
+            if filename.endswith('.tif'):
+                filename = filename[:-4]
+
+            # Create unified result format (no size estimation needed)
+            result = {
+                'success': False,
+                'export_method': 'unknown',
+                'estimated_size_mb': None,
+                'actual_size_mb': None,
+                'filename': filename,
+                'reason': '',
+                'message': '',
+                'file_path': None,
+                'file_data': None,
+                'drive_folder': None,
+                'drive_url': None,
+                'task_id': None,
+                'task_url': None
+            }
+
+            # Handle different export preferences
+            if export_preference == 'drive':
+                # User explicitly wants Drive
+                drive_result = self._export_to_drive_smart(image, filename, region, scale)
+                result.update(drive_result)
+                result['export_method'] = 'drive'
+                result['reason'] = 'user_preference'
+                drive_msg = drive_result.get('message', '') or ''
+                result['message'] = f"Exported to Google Drive. {drive_msg}"
+
+            elif export_preference == 'local':
+                # User explicitly wants local only
+                local_result = self._export_to_local_smart(image, filename, region, scale)
+                result.update(local_result)
+                result['export_method'] = 'local' if local_result['success'] else 'failed'
+                result['reason'] = 'user_preference'
+                if local_result['success']:
+                    local_msg = local_result.get('message', '') or ''
+                    result['message'] = f"Downloaded locally ({local_result.get('actual_size_mb', 0):.1f} MB). {local_msg}"
+                else:
+                    local_msg = local_result.get('message', '') or ''
+                    result['message'] = f"Local export failed: {local_msg}"
+
+            else:  # auto - try local first, fallback to Drive
+                # Always try local first
+                local_result = self._export_to_local_smart(image, filename, region, scale)
+
+                if local_result['success']:
+                    # Local worked!
+                    result.update(local_result)
+                    result['export_method'] = 'local'
+                    result['reason'] = 'local_success'
+                    local_msg = local_result.get('message', '') or ''
+                    result['message'] = f"Downloaded locally ({local_result.get('actual_size_mb', 0):.1f} MB). {local_msg}"
+                else:
+                    # Local failed, fallback to Drive
+                    print(f"Local export failed: {local_result.get('message', '')}")
+                    print("Falling back to Google Drive export...")
+
+                    drive_result = self._export_to_drive_smart(image, filename, region, scale)
+                    result.update(drive_result)
+                    result['export_method'] = 'drive'
+                    result['reason'] = 'local_failed'
+                    drive_msg = drive_result.get('message', '') or ''
+                    local_msg = local_result.get('message', '') or ''
+                    result['message'] = f"Local export failed, sent to Google Drive. {drive_msg} (Local error: {local_msg})"
+
+            return result
+
+        except Exception as e:
+            return {
+                'success': False,
+                'export_method': 'unknown',
+                'estimated_size_mb': 0,
+                'actual_size_mb': None,
+                'filename': filename,
+                'reason': 'error',
+                'message': f"Export failed: {str(e)}",
+                'file_path': None,
+                'file_data': None,
+                'drive_folder': None,
+                'drive_url': None,
+                'task_id': None,
+                'task_url': None,
+                'error': str(e)
+            }
+
+    def _export_to_local_smart(self, image: ee.Image, filename: str,
+                             region: ee.Geometry, scale: float) -> Dict[str, Any]:
+        """Helper method for local export with unified result format"""
+        import tempfile
+        import os
+
+        try:
+            # Create temporary file
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.tif') as temp_file:
+                temp_path = temp_file.name
+
+            # Export using existing method
+            result_path = self.export_image_to_local(image, temp_path, region, scale)
+
+            # Validate that the file was actually created and has content
+            if not os.path.exists(result_path):
+                raise Exception(f"Export failed: Output file was not created at {result_path}")
+
+            file_size = os.path.getsize(result_path)
+            if file_size == 0:
+                raise Exception("Export failed: Output file is empty")
+
+            # Validate file size isn't suspiciously small (less than 1KB suggests failure)
+            if file_size < 1024:
+                raise Exception(f"Export failed: Output file too small ({file_size} bytes), likely corrupted")
+
+            # Read file as bytes for download
+            with open(result_path, 'rb') as f:
+                file_data = f.read()
+
+            # Double-check we actually read data
+            if not file_data:
+                raise Exception("Export failed: Could not read file data")
+
+            actual_size_mb = len(file_data) / (1024 * 1024)
+
+            return {
+                'success': True,
+                'file_path': result_path,
+                'file_data': file_data,
+                'actual_size_mb': actual_size_mb,
+                'message': f"Local export completed successfully"
+            }
+
+        except Exception as e:
+            # Clean up temp file if it exists
+            try:
+                if 'temp_path' in locals() and os.path.exists(temp_path):
+                    os.unlink(temp_path)
+                if 'result_path' in locals() and os.path.exists(result_path):
+                    os.unlink(result_path)
+            except:
+                pass
+
+            return {
+                'success': False,
+                'file_path': None,
+                'file_data': None,
+                'actual_size_mb': 0,
+                'message': f"Local export failed: {str(e)}",
+                'error': str(e)
+            }
+
+    def _export_to_drive_smart(self, image: ee.Image, filename: str,
+                             region: ee.Geometry, scale: float) -> Dict[str, Any]:
+        """Helper method for Drive export with unified result format"""
+        # Create timestamped folder name
+        timestamp = datetime.now().strftime('%Y_%m_%d')
+        drive_folder = f"{self.drive_folder_prefix}_{timestamp}"
+
+        # Export to Drive (non-blocking)
+        task_id = self.export_image_to_drive(
+            image=image,
+            filename=filename,
+            folder=drive_folder,
+            region=region,
+            scale=scale,
+            wait=False  # Don't wait, return task ID
+        )
+
+        # Create Drive and task URLs
+        drive_url = f"https://drive.google.com/drive/folders/"
+        task_url = "https://code.earthengine.google.com/tasks"
+
+        return {
+            'success': True,
+            'drive_folder': drive_folder or 'Unknown',
+            'drive_url': drive_url or 'https://drive.google.com/drive/',
+            'task_id': task_id or 'Unknown',
+            'task_url': task_url or 'https://code.earthengine.google.com/tasks',
+            'message': f"Task submitted to Google Drive folder: {drive_folder or 'Unknown'}"
+        }
+
     def export_time_series_to_csv(self, df: pd.DataFrame, output_path: Union[str, Path]) -> Path:
         """
         Export a time series DataFrame to CSV.

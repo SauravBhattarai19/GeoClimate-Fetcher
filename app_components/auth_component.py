@@ -262,7 +262,6 @@ class AuthComponent:
                         st.session_state.auth_project_id = project_id
                         
                         # Show success message - the main app will handle proceeding to next step
-                        st.balloons()
                         st.success("🎉 Authentication complete! Proceeding to next step...")
                         
                         return True  # Return True to indicate successful authentication

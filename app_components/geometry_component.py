@@ -16,11 +16,41 @@ from geoclimate_fetcher.core import GeometryHandler
 from streamlit_folium import st_folium
 
 class GeometryComponent:
-    """Component for selecting area of interest"""
+    """Universal component for selecting area of interest across all modules"""
     
-    def __init__(self):
-        if 'geometry_handler' not in st.session_state:
-            st.session_state.geometry_handler = GeometryHandler()
+    def __init__(self, session_prefix="", geometry_complete_key=None, title="📍 Select Area of Interest"):
+        """
+        Initialize the geometry component with configurable session state keys.
+        
+        Args:
+            session_prefix (str): Prefix for session state keys (e.g., "climate_" for climate module)
+            geometry_complete_key (str): Custom key for geometry completion status
+            title (str): Custom title for the component
+        """
+        self.session_prefix = session_prefix
+        self.title = title
+        
+        # Set up session state keys
+        self.handler_key = f"{session_prefix}geometry_handler"
+        self.complete_key = geometry_complete_key or f"{session_prefix}geometry_complete"
+        
+        # Initialize geometry handler if not exists
+        if self.handler_key not in st.session_state:
+            st.session_state[self.handler_key] = GeometryHandler()
+    
+    @property
+    def geometry_handler(self):
+        """Get the geometry handler for this component"""
+        return st.session_state[self.handler_key]
+    
+    @property
+    def is_complete(self):
+        """Check if geometry selection is complete"""
+        return st.session_state.get(self.complete_key, False)
+    
+    def set_complete(self, value=True):
+        """Set geometry completion status"""
+        st.session_state[self.complete_key] = value
     
     def create_map(self, center_lat=39.8283, center_lon=-98.5795, zoom=4):
         """Create a folium map with drawing tools"""
@@ -82,8 +112,8 @@ class GeometryComponent:
         """Create Earth Engine geometry from coordinates"""
         try:
             geometry = ee.Geometry.Rectangle([min_lon, min_lat, max_lon, max_lat])
-            st.session_state.geometry_handler._current_geometry = geometry
-            st.session_state.geometry_handler._current_geometry_name = "coordinates_aoi"
+            self.geometry_handler._current_geometry = geometry
+            self.geometry_handler._current_geometry_name = "coordinates_aoi"
             return True, "Geometry created successfully from coordinates"
         except Exception as e:
             return False, f"Error creating geometry: {str(e)}"
@@ -110,23 +140,23 @@ class GeometryComponent:
             
             # Create Earth Engine geometry
             geometry = ee.Geometry(geometry_dict)
-            st.session_state.geometry_handler._current_geometry = geometry
-            st.session_state.geometry_handler._current_geometry_name = "uploaded_aoi"
+            self.geometry_handler._current_geometry = geometry
+            self.geometry_handler._current_geometry_name = "uploaded_aoi"
             return True, "Geometry created successfully from GeoJSON"
         except Exception as e:
             return False, f"Error processing GeoJSON: {str(e)}"
     
-    def render(self):
+    def render(self, continue_button_text="Continue to Next Step", show_continue_button=True):
         """Render the geometry selection component"""
-        st.markdown("## 📍 Select Area of Interest")
+        st.markdown(f"## {self.title}")
         
         # Check if geometry already selected
-        if st.session_state.get('geometry_complete', False):
+        if self.is_complete:
             st.success("✅ Area of interest already selected!")
             
             # Show current geometry info
             try:
-                handler = st.session_state.geometry_handler
+                handler = self.geometry_handler
                 if handler.current_geometry:
                     area = handler.get_geometry_area()
                     name = handler.current_geometry_name
@@ -134,13 +164,18 @@ class GeometryComponent:
             except Exception:
                 pass
             
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("Continue to Dataset Selection", type="primary"):
-                    return True
-            with col2:
-                if st.button("Select Different Area"):
-                    st.session_state.geometry_complete = False
+            if show_continue_button:
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button(continue_button_text, type="primary", key=f"{self.session_prefix}continue"):
+                        return True
+                with col2:
+                    if st.button("Select Different Area", key=f"{self.session_prefix}different"):
+                        self.set_complete(False)
+                        st.rerun()
+            else:
+                if st.button("Select Different Area", key=f"{self.session_prefix}different"):
+                    self.set_complete(False)
                     st.rerun()
             return False
         
@@ -153,15 +188,16 @@ class GeometryComponent:
         method = st.radio(
             "Select method:",
             ["🗺️ Draw on Map", "📁 Upload GeoJSON", "📐 Enter Coordinates"],
-            horizontal=True
+            horizontal=True,
+            key=f"{self.session_prefix}method_selection"
         )
         
         if method == "🗺️ Draw on Map":
-            self.render_map_method()
+            return self.render_map_method()
         elif method == "📁 Upload GeoJSON":
-            self.render_upload_method()
+            return self.render_upload_method()
         elif method == "📐 Enter Coordinates":
-            self.render_coordinates_method()
+            return self.render_coordinates_method()
         
         return False
     
@@ -176,7 +212,7 @@ class GeometryComponent:
         # Display the map and capture interactions
         map_data = st_folium(
             m,
-            key="aoi_map",
+            key=f"{self.session_prefix}aoi_map",
             width=700,
             height=500,
             returned_objects=["all_drawings", "last_object_clicked"]
@@ -194,17 +230,18 @@ class GeometryComponent:
                 st.json(latest_drawing, expanded=False)
             
             with col2:
-                if st.button("Use This Area", type="primary"):
+                if st.button("Use This Area", type="primary", key=f"{self.session_prefix}use_area"):
                     success, message = self.create_geometry_from_geojson(latest_drawing['geometry'])
                     if success:
                         st.success(f"✅ {message}")
-                        st.session_state.geometry_complete = True
-                        st.balloons()
+                        self.set_complete(True)
                         return True
                     else:
                         st.error(f"❌ {message}")
         else:
             st.info("👆 Draw a rectangle or polygon on the map above to select your area of interest.")
+        
+        return False
     
     def render_upload_method(self):
         """Render the file upload method"""
@@ -213,7 +250,8 @@ class GeometryComponent:
         uploaded_file = st.file_uploader(
             "Choose a GeoJSON file",
             type=["geojson", "json"],
-            help="Upload a GeoJSON file containing your area of interest"
+            help="Upload a GeoJSON file containing your area of interest",
+            key=f"{self.session_prefix}file_uploader"
         )
         
         if uploaded_file is not None:
@@ -232,12 +270,11 @@ class GeometryComponent:
                 
                 with col2:
                     st.markdown("**Actions:**")
-                    if st.button("Use This File", type="primary"):
+                    if st.button("Use This File", type="primary", key=f"{self.session_prefix}use_file"):
                         success, message = self.create_geometry_from_geojson(geojson_data)
                         if success:
                             st.success(f"✅ {message}")
-                            st.session_state.geometry_complete = True
-                            st.balloons()
+                            self.set_complete(True)
                             return True
                         else:
                             st.error(f"❌ {message}")
@@ -246,13 +283,15 @@ class GeometryComponent:
                 st.error(f"❌ Invalid JSON file: {str(e)}")
             except Exception as e:
                 st.error(f"❌ Error processing file: {str(e)}")
+        
+        return False
     
     def render_coordinates_method(self):
         """Render the manual coordinates entry method"""
         st.markdown("### 📐 Enter Bounding Box Coordinates")
         
         # Coordinate input form
-        with st.form("coordinates_form"):
+        with st.form(f"{self.session_prefix}coordinates_form"):
             st.markdown("Enter the bounding box coordinates (in decimal degrees):")
             
             col1, col2 = st.columns(2)
@@ -310,14 +349,13 @@ class GeometryComponent:
                 success, message = self.create_geometry_from_coordinates(min_lon, min_lat, max_lon, max_lat)
                 if success:
                     st.success(f"✅ {message}")
-                    st.session_state.geometry_complete = True
-                    st.balloons()
+                    self.set_complete(True)
                     return True
                 else:
                     st.error(f"❌ {message}")
         
         # Show preview map
-        if st.checkbox("Show preview map"):
+        if st.checkbox("Show preview map", key=f"{self.session_prefix}show_preview"):
             preview_map = folium.Map(
                 location=[(min_lat + max_lat) / 2, (min_lon + max_lon) / 2],
                 zoom_start=6
@@ -343,4 +381,6 @@ class GeometryComponent:
             # Fit bounds
             preview_map.fit_bounds([[min_lat, min_lon], [max_lat, max_lon]])
             
-            st_folium(preview_map, width=700, height=300, key="preview_map") 
+            st_folium(preview_map, width=700, height=300, key=f"{self.session_prefix}preview_map")
+        
+        return False 

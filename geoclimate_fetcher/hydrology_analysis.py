@@ -36,99 +36,337 @@ class HydrologyAnalyzer:
         
     def fetch_precipitation_data(self, dataset_info: Dict, start_date: str, end_date: str) -> pd.DataFrame:
         """
-        Fetch precipitation data from Google Earth Engine
-        Uses chunking to handle large date ranges and avoid 5000 element limit
-        
+        Fetch precipitation data from Google Earth Engine with server-side daily aggregation
+        Handles high-resolution data (like IMERG 30-minute) by aggregating to daily on server
+
         Args:
             dataset_info: Dictionary containing dataset information
             start_date: Start date in YYYY-MM-DD format
             end_date: End date in YYYY-MM-DD format
-            
+
         Returns:
-            DataFrame with precipitation time series
+            DataFrame with daily precipitation time series
         """
-        from geoclimate_fetcher.core.fetchers.collection import ImageCollectionFetcher
         from datetime import datetime
-        
-        # Initialize fetcher
-        fetcher = ImageCollectionFetcher(
-            ee_id=dataset_info['ee_id'],
-            bands=[dataset_info['precipitation_band']],
-            geometry=self.geometry
-        )
-        
-        # Filter dates
-        fetcher.filter_dates(start_date, end_date)
-        
-        # Calculate the time span to determine if we need chunking
-        start_dt = datetime.strptime(start_date, '%Y-%m-%d')
-        end_dt = datetime.strptime(end_date, '%Y-%m-%d')
-        years_span = (end_dt - start_dt).days / 365.25
-        
-        print(f"Fetching {years_span:.1f} years of precipitation data...")
-        
-        # Use chunking for large datasets to avoid 5000 element limit
-        if years_span > 5:  # More than 5 years, use chunking
-            print("Using chunked approach to handle large dataset...")
-            # Use smaller chunks for very large datasets
-            if years_span > 20:
-                chunk_months = 6  # 6 month chunks for very large datasets
-            elif years_span > 10:
-                chunk_months = 12  # 1 year chunks for large datasets  
+        import ee
+        import pandas as pd
+
+        try:
+            # Parse dates
+            start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+            end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+            years_span = (end_dt - start_dt).days / 365.25
+            total_days = (end_dt - start_dt).days
+
+            print(f"Fetching {years_span:.1f} years ({total_days} days) of precipitation data...")
+            print(f"Dataset: {dataset_info['name']} ({dataset_info.get('ee_id')})")
+
+            # Load the image collection
+            print(f"Loading collection: {dataset_info['ee_id']}")
+            print(f"Looking for band: {dataset_info['precipitation_band']}")
+
+            # First, let's check what bands are available
+            try:
+                sample_collection = ee.ImageCollection(dataset_info['ee_id']) \
+                                     .filterDate(start_date, end_date) \
+                                     .filterBounds(self.geometry) \
+                                     .limit(1)
+
+                # Get band names from first image
+                first_image = sample_collection.first()
+                band_names = first_image.bandNames().getInfo()
+                print(f"Available bands in dataset: {band_names}")
+
+                # Check if the expected band exists
+                if dataset_info['precipitation_band'] not in band_names:
+                    print(f"Warning: Band '{dataset_info['precipitation_band']}' not found!")
+                    print("Trying common precipitation band names...")
+
+                    # Try common precipitation band names
+                    common_precip_bands = ['precipitation', 'precipitationCal', 'total_precipitation', 'tp', 'precip']
+                    found_band = None
+
+                    for band in common_precip_bands:
+                        if band in band_names:
+                            found_band = band
+                            print(f"Found precipitation band: {band}")
+                            break
+
+                    if found_band:
+                        dataset_info['precipitation_band'] = found_band
+                    else:
+                        print(f"No common precipitation bands found. Available: {band_names}")
+                        return pd.DataFrame()
+
+            except Exception as e:
+                print(f"Could not check band names: {e}")
+
+            collection = ee.ImageCollection(dataset_info['ee_id']) \
+                          .select(dataset_info['precipitation_band']) \
+                          .filterDate(start_date, end_date) \
+                          .filterBounds(self.geometry)
+
+            # Check temporal resolution and apply appropriate aggregation
+            ee_id = dataset_info['ee_id']
+            is_high_resolution = any(x in ee_id.upper() for x in ['IMERG', 'GPM']) or 'mm/hr' in dataset_info.get('unit', '')
+
+            if is_high_resolution:
+                print("Detected high-resolution dataset - applying server-side daily aggregation...")
+
+                # For IMERG/GPM: aggregate sub-daily data to daily totals on server
+                def aggregate_daily(date):
+                    """Aggregate all images for a single day"""
+                    date = ee.Date(date)
+                    start_of_day = date
+                    end_of_day = date.advance(1, 'day')
+
+                    daily_images = collection.filterDate(start_of_day, end_of_day)
+
+                    # Convert mm/hr to mm/day by summing all intervals in the day
+                    if 'mm/hr' in dataset_info.get('unit', ''):
+                        # For half-hourly data: multiply by 0.5 hours then sum
+                        daily_total = daily_images.map(lambda img: img.multiply(0.5)).sum()
+                    else:
+                        # For other units, just sum
+                        daily_total = daily_images.sum()
+
+                    return daily_total.set('system:time_start', start_of_day.millis())
+
+                # Generate date list and aggregate
+                date_list = ee.List.sequence(0, total_days - 1).map(
+                    lambda days: ee.Date(start_date).advance(days, 'day')
+                )
+
+                daily_collection = ee.ImageCollection.fromImages(
+                    date_list.map(aggregate_daily)
+                )
+
+                print(f"Aggregated to {total_days} daily images")
+
             else:
-                chunk_months = 24  # 2 year chunks for medium datasets
-                
-            df = fetcher.get_time_series_average_chunked(chunk_months=chunk_months)
-        else:
-            print("Using standard approach for smaller dataset...")
-            df = fetcher.get_time_series_average()
-        
-        if not df.empty:
-            # Rename precipitation column for consistency
-            precip_col = dataset_info['precipitation_band']
-            df = df.rename(columns={precip_col: 'precipitation'})
-            
-            # Convert units if necessary
-            if dataset_info.get('unit') == 'm':
-                df['precipitation'] = df['precipitation'] * 1000  # Convert m to mm
-            elif dataset_info.get('unit') == 'kg/m^2/s':
-                # Convert kg/m^2/s to mm/day (1 kg/m^2/s = 86400 mm/day)
-                df['precipitation'] = df['precipitation'] * 86400
-            elif dataset_info.get('unit') == '0.1 mm':
-                df['precipitation'] = df['precipitation'] * 0.1  # Convert 0.1 mm to mm
-            elif dataset_info.get('unit') == 'mm/hr':
-                # For monthly data, assume it's already in mm for the month
-                pass
-            elif dataset_info.get('unit') == 'mm/day':
-                # Already in correct units
-                pass
-            
-            # Handle any remaining unit issues - check if values are too small
-            mean_precip = df['precipitation'].mean()
-            if mean_precip < 0.1:  # Suspiciously low values
-                print(f"Warning: Low precipitation values detected (mean: {mean_precip:.6f}). Checking units...")
-                # Might need scaling
-                if mean_precip < 0.001:
-                    df['precipitation'] = df['precipitation'] * 1000  # Try scaling by 1000
-                    print("Applied scaling factor of 1000 to precipitation values")
-            
-            # Ensure non-negative values
-            df['precipitation'] = df['precipitation'].clip(lower=0)
-            
-            # Remove any NaN or infinite values
-            df = df.dropna()
-            df = df[np.isfinite(df['precipitation'])]
-            
-            print(f"Successfully fetched {len(df)} precipitation records")
-            print(f"Date range: {df['date'].min()} to {df['date'].max()}")
-            print(f"Precipitation stats: mean={df['precipitation'].mean():.2f}mm, max={df['precipitation'].max():.2f}mm")
-            
-        else:
-            print("Warning: No precipitation data returned from Earth Engine")
-            
-        self.precipitation_data = df
+                print("Using daily dataset directly...")
+                daily_collection = collection
+
+            # Use reduceRegion approach for area-averaged time series (more efficient)
+            print("Extracting area-averaged time series...")
+
+            # Simplify geometry if it's too complex
+            simplified_geometry = self._simplify_geometry_if_needed(self.geometry)
+
+            # Get area-averaged precipitation for each day
+            def get_daily_mean(image):
+                """Get area-averaged precipitation for a single day"""
+                # Reduce region to get mean precipitation over the area
+                reduction = image.reduceRegion(
+                    reducer=ee.Reducer.mean(),
+                    geometry=simplified_geometry,
+                    scale=5000,  # 5km resolution for efficiency
+                    maxPixels=1e9
+                )
+
+                # Get the precipitation value
+                precip_value = reduction.get(dataset_info['precipitation_band'])
+
+                # Return feature with date and precipitation
+                return ee.Feature(None, {
+                    'date': image.get('system:time_start'),
+                    'precipitation': precip_value
+                })
+
+            # Apply to all images and get results
+            if total_days > 1000:  # Use chunking for very large requests
+                chunk_days = 365
+                print(f"Using chunked approach with {chunk_days}-day chunks...")
+
+                all_data = []
+                for chunk_start_days in range(0, total_days, chunk_days):
+                    chunk_end_days = min(chunk_start_days + chunk_days, total_days)
+
+                    chunk_start_date = start_dt + pd.Timedelta(days=chunk_start_days)
+                    chunk_end_date = start_dt + pd.Timedelta(days=chunk_end_days)
+
+                    chunk_start_str = chunk_start_date.strftime('%Y-%m-%d')
+                    chunk_end_str = chunk_end_date.strftime('%Y-%m-%d')
+
+                    print(f"Processing chunk: {chunk_start_str} to {chunk_end_str}")
+
+                    chunk_collection = daily_collection.filterDate(chunk_start_str, chunk_end_str)
+
+                    # Convert to feature collection and get data
+                    features = chunk_collection.map(get_daily_mean)
+                    data = features.getInfo()
+
+                    if data and data['features']:
+                        chunk_df = self._process_feature_collection_data(data, dataset_info)
+                        if not chunk_df.empty:
+                            all_data.append(chunk_df)
+
+                # Combine all chunks
+                if all_data:
+                    df = pd.concat(all_data, ignore_index=True).sort_values('date').reset_index(drop=True)
+                else:
+                    df = pd.DataFrame()
+
+            else:
+                print("Processing all data at once...")
+                # Process all at once for smaller datasets
+                features = daily_collection.map(get_daily_mean)
+                data = features.getInfo()
+                df = self._process_feature_collection_data(data, dataset_info)
+
+            if not df.empty:
+                print(f"Successfully fetched {len(df)} daily precipitation records")
+                print(f"Date range: {df['date'].min()} to {df['date'].max()}")
+                print(f"Precipitation stats: mean={df['precipitation'].mean():.2f}mm, max={df['precipitation'].max():.2f}mm")
+            else:
+                print("Warning: No precipitation data returned from Earth Engine")
+
+            self.precipitation_data = df
+            return df
+
+        except Exception as e:
+            print(f"Error fetching precipitation data: {str(e)}")
+            return pd.DataFrame()
+
+    def _process_time_series_data(self, time_series: list, dataset_info: Dict) -> pd.DataFrame:
+        """Process raw time series data from Earth Engine into a clean DataFrame"""
+        if not time_series or len(time_series) <= 1:
+            return pd.DataFrame()
+
+        # Convert to DataFrame
+        headers = time_series[0]
+        data = time_series[1:]
+
+        df = pd.DataFrame(data, columns=headers)
+
+        # Convert time to datetime
+        df['date'] = pd.to_datetime(df['time'], unit='ms')
+
+        # Get precipitation column
+        precip_col = dataset_info['precipitation_band']
+        if precip_col not in df.columns:
+            print(f"Warning: Precipitation band '{precip_col}' not found in data")
+            return pd.DataFrame()
+
+        # Rename and clean
+        df = df.rename(columns={precip_col: 'precipitation'})
+        df = df[['date', 'precipitation']].dropna()
+
+        # Convert units if necessary
+        unit = dataset_info.get('unit', '')
+        if unit == 'm':
+            df['precipitation'] = df['precipitation'] * 1000  # Convert m to mm
+        elif unit == 'kg/m^2/s':
+            df['precipitation'] = df['precipitation'] * 86400  # Convert to mm/day
+        elif unit == '0.1 mm':
+            df['precipitation'] = df['precipitation'] * 0.1  # Convert to mm
+        elif unit == 'mm/hr':
+            # Already converted during aggregation
+            pass
+
+        # Ensure non-negative values
+        df['precipitation'] = df['precipitation'].clip(lower=0)
+
+        # Remove any NaN or infinite values
+        df = df.dropna()
+        df = df[np.isfinite(df['precipitation'])]
+
         return df
-    
+
+    def _simplify_geometry_if_needed(self, geometry):
+        """Simplify geometry if it's too complex for efficient processing"""
+        import ee
+
+        try:
+            # Check if geometry is too complex by getting coordinate count
+            coords_info = geometry.getInfo()
+
+            # Count total coordinates
+            total_coords = 0
+            if coords_info['type'] == 'Polygon':
+                for ring in coords_info['coordinates']:
+                    total_coords += len(ring)
+            elif coords_info['type'] == 'MultiPolygon':
+                for polygon in coords_info['coordinates']:
+                    for ring in polygon:
+                        total_coords += len(ring)
+            else:
+                # For other geometry types, use as-is
+                return geometry
+
+            print(f"Geometry has {total_coords} coordinate points")
+
+            # If too many coordinates, simplify
+            if total_coords > 1000:  # Threshold for simplification
+                print(f"Simplifying complex geometry ({total_coords} points)...")
+
+                # Method 1: Buffer and unbuffer to smooth
+                simplified = geometry.buffer(100).buffer(-100).simplify(500)
+
+                # If still too complex, use convex hull
+                try:
+                    simplified_coords = simplified.getInfo()
+                    simplified_count = len(simplified_coords['coordinates'][0]) if simplified_coords['type'] == 'Polygon' else 0
+
+                    if simplified_count > 500:
+                        print("Using convex hull for maximum simplification...")
+                        simplified = geometry.convexHull()
+
+                except:
+                    print("Using convex hull as fallback...")
+                    simplified = geometry.convexHull()
+
+                return simplified
+            else:
+                return geometry
+
+        except Exception as e:
+            print(f"Warning: Could not analyze geometry complexity ({e}). Using convex hull...")
+            # Fallback to convex hull if geometry analysis fails
+            return geometry.convexHull()
+
+    def _process_feature_collection_data(self, data: dict, dataset_info: Dict) -> pd.DataFrame:
+        """Process feature collection data into a clean DataFrame"""
+        if not data or 'features' not in data or not data['features']:
+            return pd.DataFrame()
+
+        # Extract data from features
+        records = []
+        for feature in data['features']:
+            if 'properties' in feature:
+                props = feature['properties']
+                if 'date' in props and 'precipitation' in props:
+                    # Skip null values
+                    if props['precipitation'] is not None:
+                        records.append({
+                            'date': pd.to_datetime(props['date'], unit='ms'),
+                            'precipitation': props['precipitation']
+                        })
+
+        if not records:
+            return pd.DataFrame()
+
+        # Create DataFrame
+        df = pd.DataFrame(records)
+
+        # Convert units if necessary
+        unit = dataset_info.get('unit', '')
+        if unit == 'm':
+            df['precipitation'] = df['precipitation'] * 1000  # Convert m to mm
+        elif unit == 'kg/m^2/s':
+            df['precipitation'] = df['precipitation'] * 86400  # Convert to mm/day
+        elif unit == '0.1 mm':
+            df['precipitation'] = df['precipitation'] * 0.1  # Convert to mm
+
+        # Ensure non-negative values
+        df['precipitation'] = df['precipitation'].clip(lower=0)
+
+        # Remove any NaN or infinite values
+        df = df.dropna()
+        df = df[np.isfinite(df['precipitation'])]
+
+        return df.sort_values('date').reset_index(drop=True)
+
     def calculate_annual_maxima(self) -> pd.DataFrame:
         """
         Calculate annual maximum precipitation values

@@ -195,7 +195,189 @@ class DownloadHelper:
         except Exception as e:
             st.error(f"❌ Error creating multi-file ZIP: {str(e)}")
             return False
-    
+
+    def render_smart_download_options(self, estimated_size_mb: float = None) -> str:
+        """
+        Render smart download options UI for user preference selection.
+
+        Args:
+            estimated_size_mb: Not used anymore - size estimation removed
+
+        Returns:
+            Selected export preference: 'auto', 'local', or 'drive'
+        """
+        st.markdown("### 🎯 Smart Download Options")
+
+        # Always recommend auto mode (no size estimation)
+        recommended = 'auto'
+        st.info("🤖 **Smart Auto Mode**: Try local download first, automatically fallback to Google Drive if needed")
+
+        # Export preference options
+        export_options = {
+            'auto': {
+                'title': '🤖 Auto (Recommended)',
+                'description': 'Try local first, automatic Drive fallback if needed',
+                'details': 'Always attempts local download first, seamlessly switches to Google Drive if local fails'
+            },
+            'local': {
+                'title': '💻 Force Local Only',
+                'description': 'Local download only (no fallback)',
+                'details': 'Direct browser download - will fail if file is too large or processing fails'
+            },
+            'drive': {
+                'title': '☁️ Force Google Drive',
+                'description': 'Skip local attempt, go straight to Drive',
+                'details': 'Cloud processing - handles any size, always works but requires Google Drive access'
+            }
+        }
+
+        # Create radio button options
+        option_labels = []
+        option_keys = []
+        for key, option in export_options.items():
+            label = option['title']
+            if key == recommended:
+                label += ' ⭐'
+            option_labels.append(label)
+            option_keys.append(key)
+
+        # Default to recommended option
+        default_index = option_keys.index(recommended)
+
+        selected_label = st.radio(
+            "Choose export method:",
+            option_labels,
+            index=default_index,
+            help="Select how you want to receive your data"
+        )
+
+        # Get the selected key
+        selected_key = option_keys[option_labels.index(selected_label)]
+
+        # Show details for selected option
+        selected_option = export_options[selected_key]
+        st.info(f"ℹ️ **{selected_option['title']}**: {selected_option['details']}")
+
+        # Show additional info based on selection
+        if selected_key == 'local':
+            st.warning("⚠️ Local-only mode: No fallback if download fails. Consider Auto mode for reliability.")
+        elif selected_key == 'drive':
+            st.info("📤 Files will be exported to your Google Drive. You'll receive task monitoring links.")
+
+        return selected_key
+
+    def execute_smart_download(self, image, filename: str, region, scale: float,
+                             export_preference: str = 'auto') -> dict:
+        """
+        Execute smart download using enhanced GEEExporter.
+
+        Args:
+            image: Earth Engine Image to export
+            filename: Output filename
+            region: Export region
+            scale: Export scale in meters
+            export_preference: Export preference from render_smart_download_options()
+
+        Returns:
+            Result dictionary from smart export
+        """
+        st.markdown("### 🚀 Executing Smart Download")
+
+        # Initialize exporter if not exists
+        if not hasattr(self, 'exporter') or self.exporter is None:
+            self.exporter = GEEExporter()
+
+        # Show progress indicator
+        progress_placeholder = st.empty()
+        progress_placeholder.info("🔄 Preparing export...")
+
+        try:
+            # Execute smart export
+            result = self.exporter.smart_export_with_fallback(
+                image=image,
+                filename=filename,
+                region=region,
+                scale=scale,
+                export_preference=export_preference
+            )
+
+            # Update progress based on result
+            if result['success']:
+                progress_placeholder.success("✅ Export completed successfully!")
+
+                # Handle result based on export method
+                if result['export_method'] == 'local':
+                    self._handle_local_result(result)
+                elif result['export_method'] == 'drive':
+                    self._handle_drive_result(result)
+
+            else:
+                progress_placeholder.error(f"❌ Export failed: {result['message']}")
+                if 'error' in result:
+                    st.error(f"Error details: {result['error']}")
+
+            return result
+
+        except Exception as e:
+            progress_placeholder.error(f"❌ Smart download failed: {str(e)}")
+            return {
+                'success': False,
+                'message': f"Smart download error: {str(e)}",
+                'error': str(e)
+            }
+
+    def _handle_local_result(self, result: dict):
+        """Handle local download result display and file download"""
+        st.success(f"✅ {result['message']}")
+
+        # Show file info
+        if result.get('actual_size_mb'):
+            st.info(f"📊 File size: {result['actual_size_mb']:.1f} MB")
+
+        # Create download button
+        if result.get('file_data') and result.get('filename'):
+            filename_with_ext = f"{result['filename']}.tif"
+            st.download_button(
+                label="💾 Download File",
+                data=result['file_data'],
+                file_name=filename_with_ext,
+                mime='application/octet-stream',
+                type="primary"
+            )
+
+    def _handle_drive_result(self, result: dict):
+        """Handle Google Drive export result display and links"""
+        st.success(f"✅ {result['message']}")
+
+        # Show Drive info
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.info("📁 **Google Drive Export**")
+            if result.get('drive_folder'):
+                st.write(f"**Folder:** {result['drive_folder']}")
+            if result.get('estimated_size_mb'):
+                st.write(f"**Size:** {result['estimated_size_mb']:.1f} MB")
+
+        with col2:
+            st.info("🔗 **Monitoring Links**")
+            if result.get('drive_url'):
+                st.markdown(f"[🗂️ Open Google Drive]({result['drive_url']})")
+            if result.get('task_url'):
+                st.markdown(f"[⚙️ Monitor Tasks]({result['task_url']})")
+
+        # Task information
+        if result.get('task_id'):
+            st.code(f"Task ID: {result['task_id']}", language=None)
+
+        # Instructions
+        st.markdown("""
+        **Next Steps:**
+        1. 📱 Monitor task progress using the links above
+        2. 📁 Check your Google Drive folder once tasks complete
+        3. ⏱️ Large exports may take several minutes to complete
+        """)
+
     def cleanup(self):
         """Clean up temporary files"""
         try:
@@ -1135,7 +1317,6 @@ class DownloadComponent:
                 
                 if success:
                     st.success("🎉 Download completed successfully!")
-                    st.balloons()
                     
                     # Provide next steps
                     with st.expander("📁 Output Files", expanded=True):

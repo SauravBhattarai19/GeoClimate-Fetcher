@@ -108,3 +108,10 @@ output/
 *.shx
 *.dbf
 *.prj
+
+# Project-specific ignores
+backups/
+unwanted/
+RESTORATION_SUMMARY.md
+pyproject.toml
+*.txt
