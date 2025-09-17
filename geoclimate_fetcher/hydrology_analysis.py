@@ -371,21 +371,196 @@ class HydrologyAnalyzer:
         """
         Calculate annual maximum precipitation values
         Essential for extreme value analysis and return period calculations
-        
+
         Returns:
             DataFrame with annual maximum values
         """
         if self.precipitation_data is None or self.precipitation_data.empty:
             return pd.DataFrame()
-        
+
         df = self.precipitation_data.copy()
         df['year'] = df['date'].dt.year
-        
+
         # Calculate annual maxima
         annual_maxima = df.groupby('year')['precipitation'].max().reset_index()
         annual_maxima.columns = ['year', 'annual_max_precipitation']
-        
+
         return annual_maxima
+
+    def _validate_data_for_yearly_analysis(self) -> tuple[bool, str]:
+        """
+        Validate precipitation data for yearly analysis
+
+        Returns:
+            Tuple of (is_valid, error_message)
+        """
+        if self.precipitation_data is None or self.precipitation_data.empty:
+            return False, "No precipitation data available"
+
+        df = self.precipitation_data
+
+        # Check required columns
+        if 'date' not in df.columns:
+            return False, "Date column missing from precipitation data"
+
+        if 'precipitation' not in df.columns:
+            return False, "Precipitation column missing from precipitation data"
+
+        # Check data types and convertibility
+        try:
+            if not pd.api.types.is_datetime64_any_dtype(df['date']):
+                pd.to_datetime(df['date'])  # Test conversion
+        except Exception as e:
+            return False, f"Date column cannot be converted to datetime: {str(e)}"
+
+        # Check for NaN values
+        nan_dates = df['date'].isna().sum()
+        nan_precip = df['precipitation'].isna().sum()
+
+        if nan_dates > 0:
+            return False, f"Found {nan_dates} NaN values in date column"
+
+        # Check temporal coverage
+        try:
+            temp_df = df.copy()
+            if not pd.api.types.is_datetime64_any_dtype(temp_df['date']):
+                temp_df['date'] = pd.to_datetime(temp_df['date'])
+
+            temp_df['year'] = temp_df['date'].dt.year
+            unique_years = len(temp_df['year'].unique())
+
+            if unique_years < 1:
+                return False, "No complete years of data available"
+
+        except Exception as e:
+            return False, f"Error processing temporal data: {str(e)}"
+
+        return True, "Data validation passed"
+
+    def calculate_yearly_statistics(self) -> Dict:
+        """
+        Calculate comprehensive yearly statistics including max, mean, median, and trends
+
+        Returns:
+            Dictionary with yearly statistics and trend analysis
+        """
+        try:
+            # Validate data first
+            is_valid, validation_message = self._validate_data_for_yearly_analysis()
+
+            if not is_valid:
+                return {}
+
+            df = self.precipitation_data.copy()
+
+            # Ensure date column is datetime
+            if not pd.api.types.is_datetime64_any_dtype(df['date']):
+                df['date'] = pd.to_datetime(df['date'])
+
+            # Filter out NaN precipitation values
+            df = df.dropna(subset=['precipitation'])
+
+            # Check for negative precipitation (data quality issue)
+            negative_precip = (df['precipitation'] < 0).sum()
+            if negative_precip > 0:
+                df.loc[df['precipitation'] < 0, 'precipitation'] = 0
+
+            df['year'] = df['date'].dt.year
+
+            # Calculate yearly statistics
+            yearly_stats = df.groupby('year')['precipitation'].agg([
+                ('max', 'max'),
+                ('mean', 'mean'),
+                ('median', 'median'),
+                ('total', 'sum'),
+                ('wet_days', lambda x: (x > 1.0).sum()),
+                ('dry_days', lambda x: (x <= 1.0).sum())
+            ]).reset_index()
+
+            # Calculate trends for each metric
+            years = yearly_stats['year'].values
+            trends = {}
+
+            for metric in ['max', 'mean', 'median', 'total']:
+                values = yearly_stats[metric].values
+
+                if len(values) >= 3:  # Need at least 3 years for trend
+                    try:
+                        # Simple linear trend using least squares
+                        n = len(years)
+                        numerator = n * np.sum(years * values) - np.sum(years) * np.sum(values)
+                        denominator = n * np.sum(years**2) - np.sum(years)**2
+
+                        if abs(denominator) < 1e-10:  # Prevent division by zero
+                            slope = 0
+                            trend = 'stable'
+                        else:
+                            slope = numerator / denominator
+
+                            # Classify trend
+                            if abs(slope) < 0.01:  # Threshold for "no trend"
+                                trend = 'stable'
+                            elif slope > 0:
+                                trend = 'increasing'
+                            else:
+                                trend = 'decreasing'
+
+                        trends[metric] = {
+                            'slope': slope,
+                            'trend': trend,
+                            'direction': '📈' if slope > 0 else '📉' if slope < 0 else '➡️'
+                        }
+
+                    except Exception as e:
+                        trends[metric] = {
+                            'slope': 0,
+                            'trend': 'calculation_error',
+                            'direction': '❓'
+                        }
+                else:
+                    trends[metric] = {
+                        'slope': 0,
+                        'trend': 'insufficient_data',
+                        'direction': '❓'
+                    }
+
+            # Calculate summary statistics
+            try:
+                summary = {
+                    'years_analyzed': len(yearly_stats),
+                    'start_year': yearly_stats['year'].min(),
+                    'end_year': yearly_stats['year'].max(),
+                    'max_year': yearly_stats.loc[yearly_stats['max'].idxmax(), 'year'],
+                    'max_value': yearly_stats['max'].max(),
+                    'min_year': yearly_stats.loc[yearly_stats['max'].idxmin(), 'year'],
+                    'min_value': yearly_stats['max'].min(),
+                    'mean_annual_total': yearly_stats['total'].mean(),
+                    'wettest_year': yearly_stats.loc[yearly_stats['total'].idxmax(), 'year'],
+                    'driest_year': yearly_stats.loc[yearly_stats['total'].idxmin(), 'year']
+                }
+            except Exception as e:
+                summary = {
+                    'years_analyzed': len(yearly_stats),
+                    'start_year': yearly_stats['year'].min() if len(yearly_stats) > 0 else 0,
+                    'end_year': yearly_stats['year'].max() if len(yearly_stats) > 0 else 0,
+                    'max_year': 0,
+                    'max_value': 0,
+                    'min_year': 0,
+                    'min_value': 0,
+                    'mean_annual_total': 0,
+                    'wettest_year': 0,
+                    'driest_year': 0
+                }
+
+            result = {
+                'yearly_data': yearly_stats,
+                'trends': trends,
+                'summary': summary
+            }
+            return result
+
+        except Exception as e:
+            return {}
     
     def calculate_return_periods(self, annual_maxima: pd.DataFrame) -> Dict:
         """

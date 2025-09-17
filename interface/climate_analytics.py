@@ -467,9 +467,6 @@ def _render_climate_results():
         # Show download options - results should persist
         _show_download_options(results)
 
-                # Trigger rerun to refresh the interface before starting analysis
-                st.rerun()
-
         with col3:
             if st.button("🆕 Start New Analysis", use_container_width=True):
                 _reset_climate_analysis()

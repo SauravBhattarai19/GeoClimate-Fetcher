@@ -27,6 +27,26 @@ class PostDownloadHandler:
     def __init__(self, module_name: str):
         self.module_name = module_name
         self.download_results = {}
+        # Button configuration with defaults for backward compatibility
+        self.show_data_visualizer_button = True
+        self.show_continue_working_button = True
+        self.show_back_home_button = True
+
+    def configure_buttons(self,
+                         show_data_visualizer: bool = True,
+                         show_continue_working: bool = True,
+                         show_back_home: bool = True):
+        """
+        Configure which buttons to show in the visualization options
+
+        Args:
+            show_data_visualizer: Show "Open Data Visualizer" button
+            show_continue_working: Show "Continue in Module" button
+            show_back_home: Show "Back to Home" button
+        """
+        self.show_data_visualizer_button = show_data_visualizer
+        self.show_continue_working_button = show_continue_working
+        self.show_back_home_button = show_back_home
 
     def register_download_result(self,
                                file_name: str,
@@ -276,47 +296,67 @@ class PostDownloadHandler:
     def _render_visualization_options(self, result_ids: List[str], quick_viz_data: List[Dict]) -> bool:
         """Render main visualization options"""
 
+        # Only show visualization options if at least one button is enabled
+        buttons_to_show = []
+        if self.show_data_visualizer_button:
+            buttons_to_show.append("data_visualizer")
+        if self.show_continue_working_button:
+            buttons_to_show.append("continue_working")
+        if self.show_back_home_button:
+            buttons_to_show.append("back_home")
+
+        if not buttons_to_show:
+            return False
+
         st.markdown("---")
         st.markdown("#### 🚀 Visualization Options")
 
-        col1, col2, col3 = st.columns(3)
+        # Create columns only for enabled buttons
+        num_columns = len(buttons_to_show)
+        columns = st.columns(num_columns)
+        col_index = 0
 
-        with col1:
-            st.markdown("**📊 Advanced Analysis**")
-            st.info("Upload to Data Visualizer for full analysis features, comparisons, and export options.")
+        if self.show_data_visualizer_button:
+            with columns[col_index]:
+                st.markdown("**📊 Advanced Analysis**")
+                st.info("Upload to Data Visualizer for full analysis features, comparisons, and export options.")
 
-            if st.button("🚀 Open Data Visualizer", type="primary", use_container_width=True):
-                st.session_state.app_mode = "data_visualizer"
-                # Store data for direct access
-                st.session_state.direct_visualization_data = {
-                    'results': [self.download_results[rid] for rid in result_ids],
-                    'source_module': self.module_name
-                }
-                # Clear post-download state since user is navigating away
-                st.session_state.post_download_active = False
-                st.session_state.post_download_results = []
-                st.rerun()
+                if st.button("🚀 Open Data Visualizer", type="primary", use_container_width=True):
+                    st.session_state.app_mode = "data_visualizer"
+                    # Store data for direct access
+                    st.session_state.direct_visualization_data = {
+                        'results': [self.download_results[rid] for rid in result_ids],
+                        'source_module': self.module_name
+                    }
+                    # Clear post-download state since user is navigating away
+                    st.session_state.post_download_active = False
+                    st.session_state.post_download_results = []
+                    st.rerun()
+            col_index += 1
 
-        with col2:
-            st.markdown("**💾 Continue Working**")
-            st.info("Stay in current module to continue analysis or download more data.")
+        if self.show_continue_working_button:
+            with columns[col_index]:
+                st.markdown("**💾 Continue Working**")
+                st.info("Stay in current module to continue analysis or download more data.")
 
-            if st.button("↩️ Continue in Module", use_container_width=True):
-                # Clear post-download state and continue in module
-                st.session_state.post_download_active = False
-                st.session_state.post_download_results = []
-                st.rerun()
+                if st.button("↩️ Continue in Module", use_container_width=True):
+                    # Clear post-download state and continue in module
+                    st.session_state.post_download_active = False
+                    st.session_state.post_download_results = []
+                    st.rerun()
+            col_index += 1
 
-        with col3:
-            st.markdown("**🏠 Return Home**")
-            st.info("Go back to main platform to access other tools.")
+        if self.show_back_home_button:
+            with columns[col_index]:
+                st.markdown("**🏠 Return Home**")
+                st.info("Go back to main platform to access other tools.")
 
-            if st.button("🏠 Back to Home", use_container_width=True):
-                st.session_state.app_mode = None
-                # Clear post-download state when going home
-                st.session_state.post_download_active = False
-                st.session_state.post_download_results = []
-                st.rerun()
+                if st.button("🏠 Back to Home", use_container_width=True):
+                    st.session_state.app_mode = None
+                    # Clear post-download state when going home
+                    st.session_state.post_download_active = False
+                    st.session_state.post_download_results = []
+                    st.rerun()
 
         return False
 
@@ -357,18 +397,30 @@ def get_download_handler(module_name: str) -> PostDownloadHandler:
     return _handlers[module_name]
 
 
-def render_post_download_integration(module_name: str, result_ids: List[str]) -> bool:
+def render_post_download_integration(module_name: str,
+                                   result_ids: List[str],
+                                   show_data_visualizer: bool = True,
+                                   show_continue_working: bool = True,
+                                   show_back_home: bool = True) -> bool:
     """
     Universal function to render post-download integration
 
     Args:
         module_name: Name of the calling module
         result_ids: List of download result IDs
+        show_data_visualizer: Show "Open Data Visualizer" button
+        show_continue_working: Show "Continue in Module" button
+        show_back_home: Show "Back to Home" button
 
     Returns:
         True if visualization was requested, False otherwise
     """
     handler = get_download_handler(module_name)
+    handler.configure_buttons(
+        show_data_visualizer=show_data_visualizer,
+        show_continue_working=show_continue_working,
+        show_back_home=show_back_home
+    )
     return handler.render_download_success(result_ids)
 
 

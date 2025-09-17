@@ -74,18 +74,18 @@ def render_hydrology_analyzer():
         col1, col2, col3 = st.columns([2, 1, 1])
         
         with col1:
-            if st.button("🚀 Run Hydrology Analysis", type="primary", use_container_width=True):
+            if st.button("🚀 Run Hydrology Analysis", type="primary", width='stretch'):
                 # Trigger analysis
                 st.session_state.hydro_run_analysis = True
                 st.rerun()
         
         with col2:
-            if st.button("🔄 Reset Configuration", use_container_width=True):
+            if st.button("🔄 Reset Configuration", width='stretch'):
                 _reset_hydrology_configuration()
                 st.rerun()
         
         with col3:
-            if st.button("📊 View Sample Results", use_container_width=True):
+            if st.button("📊 View Sample Results", width='stretch'):
                 st.session_state.hydro_show_sample = True
                 st.rerun()
     else:
@@ -93,9 +93,9 @@ def render_hydrology_analyzer():
     
     st.markdown("---")
     
-    # Results section - only show after user clicks Run Analysis
+    # Results section - show after analysis is ready or sample requested
     if analysis_ready:
-        if st.session_state.get('hydro_run_analysis', False):
+        if st.session_state.get('hydro_run_analysis', False) or st.session_state.get('hydro_analysis_ready', False):
             _render_hydrology_results()
         elif st.session_state.get('hydro_show_sample', False):
             _render_sample_results()
@@ -356,39 +356,10 @@ def _render_hydrology_results():
                         avg_precip = precipitation_data['precipitation'].mean()
                         st.metric("Average Precip", f"{avg_precip:.2f} mm")
 
-                    # Enhanced post-download integration
-                    st.markdown("---")
-                    st.markdown("### 🎉 Data Download Complete!")
+                    st.success(f"✅ Data download complete! Proceeding to analysis...")
 
-                    # Register the precipitation data
-                    download_handler = get_download_handler("hydrology_analyzer")
-                    result_id = register_csv_download(
-                        "hydrology_analyzer",
-                        f"precipitation_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                        precipitation_data,
-                        metadata={
-                            'dataset': dataset_info.get('name', 'Unknown'),
-                            'analysis_type': 'precipitation_download',
-                            'records': len(precipitation_data),
-                            'date_range': f"{start_date_str} to {end_date_str}",
-                            'avg_precipitation': avg_precip
-                        }
-                    )
-
-                    # Show quick visualization of the precipitation data
-                    st.markdown("#### 📊 Quick Precipitation Analysis")
-                    try:
-                        # Create instant visualization
-                        quick_visualizer.render_quick_csv_analysis(
-                            precipitation_data,
-                            title="Precipitation Time Series Analysis",
-                            max_columns=3
-                        )
-                    except Exception as e:
-                        st.error(f"Error creating quick visualization: {str(e)}")
-
-                    # Show post-download options
-                    render_post_download_integration("hydrology_analyzer", [result_id])
+                    # Mark analysis as ready to display results directly
+                    st.session_state.hydro_analysis_ready = True
 
                 else:
                     st.error("❌ No precipitation data was retrieved. Please try a different date range or dataset.")
@@ -468,83 +439,453 @@ def _render_hydrology_results():
 def _render_time_series_analysis():
     """Render time series analysis"""
     st.markdown("### 📈 Precipitation Time Series")
-    
-    # Generate sample time series data
+
     precipitation_data = st.session_state.hydro_precipitation_data
-    
+
+    # Get available years for filtering
+    precipitation_data['date'] = pd.to_datetime(precipitation_data['date'])
+    precipitation_data['year'] = precipitation_data['date'].dt.year
+    available_years = sorted(precipitation_data['year'].unique())
+
+    # Year filter for daily chart
+    year_options = ['All Years'] + [str(year) for year in available_years]
+    selected_year = st.selectbox(
+        "🗓️ Filter by Year (Daily Chart):",
+        options=year_options,
+        index=0,  # Default to "All Years"
+        key="daily_year_filter"
+    )
+
+    # Filter data based on selection
+    if selected_year == 'All Years':
+        filtered_data = precipitation_data
+        chart_title = "Daily Precipitation Time Series (All Years)"
+    else:
+        filtered_data = precipitation_data[precipitation_data['year'] == int(selected_year)]
+        chart_title = f"Daily Precipitation Time Series ({selected_year})"
+
     # Create time series plot
     fig = go.Figure()
-    
+
     fig.add_trace(go.Scatter(
-        x=precipitation_data['date'],
-        y=precipitation_data['precipitation'],
+        x=filtered_data['date'],
+        y=filtered_data['precipitation'],
         mode='lines',
         name='Daily Precipitation',
         line=dict(color='blue', width=1)
     ))
-    
+
     fig.update_layout(
-        title="Daily Precipitation Time Series",
+        title=chart_title,
         xaxis_title="Date",
         yaxis_title="Precipitation (mm)",
         height=400
     )
-    
-    st.plotly_chart(fig, use_container_width=True)
+
+    st.plotly_chart(fig, width='stretch')
+
+    # Show data summary for filtered view
+    if selected_year != 'All Years':
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Days in Year", len(filtered_data))
+        with col2:
+            st.metric("Total Precipitation", f"{filtered_data['precipitation'].sum():.1f} mm")
+        with col3:
+            st.metric("Max Daily", f"{filtered_data['precipitation'].max():.1f} mm")
     
     # Monthly aggregation
     st.markdown("### 📅 Monthly Analysis")
-    
-    monthly_data = _calculate_monthly_stats(precipitation_data)
-    
+
+    # Year filter for monthly chart
+    monthly_year_options = ['All Years'] + [str(year) for year in available_years]
+    selected_monthly_year = st.selectbox(
+        "🗓️ Filter by Year (Monthly Chart):",
+        options=monthly_year_options,
+        index=0,  # Default to "All Years"
+        key="monthly_year_filter"
+    )
+
+    # Filter data for monthly analysis
+    if selected_monthly_year == 'All Years':
+        monthly_source_data = precipitation_data
+        monthly_chart_title = "Monthly Precipitation Totals (All Years)"
+    else:
+        monthly_source_data = precipitation_data[precipitation_data['year'] == int(selected_monthly_year)]
+        monthly_chart_title = f"Monthly Precipitation Totals ({selected_monthly_year})"
+
+    # Calculate monthly stats for filtered data
+    monthly_data = _calculate_monthly_stats(monthly_source_data)
+
+    # Update month labels for single year view
+    if selected_monthly_year != 'All Years' and len(monthly_data) > 0:
+        # For single year, show just month names instead of YYYY-MM
+        try:
+            # Check if month column contains datetime-parseable strings
+            if monthly_data['month'].dtype == 'object':
+                # Try to convert to datetime, handling different formats
+                monthly_data['month_dt'] = pd.to_datetime(monthly_data['month'], errors='coerce')
+                if not monthly_data['month_dt'].isna().all():
+                    monthly_data['month_short'] = monthly_data['month_dt'].dt.strftime('%b')
+                    x_data = monthly_data['month_short']
+                else:
+                    # If conversion fails, use original month data
+                    x_data = monthly_data['month']
+            else:
+                # If already datetime, convert directly
+                monthly_data['month_short'] = monthly_data['month'].dt.strftime('%b')
+                x_data = monthly_data['month_short']
+            x_title = "Month"
+        except Exception as e:
+            # Fallback to original month data if any error occurs
+            x_data = monthly_data['month']
+            x_title = "Month"
+    else:
+        x_data = monthly_data['month']
+        x_title = "Month"
+
     fig_monthly = go.Figure()
     fig_monthly.add_trace(go.Bar(
-        x=monthly_data['month'],
+        x=x_data,
         y=monthly_data['total_precip'],
         name='Monthly Total',
-        marker_color='lightblue'
+        marker_color='lightblue',
+        text=monthly_data['total_precip'].round(1),
+        textposition='auto'
     ))
-    
+
     fig_monthly.update_layout(
-        title="Monthly Precipitation Totals",
-        xaxis_title="Month",
+        title=monthly_chart_title,
+        xaxis_title=x_title,
         yaxis_title="Precipitation (mm)",
         height=400
     )
-    
-    st.plotly_chart(fig_monthly, use_container_width=True)
+
+    st.plotly_chart(fig_monthly, width='stretch')
+
+    # Show monthly summary for filtered view
+    if selected_monthly_year != 'All Years':
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Months with Data", len(monthly_data))
+        with col2:
+            st.metric("Annual Total", f"{monthly_data['total_precip'].sum():.1f} mm")
+        with col3:
+            if len(monthly_data) > 0:
+                wettest_idx = monthly_data['total_precip'].idxmax()
+                try:
+                    # Try to use short month name if available
+                    if 'month_short' in monthly_data.columns:
+                        wettest_month = monthly_data.loc[wettest_idx, 'month_short']
+                    else:
+                        # Extract month name from original month column
+                        month_val = monthly_data.loc[wettest_idx, 'month']
+                        if isinstance(month_val, str) and '-' in month_val:
+                            # If format is YYYY-MM, extract month number and convert
+                            try:
+                                month_num = int(month_val.split('-')[1])
+                                wettest_month = pd.to_datetime(f"2000-{month_num:02d}-01").strftime('%b')
+                            except:
+                                wettest_month = month_val
+                        else:
+                            wettest_month = str(month_val)
+
+                    wettest_amount = monthly_data['total_precip'].max()
+                    st.metric("Wettest Month", f"{wettest_month}: {wettest_amount:.1f} mm")
+                except Exception as e:
+                    # Fallback: just show the amount
+                    wettest_amount = monthly_data['total_precip'].max()
+                    st.metric("Wettest Month", f"{wettest_amount:.1f} mm")
+
+    # Yearly analysis with trends
+    st.markdown("### 📊 Yearly Analysis")
+
+    analyzer = st.session_state.get('hydro_analyzer')
+    if analyzer:
+        try:
+            yearly_stats = analyzer.calculate_yearly_statistics()
+
+            if yearly_stats and 'yearly_data' in yearly_stats and len(yearly_stats['yearly_data']) > 0:
+                yearly_data = yearly_stats['yearly_data']
+                trends = yearly_stats['trends']
+
+                # Create subplot with multiple metrics
+                from plotly.subplots import make_subplots
+
+                fig_yearly = make_subplots(
+                    rows=2, cols=2,
+                    subplot_titles=('Annual Maximum', 'Annual Mean', 'Annual Total', 'Annual Median'),
+                    vertical_spacing=0.1,
+                    horizontal_spacing=0.1
+                )
+
+                # Color scheme for different metrics
+                colors = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4']
+
+                # Plot each metric with trend line
+                metrics = [
+                    ('max', 'Annual Maximum (mm)', 1, 1),
+                    ('mean', 'Annual Mean (mm/day)', 1, 2),
+                    ('total', 'Annual Total (mm)', 2, 1),
+                    ('median', 'Annual Median (mm/day)', 2, 2)
+                ]
+
+                for i, (metric, ylabel, row, col) in enumerate(metrics):
+                    years = yearly_data['year']
+                    values = yearly_data[metric]
+
+                    # Add data points
+                    fig_yearly.add_scatter(
+                        x=years, y=values,
+                        mode='markers+lines',
+                        name=f'{ylabel}',
+                        marker=dict(size=8, color=colors[i]),
+                        line=dict(width=2, color=colors[i]),
+                        row=row, col=col,
+                        showlegend=False
+                    )
+
+                    # Add trend line if available
+                    if metric in trends and trends[metric]['trend'] != 'insufficient_data':
+                        slope = trends[metric]['slope']
+                        trend_name = trends[metric]['trend']
+                        direction = trends[metric]['direction']
+
+                        # Calculate trend line points
+                        y_trend = slope * (years - years.iloc[0]) + values.iloc[0]
+
+                        fig_yearly.add_scatter(
+                            x=years, y=y_trend,
+                            mode='lines',
+                            name=f'Trend ({direction} {trend_name})',
+                            line=dict(width=3, dash='dash', color='red'),
+                            row=row, col=col,
+                            showlegend=False
+                        )
+
+                        # Add trend annotation
+                        fig_yearly.add_annotation(
+                            x=years.iloc[-1], y=y_trend.iloc[-1],
+                            text=f"{direction} {trend_name}",
+                            showarrow=True,
+                            arrowhead=2,
+                            arrowsize=1,
+                            arrowcolor='red',
+                            font=dict(size=10, color='red'),
+                            row=row, col=col
+                        )
+
+                fig_yearly.update_layout(
+                    title="Yearly Precipitation Analysis with Trends",
+                    height=600,
+                    showlegend=False
+                )
+
+                # Update x-axis labels
+                fig_yearly.update_xaxes(title_text="Year")
+                fig_yearly.update_yaxes(title_text="Precipitation (mm)", row=1, col=1)
+                fig_yearly.update_yaxes(title_text="Precipitation (mm/day)", row=1, col=2)
+                fig_yearly.update_yaxes(title_text="Precipitation (mm)", row=2, col=1)
+                fig_yearly.update_yaxes(title_text="Precipitation (mm/day)", row=2, col=2)
+
+                st.plotly_chart(fig_yearly, width='stretch')
+
+                # Summary of trends
+                trend_summary = []
+                for metric, (_, ylabel, _, _) in zip(['max', 'mean', 'total', 'median'], metrics):
+                    if metric in trends:
+                        trend_info = trends[metric]
+                        trend_summary.append(f"**{ylabel.split('(')[0].strip()}:** {trend_info['direction']} {trend_info['trend']}")
+
+                if trend_summary:
+                    st.info("**Trend Summary:**\n" + " | ".join(trend_summary))
+
+            else:
+                st.info("💡 Yearly analysis requires at least one full year of data. Please try a longer date range.")
+
+        except Exception as e:
+            st.error(f"❌ Error creating yearly chart: {str(e)}")
+            st.info("💡 Try refreshing the data or selecting a longer date range.")
+    else:
+        st.info("💡 Yearly analysis not available. Please refresh the data.")
 
 
 def _render_statistical_analysis():
     """Render statistical analysis"""
     st.markdown("### 📊 Statistical Summary")
-    
+
     precipitation_data = st.session_state.hydro_precipitation_data
+    analyzer = st.session_state.get('hydro_analyzer')
     precip_values = precipitation_data['precipitation']
-    
-    # Basic statistics
+
+    # Basic daily statistics
+    st.markdown("#### Daily Statistics")
     col1, col2, col3, col4 = st.columns(4)
-    
+
     with col1:
-        st.metric("Mean", f"{precip_values.mean():.2f} mm")
-        st.metric("Median", f"{precip_values.median():.2f} mm")
-    
+        st.metric("Daily Mean", f"{precip_values.mean():.2f} mm")
+        st.metric("Daily Median", f"{precip_values.median():.2f} mm")
+
     with col2:
-        st.metric("Maximum", f"{precip_values.max():.2f} mm")
-        st.metric("Minimum", f"{precip_values.min():.2f} mm")
-    
+        st.metric("Daily Maximum", f"{precip_values.max():.2f} mm")
+        st.metric("Daily Minimum", f"{precip_values.min():.2f} mm")
+
     with col3:
         st.metric("Std Dev", f"{precip_values.std():.2f} mm")
         st.metric("Total Days", f"{len(precip_values)}")
-    
+
     with col4:
         wet_days = (precip_values > 1.0).sum()
         st.metric("Wet Days", f"{wet_days}")
         st.metric("Wet Day %", f"{wet_days/len(precip_values)*100:.1f}%")
-    
+
+    # Yearly statistics with trends
+    if analyzer:
+        try:
+            yearly_stats = analyzer.calculate_yearly_statistics()
+        except AttributeError as e:
+            # Handle case where analyzer doesn't have the new method
+            st.info("🔄 Updating analyzer with new features...")
+            try:
+                from geoclimate_fetcher.hydrology_analysis import HydrologyAnalyzer
+                import importlib
+                import geoclimate_fetcher.hydrology_analysis
+
+                # Reload the module to get the latest version
+                importlib.reload(geoclimate_fetcher.hydrology_analysis)
+
+                # Create a new analyzer with updated methods
+                new_analyzer = HydrologyAnalyzer(st.session_state.hydro_geometry)
+                new_analyzer.precipitation_data = precipitation_data.copy()
+
+                # Verify the method exists before using it
+                if hasattr(new_analyzer, 'calculate_yearly_statistics'):
+                    st.session_state.hydro_analyzer = new_analyzer
+                    yearly_stats = new_analyzer.calculate_yearly_statistics()
+                    st.success("✅ Analyzer updated successfully with yearly statistics!")
+                else:
+                    st.error("❌ Could not load updated analyzer. Please refresh the page.")
+                    yearly_stats = None
+
+            except Exception as update_error:
+                st.error(f"❌ Failed to update analyzer: {str(update_error)}")
+                st.info("💡 Please refresh the data to access enhanced yearly statistics and trends.")
+                yearly_stats = None
+        except Exception as e:
+            st.error(f"❌ Error calculating yearly statistics: {str(e)}")
+            yearly_stats = None
+
+        if yearly_stats and 'yearly_data' in yearly_stats and len(yearly_stats['yearly_data']) > 0:
+            st.markdown("#### Yearly Statistics & Trends")
+
+            # Summary metrics with trends
+            col1, col2, col3, col4 = st.columns(4)
+
+            with col1:
+                trend_info = yearly_stats['trends'].get('max', {})
+                direction = trend_info.get('direction', '❓')
+                trend_text = trend_info.get('trend', 'unknown')
+                st.metric(
+                    f"Yearly Max {direction}",
+                    f"{yearly_stats['summary']['max_value']:.1f} mm",
+                    delta=f"Trend: {trend_text}"
+                )
+
+            with col2:
+                trend_info = yearly_stats['trends'].get('mean', {})
+                direction = trend_info.get('direction', '❓')
+                trend_text = trend_info.get('trend', 'unknown')
+                mean_val = yearly_stats['yearly_data']['mean'].mean()
+                st.metric(
+                    f"Yearly Mean {direction}",
+                    f"{mean_val:.2f} mm/day",
+                    delta=f"Trend: {trend_text}"
+                )
+
+            with col3:
+                trend_info = yearly_stats['trends'].get('median', {})
+                direction = trend_info.get('direction', '❓')
+                trend_text = trend_info.get('trend', 'unknown')
+                median_val = yearly_stats['yearly_data']['median'].mean()
+                st.metric(
+                    f"Yearly Median {direction}",
+                    f"{median_val:.2f} mm/day",
+                    delta=f"Trend: {trend_text}"
+                )
+
+            with col4:
+                trend_info = yearly_stats['trends'].get('total', {})
+                direction = trend_info.get('direction', '❓')
+                trend_text = trend_info.get('trend', 'unknown')
+                st.metric(
+                    f"Annual Total {direction}",
+                    f"{yearly_stats['summary']['mean_annual_total']:.0f} mm",
+                    delta=f"Trend: {trend_text}"
+                )
+
+            # Show yearly data table
+            with st.expander("📊 Yearly Data Table", expanded=False):
+                yearly_df = yearly_stats['yearly_data'].copy()
+                yearly_df = yearly_df.round(2)
+                st.dataframe(yearly_df, width='stretch', hide_index=True)
+
+            # Show key insights
+            summary = yearly_stats['summary']
+            st.info(f"""
+            **📊 Key Insights:**
+            - **Analysis Period:** {summary['years_analyzed']} years ({summary['start_year']}-{summary['end_year']})
+            - **Wettest Year:** {summary['wettest_year']} ({yearly_stats['yearly_data'].loc[yearly_stats['yearly_data']['year'] == summary['wettest_year'], 'total'].iloc[0]:.0f} mm)
+            - **Driest Year:** {summary['driest_year']} ({yearly_stats['yearly_data'].loc[yearly_stats['yearly_data']['year'] == summary['driest_year'], 'total'].iloc[0]:.0f} mm)
+            - **Highest Daily Maximum:** {summary['max_value']:.1f} mm in {summary['max_year']}
+            """)
+
+        else:
+            # Show fallback message when yearly analysis is not available
+            st.markdown("#### ℹ️ Yearly Analysis Not Available")
+
+            if analyzer and hasattr(analyzer, 'precipitation_data') and analyzer.precipitation_data is not None:
+                data_info = []
+                try:
+                    num_rows = len(analyzer.precipitation_data)
+                    date_range = (analyzer.precipitation_data['date'].max() - analyzer.precipitation_data['date'].min()).days
+                    years = date_range / 365.25
+
+                    data_info.append(f"**Data Available:** {num_rows:,} daily records")
+                    data_info.append(f"**Time Span:** {years:.1f} years")
+
+                    if years < 1:
+                        data_info.append("**Issue:** Less than 1 full year of data")
+                        data_info.append("**Recommendation:** Try a longer date range to enable yearly analysis")
+                    elif years < 3:
+                        data_info.append("**Issue:** Less than 3 years of data")
+                        data_info.append("**Recommendation:** Trend analysis requires at least 3 years of data")
+                    else:
+                        data_info.append("**Issue:** Data validation or processing error")
+                        data_info.append("**Recommendation:** Try refreshing the data")
+
+                except Exception:
+                    data_info.append("**Issue:** Unable to analyze data structure")
+                    data_info.append("**Recommendation:** Please refresh the data")
+
+                st.info("\n".join(data_info))
+            else:
+                st.info("""
+                **Yearly statistics and trends are not available.**
+
+                **Possible reasons:**
+                - Insufficient data (need at least 1 full year)
+                - Data format issues
+                - Analysis errors
+
+                **Try:**
+                - Refreshing the data with the button above
+                - Selecting a longer date range
+                - Choosing a different dataset
+                """)
+
     # Distribution plot
-    st.markdown("### 📊 Precipitation Distribution")
-    
+    st.markdown("#### 📊 Precipitation Distribution")
+
     fig = go.Figure()
     fig.add_trace(go.Histogram(
         x=precip_values[precip_values > 0],  # Only wet days
@@ -552,15 +893,15 @@ def _render_statistical_analysis():
         name='Precipitation Distribution',
         marker_color='skyblue'
     ))
-    
+
     fig.update_layout(
         title="Distribution of Daily Precipitation (Wet Days Only)",
         xaxis_title="Precipitation (mm)",
         yaxis_title="Frequency",
         height=400
     )
-    
-    st.plotly_chart(fig, use_container_width=True)
+
+    st.plotly_chart(fig, width='stretch')
 
 
 def _render_return_period_analysis():
@@ -620,7 +961,7 @@ def _render_return_period_analysis():
                 'Probability (%)': [f"{100/rp:.2f}" for rp in return_periods]
             })
 
-            st.dataframe(return_df, use_container_width=True, hide_index=True)
+            st.dataframe(return_df, width='stretch', hide_index=True)
 
             # Analyze data for outlier detection and plot preparation
             all_values = []
@@ -703,7 +1044,7 @@ def _render_return_period_analysis():
                 showlegend=True
             )
 
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
             # Show filtering info if distributions were removed
             removed_count = len(return_analysis['distributions']) - len(valid_distributions)
@@ -726,7 +1067,7 @@ def _render_return_period_analysis():
 
             if fit_data:
                 fit_df = pd.DataFrame(fit_data)
-                st.dataframe(fit_df, use_container_width=True, hide_index=True)
+                st.dataframe(fit_df, width='stretch', hide_index=True)
 
     except Exception as e:
         st.error(f"❌ Error in return period analysis: {str(e)}")
@@ -962,46 +1303,100 @@ def _render_hydrology_downloads():
             st.caption(f"Contains {len(precipitation_data)} days of precipitation data")
 
     with col2:
-        st.markdown("#### 📊 Statistical Analysis")
+        st.markdown("#### 📊 Yearly Statistics & Trends")
 
         try:
-            # Create statistical summary
-            stats_data = {
-                'Metric': [
-                    'Mean Precipitation (mm/day)',
-                    'Median Precipitation (mm/day)',
-                    'Maximum Precipitation (mm)',
-                    'Standard Deviation (mm)',
-                    'Total Precipitation (mm)',
-                    'Wet Days Count',
-                    'Dry Days Count',
-                    'Number of Records'
-                ],
-                'Value': [
-                    round(precipitation_data['precipitation'].mean(), 2),
-                    round(precipitation_data['precipitation'].median(), 2),
-                    round(precipitation_data['precipitation'].max(), 2),
-                    round(precipitation_data['precipitation'].std(), 2),
-                    round(precipitation_data['precipitation'].sum(), 2),
-                    len(precipitation_data[precipitation_data['precipitation'] > 0]),
-                    len(precipitation_data[precipitation_data['precipitation'] == 0]),
-                    len(precipitation_data)
-                ]
-            }
+            # Get yearly statistics with trends
+            try:
+                yearly_stats = analyzer.calculate_yearly_statistics()
+            except AttributeError:
+                # Handle case where analyzer doesn't have the new method
+                try:
+                    from geoclimate_fetcher.hydrology_analysis import HydrologyAnalyzer
+                    import importlib
+                    import geoclimate_fetcher.hydrology_analysis
 
-            stats_df = pd.DataFrame(stats_data)
-            stats_csv = stats_df.to_csv(index=False)
-            stats_filename = f"{dataset_name.replace(' ', '_')}_statistics.csv"
+                    # Reload the module to get the latest version
+                    importlib.reload(geoclimate_fetcher.hydrology_analysis)
 
-            st.download_button(
-                label=f"📥 Download Statistics CSV ({len(stats_csv)/1024:.1f} KB)",
-                data=stats_csv,
-                file_name=stats_filename,
-                mime="text/csv",
-                help="Download summary statistics of the precipitation data"
-            )
+                    # Create a new analyzer with updated methods
+                    new_analyzer = HydrologyAnalyzer(st.session_state.hydro_geometry)
+                    new_analyzer.precipitation_data = precipitation_data.copy()
 
-            st.caption("Contains basic statistical metrics")
+                    # Verify the method exists before using it
+                    if hasattr(new_analyzer, 'calculate_yearly_statistics'):
+                        st.session_state.hydro_analyzer = new_analyzer
+                        yearly_stats = new_analyzer.calculate_yearly_statistics()
+                    else:
+                        yearly_stats = None
+                except Exception:
+                    yearly_stats = None
+            except Exception as e:
+                st.error(f"Error calculating yearly statistics: {str(e)}")
+                yearly_stats = None
+
+            if yearly_stats and 'yearly_data' in yearly_stats:
+                yearly_df = yearly_stats['yearly_data'].copy()
+
+                # Add trend information
+                trends = yearly_stats['trends']
+                for metric in ['max', 'mean', 'median', 'total']:
+                    if metric in trends:
+                        trend_info = trends[metric]
+                        yearly_df[f'{metric}_trend'] = trend_info['trend']
+                        yearly_df[f'{metric}_slope'] = round(trend_info['slope'], 6)
+
+                yearly_csv = yearly_df.to_csv(index=False)
+                yearly_filename = f"{dataset_name.replace(' ', '_')}_yearly_statistics.csv"
+
+                st.download_button(
+                    label=f"📥 Download Yearly Stats CSV ({len(yearly_csv)/1024:.1f} KB)",
+                    data=yearly_csv,
+                    file_name=yearly_filename,
+                    mime="text/csv",
+                    help="Download yearly max, mean, median with trend analysis"
+                )
+
+                st.caption(f"Contains {len(yearly_df)} years of statistics and trends")
+
+            else:
+                # Fallback to basic stats if yearly calculation fails
+                stats_data = {
+                    'Metric': [
+                        'Mean Precipitation (mm/day)',
+                        'Median Precipitation (mm/day)',
+                        'Maximum Precipitation (mm)',
+                        'Standard Deviation (mm)',
+                        'Total Precipitation (mm)',
+                        'Wet Days Count',
+                        'Dry Days Count',
+                        'Number of Records'
+                    ],
+                    'Value': [
+                        round(precipitation_data['precipitation'].mean(), 2),
+                        round(precipitation_data['precipitation'].median(), 2),
+                        round(precipitation_data['precipitation'].max(), 2),
+                        round(precipitation_data['precipitation'].std(), 2),
+                        round(precipitation_data['precipitation'].sum(), 2),
+                        len(precipitation_data[precipitation_data['precipitation'] > 0]),
+                        len(precipitation_data[precipitation_data['precipitation'] == 0]),
+                        len(precipitation_data)
+                    ]
+                }
+
+                stats_df = pd.DataFrame(stats_data)
+                stats_csv = stats_df.to_csv(index=False)
+                stats_filename = f"{dataset_name.replace(' ', '_')}_statistics.csv"
+
+                st.download_button(
+                    label=f"📥 Download Statistics CSV ({len(stats_csv)/1024:.1f} KB)",
+                    data=stats_csv,
+                    file_name=stats_filename,
+                    mime="text/csv",
+                    help="Download summary statistics of the precipitation data"
+                )
+
+                st.caption("Contains basic statistical metrics")
 
         except Exception as e:
             st.error(f"Error generating statistics: {str(e)}")
