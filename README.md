@@ -9,6 +9,8 @@ A Streamlit web application for downloading and analyzing climate data from Goog
 
 **Status**: Under development. Manuscript submitted for peer review.
 
+🚀 **[Try the Live Platform](https://geeclimate.streamlit.app/)** - Ready to use online!
+
 ![Platform Screenshot](pictures/platform.png)
 
 ## 🎯 What This Platform Does
@@ -46,11 +48,49 @@ This is a web-based interface that provides five integrated tools for climate da
 
 ## 🚀 Quick Start
 
-### Prerequisites
+### Option 1: Use the Live Platform (Recommended)
+
+1. **Visit the hosted application**: [https://geeclimate.streamlit.app/](https://geeclimate.streamlit.app/)
+
+2. **One-time setup** (required for Google Earth Engine access):
+
+   **Prerequisites:**
+   - Google Earth Engine account → [Sign up FREE](https://earthengine.google.com/signup/) *(for study & research)*
+   - Python installed → [python.org](https://python.org) *(if not already installed)*
+
+   **Setup steps (do this ONCE):**
+   - **Install Python** → [python.org](https://python.org) *(if not already installed)*
+   - **Open Terminal/Command Prompt**:
+     - **Windows**: Search "cmd" or "Command Prompt"
+     - **Mac**: Search "Terminal"
+     - **Linux**: Ctrl+Alt+T
+   - **Install Earth Engine API** *(in terminal)*:
+     ```bash
+     pip install earthengine-api
+     ```
+   - **Authenticate with Google** *(in terminal)*:
+     ```bash
+     earthengine authenticate
+     ```
+     - A link will appear in terminal → Click it OR it auto-opens browser
+     - **Select the Google account** you used to register for Google Earth Engine
+     - After successful login, credentials are saved automatically
+
+3. **Upload credentials**: Upload the generated credentials file to the web platform
+   - **Find your credentials file**:
+     - **Windows**: `C:\Users\[USERNAME]\.config\earthengine\credentials`
+     - **Mac/Linux**: `~/.config/earthengine/credentials`
+   - File is named exactly `credentials` (no .json/.txt extension)
+
+4. **Start analyzing**: Access all five analysis tools instantly!
+
+### Option 2: Run Locally
+
+**Prerequisites:**
 - Python 3.8 or higher
 - Google Earth Engine account ([sign up free](https://earthengine.google.com/signup/))
 
-### Installation
+**Installation:**
 
 1. **Clone the repository**
    ```bash
