@@ -39,12 +39,7 @@ import ee
 
 def render_climate_analytics():
     """Render the complete Climate Analytics interface"""
-    
-    # Add home button
-    if st.button("🏠 Back to Home"):
-        st.session_state.app_mode = None
-        st.rerun()
-    
+
     # App title and header
     st.markdown('<h1 class="main-title">🧠 Climate Intelligence Hub</h1>', unsafe_allow_html=True)
     st.markdown("### Calculate climate indices and analyze extreme events")

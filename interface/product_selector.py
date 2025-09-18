@@ -9,12 +9,7 @@ from app_components.product_selector_component import ProductSelectorComponent
 
 def render_product_selector():
     """Render the complete Product Selector interface"""
-    
-    # Add home button
-    if st.button("🏠 Back to Home"):
-        st.session_state.app_mode = None
-        st.rerun()
-    
+
     # App title and header
     st.markdown('<h1 class="main-title">🎯 Optimal Product Selector</h1>', unsafe_allow_html=True)
     st.markdown("### Compare meteostat station data with gridded datasets to find optimal data sources")

@@ -302,6 +302,11 @@ class PostDownloadHandler:
             buttons_to_show.append("data_visualizer")
         if self.show_continue_working_button:
             buttons_to_show.append("continue_working")
+
+        # Add direct tool navigation buttons
+        buttons_to_show.append("data_explorer")
+        buttons_to_show.append("climate_analytics")
+
         if self.show_back_home_button:
             buttons_to_show.append("back_home")
 
@@ -309,7 +314,7 @@ class PostDownloadHandler:
             return False
 
         st.markdown("---")
-        st.markdown("#### 🚀 Visualization Options")
+        st.markdown("#### 🚀 Navigation Options")
 
         # Create columns only for enabled buttons
         num_columns = len(buttons_to_show)
@@ -345,6 +350,32 @@ class PostDownloadHandler:
                     st.session_state.post_download_results = []
                     st.rerun()
             col_index += 1
+
+        # Data Explorer navigation button
+        with columns[col_index]:
+            st.markdown("**🔍 Data Explorer**")
+            st.info("Go directly to GeoData Explorer to download more datasets.")
+
+            if st.button("🔍 Data Explorer", use_container_width=True):
+                st.session_state.app_mode = "data_explorer"
+                # Clear post-download state when navigating to tool
+                st.session_state.post_download_active = False
+                st.session_state.post_download_results = []
+                st.rerun()
+        col_index += 1
+
+        # Climate Analytics navigation button
+        with columns[col_index]:
+            st.markdown("**🧠 Climate Analytics**")
+            st.info("Go directly to Climate Intelligence Hub for climate analysis.")
+
+            if st.button("🧠 Climate Analytics", use_container_width=True):
+                st.session_state.app_mode = "climate_analytics"
+                # Clear post-download state when navigating to tool
+                st.session_state.post_download_active = False
+                st.session_state.post_download_results = []
+                st.rerun()
+        col_index += 1
 
         if self.show_back_home_button:
             with columns[col_index]:

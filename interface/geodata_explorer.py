@@ -37,12 +37,7 @@ from app_components.download_component import DownloadHelper
 
 def render_geodata_explorer():
     """Render the complete GeoData Explorer interface"""
-    
-    # Add home button
-    if st.button("🏠 Back to Home"):
-        st.session_state.app_mode = None
-        st.rerun()
-    
+
     # App title and header
     st.markdown('<h1 class="main-title">🔍 GeoData Explorer</h1>', unsafe_allow_html=True)
     st.markdown("### Download and visualize Earth Engine climate datasets")

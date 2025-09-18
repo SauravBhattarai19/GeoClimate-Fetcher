@@ -166,11 +166,7 @@ class ProductSelectorComponent:
 
     def render(self):
         """Render the main component interface"""
-        # Add home button
-        if st.button("🏠 Back to Home", key="ps_home_button"):
-            st.session_state.app_mode = None
-            st.rerun()
-        
+
         # Show progress indicator
         self._show_progress_indicator()
         

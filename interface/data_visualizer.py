@@ -25,11 +25,6 @@ from app_components.visualization_utils import (
 def render_data_visualizer():
     """Main data visualizer interface"""
 
-    # Add home button
-    if st.button("🏠 Back to Home"):
-        st.session_state.app_mode = None
-        st.rerun()
-
     # Header
     st.markdown('<h1 class="main-title">📊 Universal Data Visualizer</h1>', unsafe_allow_html=True)
 

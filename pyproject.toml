@@ -45,8 +45,8 @@ dependencies = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/Saurav-JSU/GeoClimate-Fetcher"
-"Bug Tracker" = "https://github.com/Saurav-JSU/GeoClimate-Fetcher/issues"
+"Homepage" = "https://github.com/SauravBhattarai19/GeoClimate-Fetcher"
+"Bug Tracker" = "https://github.com/SauravBhattarai19/GeoClimate-Fetcher/issues"
 
 [project.scripts]
 geoclimate-fetcher = "geoclimate_fetcher.cli.fetch:main"

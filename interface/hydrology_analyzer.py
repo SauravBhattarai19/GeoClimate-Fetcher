@@ -30,12 +30,7 @@ from app_components.download_component import DownloadHelper
 
 def render_hydrology_analyzer():
     """Render the complete Hydrology Analyzer interface"""
-    
-    # Add home button
-    if st.button("🏠 Back to Home"):
-        st.session_state.app_mode = None
-        st.rerun()
-    
+
     # App title and header
     st.markdown('<h1 class="main-title">💧 Hydrology Analyzer</h1>', unsafe_allow_html=True)
     st.markdown("### Comprehensive precipitation analysis for hydrology education and research")

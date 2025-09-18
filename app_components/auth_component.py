@@ -166,37 +166,60 @@ class AuthComponent:
                 
             elif auth_method == "Credentials File Upload":
                 st.markdown("### 📁 Upload Earth Engine Credentials")
-                
-                with st.expander("📋 How to Get Your Credentials File", expanded=True):
-                    st.markdown("""
-                    **For users who have already authenticated locally:**
-                    
-                    1. 🖥️ On your local machine, run in terminal:
-                       ```bash
-                       earthengine authenticate
-                       ```
-                    2. 🌐 This will open a browser for Google OAuth authentication
-                    3. ✅ After successful authentication, find your credentials file at:
-                       - **Windows**: `C:\\Users\\[USERNAME]\\.config\\earthengine\\credentials`
-                       - **Mac/Linux**: `~/.config/earthengine/credentials`
-                    4. 📤 Upload that **exact file** (it's named `credentials` with **no file extension**)
-                    
-                    **Important Notes:**
-                    - The file is named just `credentials` (no .json or .txt extension)
-                    - It contains JSON content like: `{"redirect_uri": "...", "refresh_token": "...", "scopes": [...]}`
-                    - Don't rename the file - upload it as-is
-                    
-                    **For new users:**
-                    1. 🏠 Install Earth Engine API locally: `pip install earthengine-api`
-                    2. 🔐 Run `earthengine authenticate` and follow the prompts
-                    3. 📄 Upload the generated `credentials` file (no extension) below
-                    """)
-                
+
+                # Upload button first
                 uploaded_file = st.file_uploader(
                     "Upload Earth Engine Credentials File",
                     type=None,  # Accept any file type since credentials file has no extension
                     help="Upload the file named 'credentials' (no extension) from ~/.config/earthengine/ folder"
                 )
+
+                # Compact instructions in expander
+                with st.expander("📋 How to Get Your Credentials File"):
+                    st.markdown("""
+                    **📋 Prerequisites:**
+                    - **Google Earth Engine Account** → [Sign up FREE](https://earthengine.google.com/signup/) *(for study & research)*
+                    - **Python installed** → [python.org](https://python.org) *(if not already installed)*
+
+                    **🆕 First-Time Setup (Only do this ONCE):**
+                    1. **Create Google Earth Engine Account** → [earthengine.google.com/signup](https://earthengine.google.com/signup/)
+                       - **FREE for academic research and education**
+                       - Use your academic email if available
+
+                    2. **Install Python** → [python.org](https://python.org) *(if not already installed)*
+
+                    3. **Open Terminal/Command Prompt**:
+                       - **Windows**: Search "cmd" or "Command Prompt"
+                       - **Mac**: Search "Terminal"
+                       - **Linux**: Ctrl+Alt+T
+
+                    4. **Install Earth Engine API** *(in terminal)*:
+                       ```bash
+                       pip install earthengine-api
+                       ```
+
+                    5. **Authenticate with Google** *(in terminal)*:
+                       ```bash
+                       earthengine authenticate
+                       ```
+                       - A **link will appear** in terminal → Click it OR it auto-opens browser
+                       - **Select the Google account** you used to register for Google Earth Engine
+                       - After successful login, credentials are saved automatically
+
+                    **🔄 Future Use:**
+                    - Once set up, you can use this app **forever** until you accidentally delete your credentials
+                    - Just upload the same credentials file each time you use this web app
+
+                    **📂 Find Your Credentials File:**
+                    - **Windows**: `C:\\Users\\[USERNAME]\\.config\\earthengine\\credentials`
+                    - **Mac/Linux**: `~/.config/earthengine/credentials`
+
+                    **⚠️ Important Notes:**
+                    - File is named exactly `credentials` (no .json/.txt extension)
+                    - Don't rename or modify - upload as-is
+                    - **Keep this file safe** - if you delete it from Google, you'll need to re-authenticate
+                    - Same credentials work across all Google Earth Engine applications
+                    """)
                 
                 if uploaded_file is not None:
                     try:

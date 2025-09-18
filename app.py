@@ -7,8 +7,8 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
     menu_items={
-        'Get Help': 'https://github.com/sauravbhattarai19/geoclimate-platform',
-        'Report a bug': "https://github.com/sauravbhattarai19/geoclimate-platform/issues",
+        'Get Help': 'https://github.com/SauravBhattarai19/GeoClimate-Fetcher',
+        'Report a bug': "https://github.com/SauravBhattarai19/GeoClimate-Fetcher/issues",
         'About': "# GeoClimate Intelligence Platform\nA comprehensive platform for Earth Engine climate data analysis and intelligence!"
     }
 )
@@ -580,20 +580,17 @@ if not st.session_state.get('auth_complete', False):
     
     # Show dedicated login page
     st.markdown("""
-    <div style="text-align: center; padding: 3rem 2rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-         border-radius: 20px; color: white; margin: 2rem 0; box-shadow: 0 10px 30px rgba(0,0,0,0.1);">
+    <div style="text-align: center; padding: 3rem 2rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+         border-radius: 20px; color: white; margin: 0.5rem 0 0.75rem 0; box-shadow: 0 10px 30px rgba(0,0,0,0.1);">
         <div style="font-size: 3rem; font-weight: bold; margin-bottom: 1rem;">🌍</div>
         <h1 style="margin: 0 0 1rem 0;">GeoClimate Intelligence Platform</h1>
         <p style="font-size: 1.2rem; margin: 0; opacity: 0.9;">Please authenticate to access the platform</p>
     </div>
     """, unsafe_allow_html=True)
-    
-    st.markdown("### 🔐 One-Time Authentication")
-    st.info("Authenticate once to access both the GEE Data Explorer and Climate Intelligence Hub. Your session will be remembered.")
-    
+
     # Use the AuthComponent for authentication
     from app_components.auth_component import AuthComponent
-    
+
     auth_component = AuthComponent()
     if auth_component.render():
         # Authentication completed successfully
@@ -601,7 +598,107 @@ if not st.session_state.get('auth_complete', False):
         st.info("🔄 Loading platform...")
         time.sleep(2)
         st.rerun()
-    
+
+    # Platform info before author section
+    st.markdown("---")
+    st.info("🌍 **Authenticate once to access all platform tools:** GEE Data Explorer, Climate Intelligence Hub, Hydrology Analyzer, Product Selector, and Data Visualizer. Your session will be remembered for seamless analysis workflows.")
+
+    # Author Section on Login Page
+    st.markdown("---")
+    st.markdown('<h3>👨‍💻 About the Developer</h3>', unsafe_allow_html=True)
+
+    # Create two columns for photo and info
+    col_photo, col_info = st.columns([1, 3])
+
+    with col_photo:
+        # Display developer photo
+        try:
+            st.image("pictures/Saurav.png", width=120, caption="Saurav Bhattarai")
+        except:
+            # Fallback if image not found
+            st.markdown("**👨‍💻 Saurav Bhattarai**")
+
+    with col_info:
+        st.markdown("""
+        <div class="developer-info" style="padding-left: 20px;">
+            <h4><strong>Saurav Bhattarai</strong></h4>
+            <p><strong>Civil Engineer & Geospatial Developer</strong></p>
+            <p>Under Supervision of Dr. Rocky Talchabhadel and Dr. Nawaraj Pradhan</p>
+            <p>📧 Email: <a href="mailto:saurav.bhattarai.1999@gmail.com">saurav.bhattarai.1999@gmail.com</a></p>
+            <p>🌐 Website: <a href="https://sauravbhattarai19.github.io/" target="_blank">sauravbhattarai19.github.io</a></p>
+            <p>🔗 <a href="https://github.com/sauravbhattarai19" target="_blank">GitHub</a> |
+               <a href="https://www.linkedin.com/in/saurav-bhattarai-7133a3176/" target="_blank">LinkedIn</a></p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("""
+    <style>
+    .login-acknowledgments {
+        margin-top: 15px;
+        padding: 15px;
+        border-radius: 10px;
+        border: 1px solid rgba(255,255,255,0.2);
+    }
+
+    /* Light mode styles */
+    @media (prefers-color-scheme: light) {
+        .login-acknowledgments {
+            background-color: rgba(255,255,255,0.8);
+            color: #333;
+            border-color: rgba(0,0,0,0.1);
+        }
+
+        .login-acknowledgments a {
+            color: #1f77b4;
+        }
+
+        .login-acknowledgments a:hover {
+            color: #0066cc;
+        }
+    }
+
+    /* Dark mode styles */
+    @media (prefers-color-scheme: dark) {
+        .login-acknowledgments {
+            background-color: rgba(255,255,255,0.1);
+            color: #f0f0f0;
+            border-color: rgba(255,255,255,0.2);
+        }
+
+        .login-acknowledgments a {
+            color: #87ceeb;
+        }
+
+        .login-acknowledgments a:hover {
+            color: #add8e6;
+        }
+    }
+
+    /* Default fallback for systems without preference */
+    .login-acknowledgments {
+        background-color: rgba(248, 249, 250, 0.9);
+        color: #495057;
+    }
+
+    .login-acknowledgments a {
+        color: #007bff;
+        text-decoration: none;
+    }
+
+    .login-acknowledgments a:hover {
+        color: #0056b3;
+        text-decoration: underline;
+    }
+    </style>
+
+    <div class="login-acknowledgments">
+        <h5>🙏 Acknowledgments</h5>
+        <p><small>Built with ❤️ using Google Earth Engine, Streamlit, and Python</small></p>
+        <p><small>Development assistance provided by Claude AI (Anthropic)</small></p>
+        <p><small>📖 <a href="https://github.com/SauravBhattarai19/GeoClimate-Fetcher" target="_blank">Documentation & Source Code</a></small></p>
+    </div>
+    """, unsafe_allow_html=True)
+
     # Stop here until authentication is complete
     st.stop()
 
@@ -610,17 +707,9 @@ if not st.session_state.get('auth_complete', False):
 # =====================
 # If we reach here, user is authenticated
 
-# Show user info and logout option in sidebar or top
-with st.container():
-    col1, col2, col3 = st.columns([6, 2, 2])
-    with col2:
-        if st.session_state.get('project_id'):
-            st.caption(f"🔐 Project: **{st.session_state.project_id}**")
-    with col3:
-        if st.button("🚪 Logout", key="global_logout"):
-            clear_authentication()
-            st.success("👋 Logged out successfully!")
-            st.rerun()
+# Global Navigation Bar - Available across all tools
+from app_components.global_navigation import render_global_navigation
+render_global_navigation(clear_authentication)
 
 # Landing Page (Now only shown to authenticated users)
 if st.session_state.app_mode is None:
