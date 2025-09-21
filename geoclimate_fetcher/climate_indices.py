@@ -237,9 +237,19 @@ class ClimateIndicesCalculator:
         # Calculate percentiles for the entire base period
         percentile_images = {}
 
-        for percentile in percentiles:
-            percentile_image = base_collection.reduce(ee.Reducer.percentile([percentile]))
-            percentile_images[f'p{int(percentile)}'] = percentile_image
+        try:
+            for percentile in percentiles:
+                percentile_image = base_collection.reduce(ee.Reducer.percentile([percentile]))
+                percentile_images[f'p{int(percentile)}'] = percentile_image
+        except Exception as e:
+            error_details = str(e)
+            # Check for common Earth Engine errors
+            if "Collection is empty" in error_details:
+                raise ValueError(f"No data found in base period ({base_start} to {base_end}). The dataset may not cover this time range.")
+            elif "Image.reduce" in error_details:
+                raise ValueError(f"Earth Engine error during percentile calculation for base period ({base_start} to {base_end}). Raw error: {error_details}")
+            else:
+                raise ValueError(f"Failed to calculate percentiles for base period ({base_start} to {base_end}). Raw error: {error_details}")
 
         return percentile_images
 
@@ -350,16 +360,17 @@ class ClimateIndicesCalculator:
     def calculate_TX90p(self, tmax_collection: ee.ImageCollection,
                         start_date: str, end_date: str,
                         base_start: str = "1980-01-01",
-                        base_end: str = "2000-12-31") -> ee.ImageCollection:
+                        base_end: str = "2000-12-31",
+                        percentile: float = 90.0) -> ee.ImageCollection:
         """
-        Calculate annual count of days when Tmax > 90th percentile of base period
+        Calculate annual count of days when Tmax > percentile threshold of base period
 
-        Formula: TX90p = count(TX > TX_90th) annual count in days
+        Formula: TXXXp = count(TX > TX_percentile) annual count in days
         """
-        # Calculate 90th percentile from base period
+        # Calculate specified percentile from base period
         base_collection = tmax_collection.filterDate(base_start, base_end)
-        percentiles = self.calculate_base_period_percentiles(base_collection, [90])
-        percentile_90 = percentiles['p90']
+        percentiles = self.calculate_base_period_percentiles(base_collection, [percentile])
+        percentile_threshold = percentiles[f'p{int(percentile)}']
 
         # Filter to analysis period
         filtered = tmax_collection.filterDate(start_date, end_date)
@@ -373,7 +384,7 @@ class ClimateIndicesCalculator:
             )
 
             # Count exceedances
-            exceedances = yearly.map(lambda img: img.gt(percentile_90))
+            exceedances = yearly.map(lambda img: img.gt(percentile_threshold))
             exceedance_count = exceedances.sum()
 
             return exceedance_count.set({
@@ -589,16 +600,17 @@ class ClimateIndicesCalculator:
     def calculate_TX10p(self, tmax_collection: ee.ImageCollection,
                         start_date: str, end_date: str,
                         base_start: str = "1980-01-01",
-                        base_end: str = "2000-12-31") -> ee.ImageCollection:
+                        base_end: str = "2000-12-31",
+                        percentile: float = 10.0) -> ee.ImageCollection:
         """
-        Calculate annual count of days when Tmax < 10th percentile of base period
+        Calculate annual count of days when Tmax < percentile threshold of base period
 
-        Formula: TX10p = count(TX < TX_10th) annual count in days
+        Formula: TXXXp = count(TX < TX_percentile) annual count in days
         """
-        # Calculate 10th percentile from base period
+        # Calculate specified percentile from base period
         base_collection = tmax_collection.filterDate(base_start, base_end)
-        percentiles = self.calculate_base_period_percentiles(base_collection, [10])
-        percentile_10 = percentiles['p10']
+        percentiles = self.calculate_base_period_percentiles(base_collection, [percentile])
+        percentile_threshold = percentiles[f'p{int(percentile)}']
 
         # Filter to analysis period
         filtered = tmax_collection.filterDate(start_date, end_date)
@@ -612,7 +624,7 @@ class ClimateIndicesCalculator:
             )
 
             # Count exceedances
-            exceedances = yearly.map(lambda img: img.lt(percentile_10))
+            exceedances = yearly.map(lambda img: img.lt(percentile_threshold))
             exceedance_count = exceedances.sum()
 
             return exceedance_count.set({
@@ -634,16 +646,17 @@ class ClimateIndicesCalculator:
     def calculate_TN90p(self, tmin_collection: ee.ImageCollection,
                         start_date: str, end_date: str,
                         base_start: str = "1980-01-01",
-                        base_end: str = "2000-12-31") -> ee.ImageCollection:
+                        base_end: str = "2000-12-31",
+                        percentile: float = 90.0) -> ee.ImageCollection:
         """
-        Calculate annual count of days when Tmin > 90th percentile of base period
+        Calculate annual count of days when Tmin > percentile threshold of base period
 
-        Formula: TN90p = count(TN > TN_90th) annual count in days
+        Formula: TNXXXp = count(TN > TN_percentile) annual count in days
         """
-        # Calculate 90th percentile from base period
+        # Calculate specified percentile from base period
         base_collection = tmin_collection.filterDate(base_start, base_end)
-        percentiles = self.calculate_base_period_percentiles(base_collection, [90])
-        percentile_90 = percentiles['p90']
+        percentiles = self.calculate_base_period_percentiles(base_collection, [percentile])
+        percentile_threshold = percentiles[f'p{int(percentile)}']
 
         # Filter to analysis period
         filtered = tmin_collection.filterDate(start_date, end_date)
@@ -657,7 +670,7 @@ class ClimateIndicesCalculator:
             )
 
             # Count exceedances
-            exceedances = yearly.map(lambda img: img.gt(percentile_90))
+            exceedances = yearly.map(lambda img: img.gt(percentile_threshold))
             exceedance_count = exceedances.sum()
 
             return exceedance_count.set({
@@ -679,16 +692,17 @@ class ClimateIndicesCalculator:
     def calculate_TN10p(self, tmin_collection: ee.ImageCollection,
                         start_date: str, end_date: str,
                         base_start: str = "1980-01-01",
-                        base_end: str = "2000-12-31") -> ee.ImageCollection:
+                        base_end: str = "2000-12-31",
+                        percentile: float = 10.0) -> ee.ImageCollection:
         """
-        Calculate annual count of days when Tmin < 10th percentile of base period
+        Calculate annual count of days when Tmin < percentile threshold of base period
 
-        Formula: TN10p = count(TN < TN_10th) annual count in days
+        Formula: TNXXXp = count(TN < TN_percentile) annual count in days
         """
-        # Calculate 10th percentile from base period
+        # Calculate specified percentile from base period
         base_collection = tmin_collection.filterDate(base_start, base_end)
-        percentiles = self.calculate_base_period_percentiles(base_collection, [10])
-        percentile_10 = percentiles['p10']
+        percentiles = self.calculate_base_period_percentiles(base_collection, [percentile])
+        percentile_threshold = percentiles[f'p{int(percentile)}']
 
         # Filter to analysis period
         filtered = tmin_collection.filterDate(start_date, end_date)
@@ -702,7 +716,7 @@ class ClimateIndicesCalculator:
             )
 
             # Count exceedances
-            exceedances = yearly.map(lambda img: img.lt(percentile_10))
+            exceedances = yearly.map(lambda img: img.lt(percentile_threshold))
             exceedance_count = exceedances.sum()
 
             return exceedance_count.set({
@@ -1326,12 +1340,14 @@ class ClimateIndicesCalculator:
         return trend_stats
     
     def calculate_GSL(self, tmean_collection: ee.ImageCollection,
-                      start_date: str, end_date: str) -> ee.ImageCollection:
+                      start_date: str, end_date: str,
+                      threshold: float = 5.0) -> ee.ImageCollection:
         """
         Calculate Growing Season Length (simplified)
-        Annual count between first span of 6 days with TG > 5°C and first span after July 1 of 6 days with TG < 5°C
-        
-        Note: This is a simplified implementation counting days above 5°C instead of identifying specific spans
+        Annual count between first span of 6 days with TG > threshold°C and first span after July 1 of 6 days with TG < threshold°C
+
+        Note: This is a simplified implementation counting days above threshold°C instead of identifying specific spans
+        Default threshold: 5°C
         """
         # Filter to analysis period
         filtered = tmean_collection.filterDate(start_date, end_date)
@@ -1341,8 +1357,9 @@ class ClimateIndicesCalculator:
                 ee.Filter.calendarRange(year, year, 'year')
             )
             
-            # Count days above 5°C (273.15 + 5 = 278.15K) - simplified approach
-            growing_days = annual.map(lambda img: img.gt(278.15))
+            # Count days above threshold (convert Celsius to Kelvin)
+            threshold_kelvin = threshold + 273.15
+            growing_days = annual.map(lambda img: img.gt(threshold_kelvin))
             growing_day_count = growing_days.sum()
             
             return growing_day_count.set({
@@ -1556,11 +1573,13 @@ class ClimateIndicesCalculator:
         return trend_stats
     
     def calculate_FD(self, tmin_collection: ee.ImageCollection,
-                     start_date: str, end_date: str) -> ee.ImageCollection:
+                     start_date: str, end_date: str,
+                     threshold: float = 0.0) -> ee.ImageCollection:
         """
-        Calculate annual count of frost days (TN < 0°C)
-        
-        Formula: FD = count(TN < 0°C)
+        Calculate annual count of frost days (TN < threshold°C)
+
+        Formula: FD = count(TN < threshold°C)
+        Default threshold: 0°C
         """
         filtered = tmin_collection.filterDate(start_date, end_date)
         
@@ -1569,8 +1588,9 @@ class ClimateIndicesCalculator:
                 ee.Filter.calendarRange(year, year, 'year')
             )
             
-            # Count days below 0°C (273.15K)
-            frost_days = annual.map(lambda img: img.lt(273.15)).sum()
+            # Count days below threshold (convert Celsius to Kelvin)
+            threshold_kelvin = threshold + 273.15
+            frost_days = annual.map(lambda img: img.lt(threshold_kelvin)).sum()
             
             return frost_days.set({
                 'year': year,
@@ -3228,16 +3248,17 @@ class ClimateIndicesCalculator:
     def calculate_R95p(self, precip_collection: ee.ImageCollection,
                        start_date: str, end_date: str,
                        base_start: str = "1980-01-01",
-                       base_end: str = "2000-12-31") -> ee.ImageCollection:
+                       base_end: str = "2000-12-31",
+                       percentile: float = 95.0) -> ee.ImageCollection:
         """
-        Calculate annual total precipitation when daily precipitation > 95th percentile of base period
+        Calculate annual total precipitation when daily precipitation > percentile threshold of base period
 
-        Formula: R95p = sum(precip > precip_95th) annual total in mm
+        Formula: RXXXp = sum(precip > precip_percentile) annual total in mm
         """
-        # Calculate 95th percentile from base period
+        # Calculate specified percentile from base period
         base_collection = precip_collection.filterDate(base_start, base_end)
-        percentiles = self.calculate_base_period_percentiles(base_collection, [95])
-        percentile_95 = percentiles['p95']
+        percentiles = self.calculate_base_period_percentiles(base_collection, [percentile])
+        percentile_threshold = percentiles[f'p{int(percentile)}']
 
         # Filter to analysis period
         filtered = precip_collection.filterDate(start_date, end_date)
@@ -3250,8 +3271,8 @@ class ClimateIndicesCalculator:
                 ee.Filter.calendarRange(year, year, 'year')
             )
 
-            # Sum precipitation above 95th percentile
-            wet_days = yearly.map(lambda img: img.where(img.gt(percentile_95), img, 0))
+            # Sum precipitation above percentile threshold
+            wet_days = yearly.map(lambda img: img.where(img.gt(percentile_threshold), img, 0))
             total_precip = wet_days.sum()
 
             return total_precip.set({
@@ -3273,16 +3294,17 @@ class ClimateIndicesCalculator:
     def calculate_R99p(self, precip_collection: ee.ImageCollection,
                        start_date: str, end_date: str,
                        base_start: str = "1980-01-01",
-                       base_end: str = "2000-12-31") -> ee.ImageCollection:
+                       base_end: str = "2000-12-31",
+                       percentile: float = 99.0) -> ee.ImageCollection:
         """
-        Calculate annual total precipitation when daily precipitation > 99th percentile of base period
+        Calculate annual total precipitation when daily precipitation > percentile threshold of base period
 
-        Formula: R99p = sum(precip > precip_99th) annual total in mm
+        Formula: RXXXp = sum(precip > precip_percentile) annual total in mm
         """
-        # Calculate 99th percentile from base period
+        # Calculate specified percentile from base period
         base_collection = precip_collection.filterDate(base_start, base_end)
-        percentiles = self.calculate_base_period_percentiles(base_collection, [99])
-        percentile_99 = percentiles['p99']
+        percentiles = self.calculate_base_period_percentiles(base_collection, [percentile])
+        percentile_threshold = percentiles[f'p{int(percentile)}']
 
         # Filter to analysis period
         filtered = precip_collection.filterDate(start_date, end_date)
@@ -3295,8 +3317,8 @@ class ClimateIndicesCalculator:
                 ee.Filter.calendarRange(year, year, 'year')
             )
 
-            # Sum precipitation above 99th percentile
-            wet_days = yearly.map(lambda img: img.where(img.gt(percentile_99), img, 0))
+            # Sum precipitation above percentile threshold
+            wet_days = yearly.map(lambda img: img.where(img.gt(percentile_threshold), img, 0))
             total_precip = wet_days.sum()
 
             return total_precip.set({
@@ -3318,16 +3340,17 @@ class ClimateIndicesCalculator:
     def calculate_R75p(self, precip_collection: ee.ImageCollection,
                        start_date: str, end_date: str,
                        base_start: str = "1980-01-01",
-                       base_end: str = "2000-12-31") -> ee.ImageCollection:
+                       base_end: str = "2000-12-31",
+                       percentile: float = 75.0) -> ee.ImageCollection:
         """
-        Calculate annual total precipitation when daily precipitation > 75th percentile of base period
+        Calculate annual total precipitation when daily precipitation > percentile threshold of base period
 
-        Formula: R75p = sum(precip > precip_75th) annual total in mm
+        Formula: RXXXp = sum(precip > precip_percentile) annual total in mm
         """
-        # Calculate 75th percentile from base period
+        # Calculate specified percentile from base period
         base_collection = precip_collection.filterDate(base_start, base_end)
-        percentiles = self.calculate_base_period_percentiles(base_collection, [75])
-        percentile_75 = percentiles['p75']
+        percentiles = self.calculate_base_period_percentiles(base_collection, [percentile])
+        percentile_threshold = percentiles[f'p{int(percentile)}']
 
         # Filter to analysis period
         filtered = precip_collection.filterDate(start_date, end_date)
@@ -3340,8 +3363,8 @@ class ClimateIndicesCalculator:
                 ee.Filter.calendarRange(year, year, 'year')
             )
 
-            # Sum precipitation above 75th percentile
-            wet_days = yearly.map(lambda img: img.where(img.gt(percentile_75), img, 0))
+            # Sum precipitation above percentile threshold
+            wet_days = yearly.map(lambda img: img.where(img.gt(percentile_threshold), img, 0))
             total_precip = wet_days.sum()
 
             return total_precip.set({
@@ -4994,8 +5017,9 @@ class ClimateIndicesCalculator:
                 collection_dict.get('temperature_max'), start_date, end_date, threshold
             )
         elif index_name == 'FD':
+            threshold = kwargs.get('threshold', 0.0)
             return self.calculate_FD(
-                collection_dict.get('temperature_min'), start_date, end_date
+                collection_dict.get('temperature_min'), start_date, end_date, threshold
             )
         elif index_name == 'R10mm':
             return self.calculate_R10mm(
@@ -5063,9 +5087,11 @@ class ClimateIndicesCalculator:
         elif index_name == 'GSL':
             # For GSL, use tmax as mean temperature if tmean not available
             tmean_collection = tmax_collection  # Simplified approach
-            return self.calculate_GSL(tmean_collection, start_date, end_date)
+            threshold = kwargs.get('threshold', 5.0)
+            return self.calculate_GSL(tmean_collection, start_date, end_date, threshold)
         elif index_name == 'FD':
-            return self.calculate_FD(tmin_collection, start_date, end_date)
+            threshold = kwargs.get('threshold', 0.0)
+            return self.calculate_FD(tmin_collection, start_date, end_date, threshold)
         elif index_name == 'DTR':
             return self.calculate_DTR(tmax_collection, tmin_collection, start_date, end_date)
         

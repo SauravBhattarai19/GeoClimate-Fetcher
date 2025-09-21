@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 import base64
 import io
 from typing import Dict, List, Optional, Tuple, Union
+from scipy import stats
 
 
 def create_time_series_plot(df: pd.DataFrame,
@@ -535,3 +536,271 @@ def detect_time_series_patterns(df: pd.DataFrame,
     patterns['outliers_percentage'] = (len(outliers) / len(df)) * 100
 
     return patterns
+
+
+def mann_kendall_test(data: pd.Series) -> Dict:
+    """
+    Perform Mann-Kendall trend test on time series data
+
+    Args:
+        data: Time series data as pandas Series
+
+    Returns:
+        Dictionary with test results
+    """
+    try:
+        # Remove NaN values
+        clean_data = data.dropna()
+
+        if len(clean_data) < 3:
+            return {'error': 'Insufficient data for Mann-Kendall test (need at least 3 points)'}
+
+        n = len(clean_data)
+
+        # Calculate S statistic
+        S = 0
+        for i in range(n-1):
+            for j in range(i+1, n):
+                if clean_data.iloc[j] > clean_data.iloc[i]:
+                    S += 1
+                elif clean_data.iloc[j] < clean_data.iloc[i]:
+                    S -= 1
+
+        # Calculate variance
+        var_S = n * (n - 1) * (2 * n + 5) / 18
+
+        # Calculate Z statistic
+        if S > 0:
+            Z = (S - 1) / np.sqrt(var_S)
+        elif S < 0:
+            Z = (S + 1) / np.sqrt(var_S)
+        else:
+            Z = 0
+
+        # Calculate p-value (two-tailed test)
+        p_value = 2 * (1 - stats.norm.cdf(abs(Z)))
+
+        # Determine trend
+        alpha = 0.05  # significance level
+        if p_value < alpha:
+            if S > 0:
+                trend = 'increasing'
+            else:
+                trend = 'decreasing'
+            significant = True
+        else:
+            trend = 'no significant trend'
+            significant = False
+
+        return {
+            'S': S,
+            'Z': Z,
+            'p_value': p_value,
+            'trend': trend,
+            'significant': significant,
+            'alpha': alpha,
+            'n': n
+        }
+
+    except Exception as e:
+        return {'error': f'Error in Mann-Kendall test: {str(e)}'}
+
+
+def sens_slope(data: pd.Series) -> Dict:
+    """
+    Calculate Sen's slope for trend magnitude estimation
+
+    Args:
+        data: Time series data as pandas Series
+
+    Returns:
+        Dictionary with slope results
+    """
+    try:
+        # Remove NaN values
+        clean_data = data.dropna()
+
+        if len(clean_data) < 2:
+            return {'error': 'Insufficient data for Sen\'s slope (need at least 2 points)'}
+
+        n = len(clean_data)
+        slopes = []
+
+        # Calculate all possible slopes
+        for i in range(n-1):
+            for j in range(i+1, n):
+                if j != i:  # Avoid division by zero
+                    slope = (clean_data.iloc[j] - clean_data.iloc[i]) / (j - i)
+                    slopes.append(slope)
+
+        if not slopes:
+            return {'error': 'Could not calculate slopes'}
+
+        # Sen's slope is the median of all slopes
+        sens_slope_value = np.median(slopes)
+
+        # Calculate confidence interval (simplified)
+        slopes_sorted = np.sort(slopes)
+        n_slopes = len(slopes)
+
+        # 95% confidence interval indices (simplified)
+        if n_slopes >= 3:
+            ci_low_idx = max(0, int(0.025 * n_slopes))
+            ci_high_idx = min(n_slopes - 1, int(0.975 * n_slopes))
+            ci_low = slopes_sorted[ci_low_idx]
+            ci_high = slopes_sorted[ci_high_idx]
+        else:
+            ci_low, ci_high = sens_slope_value, sens_slope_value
+
+        return {
+            'slope': sens_slope_value,
+            'ci_low': ci_low,
+            'ci_high': ci_high,
+            'n_slopes': n_slopes,
+            'slope_unit': 'units per time step'
+        }
+
+    except Exception as e:
+        return {'error': f'Error in Sen\'s slope calculation: {str(e)}'}
+
+
+def detect_spatial_columns(df: pd.DataFrame) -> Dict[str, List[str]]:
+    """
+    Detect spatial coordinate columns in DataFrame
+
+    Args:
+        df: Input DataFrame
+
+    Returns:
+        Dictionary with detected spatial columns
+    """
+    spatial_cols = {
+        'latitude': [],
+        'longitude': [],
+        'coordinate_pairs': []
+    }
+
+    # Common latitude column names
+    lat_patterns = ['lat', 'latitude', 'y', 'north', 'northing']
+    # Common longitude column names
+    lon_patterns = ['lon', 'lng', 'long', 'longitude', 'x', 'east', 'easting']
+
+    for col in df.columns:
+        col_lower = col.lower()
+
+        # Check for latitude
+        if any(pattern in col_lower for pattern in lat_patterns):
+            # Verify values are in reasonable latitude range
+            if df[col].dtype in ['float64', 'int64']:
+                if df[col].min() >= -90 and df[col].max() <= 90:
+                    spatial_cols['latitude'].append(col)
+
+        # Check for longitude
+        elif any(pattern in col_lower for pattern in lon_patterns):
+            # Verify values are in reasonable longitude range
+            if df[col].dtype in ['float64', 'int64']:
+                if df[col].min() >= -180 and df[col].max() <= 180:
+                    spatial_cols['longitude'].append(col)
+
+    return spatial_cols
+
+
+def create_spatial_scatter_map(df: pd.DataFrame,
+                              lat_col: str,
+                              lon_col: str,
+                              value_col: str = None,
+                              title: str = "Spatial Data") -> folium.Map:
+    """
+    Create spatial scatter plot map from CSV data
+
+    Args:
+        df: DataFrame with spatial data
+        lat_col: Latitude column name
+        lon_col: Longitude column name
+        value_col: Optional value column for color coding
+        title: Map title
+
+    Returns:
+        Folium map object
+    """
+    try:
+        # Remove rows with NaN coordinates
+        clean_df = df.dropna(subset=[lat_col, lon_col])
+
+        if len(clean_df) == 0:
+            st.warning("No valid coordinate pairs found")
+            return folium.Map(location=[40, -100], zoom_start=4)
+
+        # Calculate map center
+        center_lat = clean_df[lat_col].mean()
+        center_lon = clean_df[lon_col].mean()
+
+        # Create base map
+        m = folium.Map(
+            location=[center_lat, center_lon],
+            zoom_start=6,
+            tiles='OpenStreetMap'
+        )
+
+        # Determine color scheme
+        if value_col and value_col in clean_df.columns:
+            # Color code by values
+            values = clean_df[value_col]
+            min_val, max_val = values.min(), values.max()
+
+            # Create colormap
+            from branca.colormap import LinearColormap
+            colormap = LinearColormap(
+                colors=['blue', 'green', 'yellow', 'red'],
+                vmin=min_val,
+                vmax=max_val,
+                caption=f'{value_col} Values'
+            )
+            colormap.add_to(m)
+
+            # Add colored markers
+            for idx, row in clean_df.iterrows():
+                if pd.notna(row[value_col]):
+                    color = colormap(row[value_col])
+                    folium.CircleMarker(
+                        location=[row[lat_col], row[lon_col]],
+                        radius=6,
+                        popup=f"{lat_col}: {row[lat_col]:.4f}<br>{lon_col}: {row[lon_col]:.4f}<br>{value_col}: {row[value_col]:.3f}",
+                        color='black',
+                        fillColor=color,
+                        fillOpacity=0.7,
+                        weight=1
+                    ).add_to(m)
+        else:
+            # Simple markers without color coding
+            for idx, row in clean_df.iterrows():
+                folium.CircleMarker(
+                    location=[row[lat_col], row[lon_col]],
+                    radius=5,
+                    popup=f"{lat_col}: {row[lat_col]:.4f}<br>{lon_col}: {row[lon_col]:.4f}",
+                    color='blue',
+                    fillColor='lightblue',
+                    fillOpacity=0.7,
+                    weight=2
+                ).add_to(m)
+
+        # Add info box
+        info_html = f'''
+        <div style="position: fixed;
+                    top: 10px; right: 10px; width: 200px; height: 80px;
+                    background-color: rgba(255,255,255,0.95); border:2px solid #333; z-index:9999;
+                    font-size:12px; padding: 8px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.2);">
+            <b style="color: #333; font-size: 13px;">{title}</b><br>
+            <div style="margin-top: 3px; color: #666;">
+                <strong>Points:</strong> {len(clean_df)}<br>
+                <strong>Lat Range:</strong> {clean_df[lat_col].min():.2f} to {clean_df[lat_col].max():.2f}<br>
+                <strong>Lon Range:</strong> {clean_df[lon_col].min():.2f} to {clean_df[lon_col].max():.2f}
+            </div>
+        </div>'''
+        m.get_root().html.add_child(folium.Element(info_html))
+
+        return m
+
+    except Exception as e:
+        st.error(f"Error creating spatial map: {str(e)}")
+        return folium.Map(location=[40, -100], zoom_start=4)

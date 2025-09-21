@@ -78,24 +78,46 @@ class ImageCollectionFetcher:
             
         return self
         
-    def get_time_series_average(self) -> pd.DataFrame:
+    def get_time_series_average(self, export_format: str = 'CSV', user_scale: float = 1000, dataset_native_scale: float = None) -> pd.DataFrame:
         """
         Calculate spatial average time series for the AOI.
-        
+
+        Args:
+            export_format: Export format ('CSV' or 'GeoTIFF')
+            user_scale: User-specified scale in meters
+            dataset_native_scale: Dataset's native resolution in meters
+
         Returns:
             DataFrame with dates and band averages
         """
+        # Optimize scale for CSV downloads (area averaging doesn't need high resolution)
+        if export_format.upper() == 'CSV':
+            # For area-averaged CSV, use the coarser of 10km or native resolution
+            if dataset_native_scale and dataset_native_scale > 10000:
+                optimized_scale = dataset_native_scale
+                print(f"CSV export: Using dataset native scale {optimized_scale}m (coarser than 10km, more efficient)")
+            else:
+                optimized_scale = 10000
+                print(f"CSV export: Using 10km scale for maximum performance (native: {dataset_native_scale}m)")
+        else:
+            # For GeoTIFF, honor user's scale choice (spatial detail matters)
+            optimized_scale = user_scale
+            print(f"GeoTIFF export: Using user scale {optimized_scale}m")
+
+        # Simplify geometry if needed for better performance
+        simplified_geometry = self._simplify_geometry_if_needed(self.geometry)
+
         def extract_date_value(image):
             """Extract date and average values from an image."""
             # Get the timestamp
             date = ee.Date(image.get('system:time_start'))
             date_string = date.format('YYYY-MM-dd')
-            
+
             # Get the average value for each band
             means = image.reduceRegion(
                 reducer=ee.Reducer.mean(),
-                geometry=self.geometry,
-                scale=1000,  # Can be adjusted based on data resolution
+                geometry=simplified_geometry,  # Use simplified geometry
+                scale=optimized_scale,  # Use optimized scale
                 maxPixels=2e9
             )
             
@@ -135,16 +157,47 @@ class ImageCollectionFetcher:
             
         return df
     
-    def get_time_series_average_chunked(self, chunk_months=3):
+    def get_time_series_average_chunked(self, chunk_months=3, export_format: str = 'CSV', user_scale: float = 1000, temporal_resolution: str = 'Daily', dataset_native_scale: float = None):
         """
-        Calculate spatial average time series in chunks to handle large datasets.
-        
+        Calculate spatial average time series in chunks with temporal-resolution-aware chunking.
+
         Args:
-            chunk_months: Number of months per chunk
-            
+            chunk_months: Number of months per chunk (will be overridden based on temporal_resolution)
+            export_format: Export format ('CSV' or 'GeoTIFF')
+            user_scale: User-specified scale in meters
+            temporal_resolution: Dataset temporal resolution for smart chunking
+            dataset_native_scale: Dataset's native resolution in meters
+
         Returns:
             DataFrame with dates and band averages for the entire period
         """
+        # Smart chunking based on temporal resolution
+        chunk_strategies = {
+            'Static': None,  # No chunking needed
+            'Multi-year': None,  # No chunking needed
+            'Annual': 60,  # 5 years per chunk
+            'Yearly': 60,  # 5 years per chunk
+            '30-Year Monthly Average': None,  # Static data
+            'Monthly': 36,  # 3 years per chunk
+            '16-Day': 24,  # 2 years per chunk
+            '8-Day': 12,  # 1 year per chunk
+            '6-Day': 12,  # 1 year per chunk
+            '2-Day': 12,  # 1 year per chunk
+            'Daily': 12,  # 1 year per chunk
+            '3-hourly': 6,  # 6 months per chunk
+            'Hourly': 3,  # 3 months per chunk
+            '30-minute': 1  # 1 month per chunk
+        }
+
+        # Determine optimal chunk size
+        optimal_chunk_months = chunk_strategies.get(temporal_resolution, chunk_months)
+
+        if optimal_chunk_months is None:
+            print(f"No chunking needed for {temporal_resolution} data - processing all at once")
+            return self.get_time_series_average(export_format=export_format, user_scale=user_scale, dataset_native_scale=dataset_native_scale)
+
+        print(f"Using {optimal_chunk_months}-month chunks for {temporal_resolution} data (optimized from default {chunk_months})")
+        chunk_months = optimal_chunk_months
         import pandas as pd
         import tempfile
         import os
@@ -297,8 +350,12 @@ class ImageCollectionFetcher:
                 chunk_fetcher.collection = chunk_collection
                 
                 try:
-                    # Get time series for this chunk using the original method
-                    chunk_data = chunk_fetcher.get_time_series_average()
+                    # Get time series for this chunk using the optimized method
+                    chunk_data = chunk_fetcher.get_time_series_average(
+                        export_format=export_format,
+                        user_scale=user_scale,
+                        dataset_native_scale=dataset_native_scale
+                    )
                     
                     if not chunk_data.empty:
                         # Save to temporary file
@@ -336,6 +393,58 @@ class ImageCollectionFetcher:
             import traceback
             traceback.print_exc()
             return pd.DataFrame()
+
+    def _simplify_geometry_if_needed(self, geometry):
+        """Simplify geometry if it's too complex for efficient processing"""
+        import ee
+
+        try:
+            # Check if geometry is too complex by getting coordinate count
+            coords_info = geometry.getInfo()
+
+            # Count total coordinates
+            total_coords = 0
+            if coords_info['type'] == 'Polygon':
+                for ring in coords_info['coordinates']:
+                    total_coords += len(ring)
+            elif coords_info['type'] == 'MultiPolygon':
+                for polygon in coords_info['coordinates']:
+                    for ring in polygon:
+                        total_coords += len(ring)
+            else:
+                # For other geometry types, use as-is
+                return geometry
+
+            print(f"Geometry has {total_coords} coordinate points")
+
+            # If too many coordinates, simplify
+            if total_coords > 1000:  # Threshold for simplification
+                print(f"Simplifying complex geometry ({total_coords} points)...")
+
+                # Method 1: Buffer and unbuffer to smooth
+                simplified = geometry.buffer(100).buffer(-100).simplify(500)
+
+                # If still too complex, use convex hull
+                try:
+                    simplified_coords = simplified.getInfo()
+                    simplified_count = len(simplified_coords['coordinates'][0]) if simplified_coords['type'] == 'Polygon' else 0
+
+                    if simplified_count > 500:
+                        print("Using convex hull for maximum simplification...")
+                        simplified = geometry.convexHull()
+
+                except:
+                    print("Using convex hull as fallback...")
+                    simplified = geometry.convexHull()
+
+                return simplified
+            else:
+                return geometry
+
+        except Exception as e:
+            print(f"Warning: Could not analyze geometry complexity ({e}). Using convex hull...")
+            # Fallback to convex hull if geometry analysis fails
+            return geometry.convexHull()
         
     def get_gridded_data(self, scale: float = 1000.0, crs: str = 'EPSG:4326') -> xr.Dataset:
         """

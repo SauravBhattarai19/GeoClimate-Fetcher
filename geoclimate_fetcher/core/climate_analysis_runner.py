@@ -115,9 +115,30 @@ def run_climate_analysis_with_chunking(config: Dict[str, Any]) -> Dict[str, Any]
                 # Calculate the climate index
                 st.info(f"🔄 Computing {index_name} using server-side Earth Engine processing...")
 
+                # Get threshold parameters for this index if available
+                threshold_kwargs = {}
+                if 'threshold_params' in config and index_name in config['threshold_params']:
+                    threshold_kwargs = config['threshold_params'][index_name]
+                    st.info(f"🎛️ Using custom parameters for {index_name}: {threshold_kwargs}")
+
+                # Get percentile parameters for this index if available
+                percentile_kwargs = {}
+                if 'percentile_params' in config and index_name in config['percentile_params']:
+                    percentile_config = config['percentile_params'][index_name]
+                    percentile_kwargs = {
+                        'percentile': percentile_config['percentile'],
+                        'base_start': percentile_config['base_start'],
+                        'base_end': percentile_config['base_end']
+                    }
+                    st.info(f"📊 Using custom percentile config for {index_name}: {percentile_config['percentile']}th percentile, base period {percentile_config['base_start']} to {percentile_config['base_end']}")
+
+                # Combine all parameters
+                all_kwargs = {**threshold_kwargs, **percentile_kwargs}
+
                 index_result = calculator.calculate_simple_index(
                     index_name, collections, start_date, end_date,
-                    temporal_resolution=temporal_resolution
+                    temporal_resolution=temporal_resolution,
+                    **all_kwargs
                 )
 
                 # Extract time series data using optimized extraction
@@ -197,15 +218,54 @@ def run_climate_analysis_with_chunking(config: Dict[str, Any]) -> Dict[str, Any]
                 }
 
             except Exception as index_error:
-                st.error(f"❌ Error calculating {index_name}: {str(index_error)}")
+                error_msg = str(index_error)
+
+                # Provide specific guidance for percentile-based indices
+                if index_name in ['TX90p', 'TX10p', 'TN90p', 'TN10p', 'R95p', 'R99p', 'R75p']:
+                    # Get the actual base period that was used
+                    actual_base_period = "1980-2000"  # default
+                    if 'percentile_params' in config and index_name in config['percentile_params']:
+                        percentile_config = config['percentile_params'][index_name]
+                        start_year = percentile_config['base_start'][:4]
+                        end_year = percentile_config['base_end'][:4]
+                        actual_base_period = f"{start_year}-{end_year}"
+
+                    if "base period" in error_msg.lower():
+                        st.error(f"❌ {index_name}: Base period data issue ({actual_base_period})")
+                        st.info(f"💡 This dataset may not have data covering the required {actual_base_period} base period for percentile calculations.")
+                        detailed_error = f"Percentile-based index requires {actual_base_period} baseline data: {error_msg}"
+                    else:
+                        st.error(f"❌ {index_name}: Percentile calculation failed")
+                        st.error(f"🔍 Full error details: {error_msg}")
+                        detailed_error = f"Percentile calculation error: {error_msg}"
+                else:
+                    st.error(f"❌ Error calculating {index_name}: {error_msg}")
+                    detailed_error = error_msg
+
                 results[index_name] = {
                     'success': False,
-                    'error': str(index_error)
+                    'error': detailed_error
                 }
                 continue
 
         progress_bar.progress(1.0)
-        status_text.text("Analysis completed!")
+
+        # Calculate success statistics
+        total_indices = len(selected_indices)
+        successful_indices = sum(1 for r in results.values() if r['success'])
+        failed_indices = total_indices - successful_indices
+
+        # Provide accurate completion message
+        if failed_indices == 0:
+            status_text.text("✅ Analysis completed successfully!")
+            st.success(f"🎉 All {total_indices} climate indices calculated successfully!")
+        elif successful_indices == 0:
+            status_text.text("❌ Analysis completed with errors!")
+            st.error(f"💥 All {total_indices} climate indices failed to calculate!")
+        else:
+            status_text.text("⚠️ Analysis completed with partial success!")
+            st.warning(f"⚡ {successful_indices}/{total_indices} indices succeeded, {failed_indices} failed.")
+            st.info("💡 Check the error messages above for failed indices. Successful indices can still be downloaded.")
 
         # Generate combined outputs
         combined_results = _generate_combined_outputs(
@@ -215,16 +275,20 @@ def run_climate_analysis_with_chunking(config: Dict[str, Any]) -> Dict[str, Any]
         # Validate result structure for smart download compatibility
         validated_results = _validate_smart_download_structure(results, export_method)
 
+        # Overall success is true if at least one index succeeded
+        overall_success = successful_indices > 0
+
         return {
-            'success': True,
+            'success': overall_success,
             'individual_results': validated_results,
             'time_series_data': all_time_series,
             'time_series_csv': combined_results.get('time_series_csv'),
             'spatial_data_zip': combined_results.get('spatial_data_zip'),
             'analysis_report': combined_results.get('analysis_report'),
             'summary': {
-                'total_indices': len(selected_indices),
-                'successful_indices': sum(1 for r in results.values() if r['success']),
+                'total_indices': total_indices,
+                'successful_indices': successful_indices,
+                'failed_indices': failed_indices,
                 'time_period': f"{start_date} to {end_date}",
                 'dataset': dataset_info['name']
             }

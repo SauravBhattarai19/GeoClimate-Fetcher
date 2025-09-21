@@ -34,9 +34,10 @@ class GEEExporter:
 
     def smart_export_with_fallback(self, image: ee.Image, filename: str,
                                  region: ee.Geometry, scale: float = 30.0,
-                                 export_preference: str = 'auto') -> Dict[str, Any]:
+                                 export_preference: str = 'auto', crs: str = 'EPSG:4326') -> Dict[str, Any]:
         """
         Smart export method with automatic fallback to Google Drive for large files.
+        Enhanced with explicit EPSG:4326 projection and Float32 data type enforcement.
 
         Args:
             image: Earth Engine Image to export
@@ -44,6 +45,7 @@ class GEEExporter:
             region: Region to export
             scale: Pixel resolution in meters
             export_preference: 'auto', 'local', or 'drive'
+            crs: Coordinate reference system (default: EPSG:4326)
 
         Returns:
             Dictionary with export results and metadata
@@ -73,7 +75,7 @@ class GEEExporter:
             # Handle different export preferences
             if export_preference == 'drive':
                 # User explicitly wants Drive
-                drive_result = self._export_to_drive_smart(image, filename, region, scale)
+                drive_result = self._export_to_drive_smart(image, filename, region, scale, crs)
                 result.update(drive_result)
                 result['export_method'] = 'drive'
                 result['reason'] = 'user_preference'
@@ -82,7 +84,7 @@ class GEEExporter:
 
             elif export_preference == 'local':
                 # User explicitly wants local only
-                local_result = self._export_to_local_smart(image, filename, region, scale)
+                local_result = self._export_to_local_smart(image, filename, region, scale, crs)
                 result.update(local_result)
                 result['export_method'] = 'local' if local_result['success'] else 'failed'
                 result['reason'] = 'user_preference'
@@ -95,7 +97,7 @@ class GEEExporter:
 
             else:  # auto - try local first, fallback to Drive
                 # Always try local first
-                local_result = self._export_to_local_smart(image, filename, region, scale)
+                local_result = self._export_to_local_smart(image, filename, region, scale, crs)
 
                 if local_result['success']:
                     # Local worked!
@@ -109,7 +111,7 @@ class GEEExporter:
                     print(f"Local export failed: {local_result.get('message', '')}")
                     print("Falling back to Google Drive export...")
 
-                    drive_result = self._export_to_drive_smart(image, filename, region, scale)
+                    drive_result = self._export_to_drive_smart(image, filename, region, scale, crs)
                     result.update(drive_result)
                     result['export_method'] = 'drive'
                     result['reason'] = 'local_failed'
@@ -138,18 +140,26 @@ class GEEExporter:
             }
 
     def _export_to_local_smart(self, image: ee.Image, filename: str,
-                             region: ee.Geometry, scale: float) -> Dict[str, Any]:
-        """Helper method for local export with unified result format"""
+                             region: ee.Geometry, scale: float, crs: str = 'EPSG:4326') -> Dict[str, Any]:
+        """Helper method for local export with unified result format and enhanced TIFF support"""
         import tempfile
         import os
+
+        print(f"🚀🚀 DEBUG: _export_to_local_smart called with filename: {filename}")
+        print(f"🔍🔍 DEBUG: Image type in smart export: {type(image)}")
 
         try:
             # Create temporary file
             with tempfile.NamedTemporaryFile(delete=False, suffix='.tif') as temp_file:
                 temp_path = temp_file.name
 
-            # Export using existing method
-            result_path = self.export_image_to_local(image, temp_path, region, scale)
+            print(f"📁📁 DEBUG: Created temp file: {temp_path}")
+            print(f"🔄🔄 DEBUG: About to call export_image_to_local...")
+
+            # Export using enhanced method with explicit CRS
+            result_path = self.export_image_to_local(image, temp_path, region, scale, crs)
+
+            print(f"✅✅ DEBUG: export_image_to_local returned: {result_path}")
 
             # Validate that the file was actually created and has content
             if not os.path.exists(result_path):
@@ -163,6 +173,9 @@ class GEEExporter:
             if file_size < 1024:
                 raise Exception(f"Export failed: Output file too small ({file_size} bytes), likely corrupted")
 
+            # Additional TIFF validation using the built-in validator
+            validation_result = self._validate_tiff_export(result_path, crs)
+
             # Read file as bytes for download
             with open(result_path, 'rb') as f:
                 file_data = f.read()
@@ -173,12 +186,17 @@ class GEEExporter:
 
             actual_size_mb = len(file_data) / (1024 * 1024)
 
+            # Include validation info in success message
+            validation_msg = validation_result.get('message', 'No validation performed')
+            success_message = f"Local export completed successfully. {validation_msg}"
+
             return {
                 'success': True,
                 'file_path': result_path,
                 'file_data': file_data,
                 'actual_size_mb': actual_size_mb,
-                'message': f"Local export completed successfully"
+                'message': success_message,
+                'validation': validation_result
             }
 
         except Exception as e:
@@ -196,24 +214,25 @@ class GEEExporter:
                 'file_path': None,
                 'file_data': None,
                 'actual_size_mb': 0,
-                'message': f"Local export failed: {str(e)}",
+                'message': f"Enhanced local export failed: {str(e)}",
                 'error': str(e)
             }
 
     def _export_to_drive_smart(self, image: ee.Image, filename: str,
-                             region: ee.Geometry, scale: float) -> Dict[str, Any]:
-        """Helper method for Drive export with unified result format"""
+                             region: ee.Geometry, scale: float, crs: str = 'EPSG:4326') -> Dict[str, Any]:
+        """Helper method for Drive export with unified result format and enhanced TIFF support"""
         # Create timestamped folder name
         timestamp = datetime.now().strftime('%Y_%m_%d')
         drive_folder = f"{self.drive_folder_prefix}_{timestamp}"
 
-        # Export to Drive (non-blocking)
+        # Export to Drive (non-blocking) with explicit CRS
         task_id = self.export_image_to_drive(
             image=image,
             filename=filename,
             folder=drive_folder,
             region=region,
             scale=scale,
+            crs=crs,  # Pass the coordinate reference system
             wait=False  # Don't wait, return task ID
         )
 
@@ -536,25 +555,164 @@ class GEEExporter:
 
     def _harmonize_band_types(self, image: ee.Image) -> ee.Image:
         """
-        Convert all bands in an image to compatible data types to prevent export errors.
-        
+        Convert all bands in an image to Float32 using the standard GEE approach.
+
         Args:
             image: Earth Engine Image with potentially mixed data types
-            
+
         Returns:
             Image with all bands converted to Float32
         """
         try:
-            # Simple approach: convert entire image to float32
-            # This handles mixed data types (Int16, Byte, etc.) by converting all to Float32
+            # PROVEN WORKING method: toFloat() ensures proper Float32 datatype
+            # This matches the successful notebook approach that produces Float32 TIFFs
             harmonized_image = image.toFloat()
-            
-            print(f"📊 Converted image bands to Float32 to ensure compatibility")
+
+            print(f"✅ Applied toFloat() conversion - PROVEN to produce Float32 TIFFs!")
             return harmonized_image
-            
+
         except Exception as e:
             print(f"Warning: Could not harmonize band types ({str(e)}). Using original image.")
             return image
+
+    def _enforce_float32_for_export(self, image: ee.Image) -> ee.Image:
+        """
+        Apply PROVEN Float32 enforcement for Earth Engine exports.
+        Uses the toFloat() method that successfully produces Float32 TIFFs.
+
+        Args:
+            image: Earth Engine Image to convert
+
+        Returns:
+            Image with Float32 data type
+        """
+        try:
+            # PROVEN WORKING method: toFloat() from successful notebook implementation
+            # This actually produces Float32 TIFFs unlike multiply(1.0)
+            float_image = image.toFloat()
+
+            print(f"✅ Applied toFloat() conversion - PROVEN to work for Float32 TIFFs!")
+            return float_image
+
+        except Exception as e:
+            print(f"Warning: Float32 enforcement failed ({str(e)}). Using original image.")
+            return image
+
+    def _validate_tiff_export(self, file_path: Union[str, Path], expected_crs: str = 'EPSG:4326') -> Dict[str, Any]:
+        """
+        Validate that the exported TIFF file has the correct projection and data type.
+
+        Args:
+            file_path: Path to the TIFF file to validate
+            expected_crs: Expected coordinate reference system
+
+        Returns:
+            Dictionary with validation results
+        """
+        try:
+            import rasterio
+            from rasterio.crs import CRS
+
+            file_path = Path(file_path)
+
+            # Check if file exists and has content
+            if not file_path.exists():
+                return {
+                    'success': False,
+                    'message': f"TIFF file not found: {file_path}"
+                }
+
+            file_size = file_path.stat().st_size
+            if file_size == 0:
+                return {
+                    'success': False,
+                    'message': f"TIFF file is empty: {file_path}"
+                }
+
+            # Open and validate the TIFF file
+            with rasterio.open(file_path) as src:
+                # Check CRS
+                file_crs = src.crs
+                expected_crs_obj = CRS.from_string(expected_crs)
+
+                crs_match = file_crs == expected_crs_obj if file_crs else False
+
+                # Check data type - be specific about Float32
+                dtypes = [src.dtypes[i] for i in range(src.count)]
+                has_float_dtype = any('float' in str(dtype) for dtype in dtypes)
+                has_float32_dtype = any('float32' in str(dtype) for dtype in dtypes)
+                has_int16_dtype = any('int16' in str(dtype) for dtype in dtypes)
+
+                # Check basic properties
+                band_count = src.count
+                width, height = src.width, src.height
+
+                # Build validation message
+                validation_details = []
+                validation_details.append(f"Size: {width}x{height}")
+                validation_details.append(f"Bands: {band_count}")
+                validation_details.append(f"CRS: {file_crs}")
+                validation_details.append(f"Data types: {dtypes}")
+                validation_details.append(f"File size: {file_size / (1024*1024):.2f} MB")
+
+                # Detailed data type analysis
+                dtype_info = []
+                if has_float32_dtype:
+                    dtype_info.append("✅ Float32")
+                if has_int16_dtype:
+                    dtype_info.append("⚠️ Int16 detected")
+                if has_float_dtype and not has_float32_dtype:
+                    dtype_info.append("Float (non-32bit)")
+
+                validation_details.append(f"Type analysis: {', '.join(dtype_info) if dtype_info else 'Unknown'}")
+
+                if crs_match and has_float32_dtype:
+                    return {
+                        'success': True,
+                        'message': f"✅ OPTIMAL: {expected_crs} projection with Float32 data types! " +
+                                 "; ".join(validation_details),
+                        'crs': str(file_crs),
+                        'dtypes': dtypes,
+                        'dimensions': (width, height),
+                        'band_count': band_count,
+                        'file_size_mb': file_size / (1024*1024)
+                    }
+                elif crs_match and has_float_dtype:
+                    return {
+                        'success': True,
+                        'message': f"✅ GOOD: {expected_crs} projection with float data types. " +
+                                 "; ".join(validation_details),
+                        'crs': str(file_crs),
+                        'dtypes': dtypes,
+                        'dimensions': (width, height),
+                        'band_count': band_count,
+                        'file_size_mb': file_size / (1024*1024)
+                    }
+                else:
+                    issues = []
+                    if not crs_match:
+                        issues.append(f"CRS mismatch: expected {expected_crs}, got {file_crs}")
+                    if not has_float_dtype:
+                        issues.append(f"❌ NON-FLOAT data types: {dtypes} (should be Float32 for NDVI/DEM)")
+                    elif has_int16_dtype:
+                        issues.append(f"⚠️ Int16 detected instead of Float32: {dtypes}")
+
+                    return {
+                        'success': False,
+                        'message': f"❌ ISSUES FOUND: {'; '.join(issues)}. " +
+                                 "; ".join(validation_details),
+                        'crs': str(file_crs),
+                        'dtypes': dtypes,
+                        'dimensions': (width, height),
+                        'band_count': band_count,
+                        'file_size_mb': file_size / (1024*1024)
+                    }
+
+        except Exception as e:
+            return {
+                'success': False,
+                'message': f"TIFF validation failed: {str(e)}"
+            }
 
     def export_image_to_drive(self, image: ee.Image, filename: str, 
                             folder: str, region: ee.Geometry, 
@@ -590,9 +748,18 @@ class GEEExporter:
             print(f"⚠️ Warning: Could not harmonize band types: {str(e)}")
             harmonized_image = image
         
+        # Apply additional Float32 enforcement for GEE export
+        try:
+            # Ensure the image is definitively in Float32 before export
+            export_ready_image = self._enforce_float32_for_export(harmonized_image)
+            print("✅ Applied final Float32 enforcement for GEE export")
+        except Exception as e:
+            print(f"⚠️ Warning: Could not apply final Float32 enforcement: {str(e)}")
+            export_ready_image = harmonized_image
+
         # Start the export task
         task = ee.batch.Export.image.toDrive(
-            image=harmonized_image,
+            image=export_ready_image,
             description=safe_description,
             folder=folder,
             fileNamePrefix=filename,
@@ -654,155 +821,222 @@ class GEEExporter:
         else:
             return task.id
             
-    def export_image_to_local(self, image: ee.Image, output_path: Union[str, Path], 
-                        region: ee.Geometry, scale: float = 30.0) -> Path:
+    def export_image_to_local(self, image: ee.Image, output_path: Union[str, Path],
+                        region: ee.Geometry, scale: float = 30.0, crs: str = 'EPSG:4326') -> Path:
         """
-        Export an Earth Engine image directly to local disk using geemap.
-        
+        Export an Earth Engine image directly to local disk using the PROVEN working approach.
+        Uses toFloat() + geemap.ee_export_image() - the same method that produces Float32 TIFFs.
+
         Args:
             image: Earth Engine Image to export
             output_path: Path to save the GeoTIFF file
             region: Region to export
             scale: Pixel resolution in meters
-            
+            crs: Coordinate reference system (default: EPSG:4326)
+
         Returns:
             Path to the saved file
         """
         import geemap
-        
+
         output_path = Path(output_path)
-        
+
         # Ensure directory exists
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Harmonize band data types to prevent export errors
+
+        print(f"🚀 DEBUG: Starting PROVEN Float32 export to {output_path} with {crs} projection...")
+        print(f"🔍 DEBUG: Input image type: {type(image)}")
+
+        # STEP 1: Apply the PROVEN toFloat() conversion (like successful notebook)
         try:
-            harmonized_image = self._harmonize_band_types(image)
-            print("✅ Harmonized band data types for export")
+            # This is the KEY that makes Float32 TIFFs work!
+            float32_image = image.toFloat()
+            print("✅ DEBUG: Applied toFloat() - the PROVEN method for Float32 TIFFs!")
+            print(f"🔍 DEBUG: Float32 image created: {type(float32_image)}")
+
+            # Verify the image has float type
+            try:
+                img_info = float32_image.getInfo()
+                if 'bands' in img_info:
+                    for i, band in enumerate(img_info['bands']):
+                        data_type = band.get('data_type', {})
+                        print(f"🔍 DEBUG: Band {i} data type after toFloat(): {data_type}")
+            except Exception as info_e:
+                print(f"🔍 DEBUG: Could not get image info: {info_e}")
+
         except Exception as e:
-            print(f"⚠️ Warning: Could not harmonize band types: {str(e)}")
-            harmonized_image = image
-        
+            print(f"⚠️ WARNING: toFloat() failed: {str(e)}, using original image")
+            float32_image = image
+
+        # STEP 2: Apply EXACT notebook approach - clip THEN convert to Float32
         try:
-            # Use geemap's export function which is more reliable
-            print(f"Exporting image using geemap to {output_path}...")
-            
-            # First ensure image is clipped to the region
-            clipped_image = harmonized_image.clip(region)
-            
-            # Use geemap to export
+            print("🔄 DEBUG: Clipping image to region first (like notebook)...")
+            clipped_image = float32_image.clip(region)
+
+            print("🔄 DEBUG: Applying toFloat() to clipped image (EXACT notebook approach)...")
+            final_float32_image = clipped_image.toFloat()
+            print("✅ DEBUG: Applied toFloat() to clipped image - EXACT notebook method!")
+
+            # Verify the final image has float type
+            try:
+                img_info = final_float32_image.getInfo()
+                if 'bands' in img_info:
+                    for i, band in enumerate(img_info['bands']):
+                        data_type = band.get('data_type', {})
+                        print(f"🔍 DEBUG: Final Band {i} data type after clip+toFloat(): {data_type}")
+            except Exception as info_e:
+                print(f"🔍 DEBUG: Could not get final image info: {info_e}")
+
+        except Exception as e:
+            print(f"⚠️ WARNING: Clip+toFloat() failed: {str(e)}, using original float32_image")
+            final_float32_image = float32_image
+
+        # STEP 3: Use geemap.ee_export_image() - the PROVEN working method
+        try:
+            print("📁 DEBUG: Exporting with geemap.ee_export_image() - EXACT notebook approach...")
+            print(f"🔍 DEBUG: About to call geemap.ee_export_image with:")
+            print(f"   - filename: {str(output_path)}")
+            print(f"   - scale: {scale}")
+            print(f"   - crs: {crs}")
+            print(f"   - file_per_band: False")
+
             geemap.ee_export_image(
-                clipped_image,
+                final_float32_image,
                 filename=str(output_path),
                 scale=scale,
                 region=region,
-                file_per_band=False
+                file_per_band=False,
+                crs=crs
             )
-            
-            print(f"Export complete: {output_path}")
+
+            print("✅ DEBUG: geemap.ee_export_image() completed successfully")
+
+            # Validate the exported TIFF file
+            validation_result = self._validate_tiff_export(output_path, crs)
+            if validation_result['success']:
+                print(f"✅ PROVEN method export validated: {validation_result['message']}")
+            else:
+                print(f"⚠️ Export validation warning: {validation_result['message']}")
+
+            print(f"✅ PROVEN method export complete: {output_path}")
             return output_path
-            
+
         except Exception as e:
-            print(f"Error exporting image with geemap: {str(e)}")
-            print("\nTrying alternative export method...")
-            
-            try:
-                # Fall back to our original method with some improvements
-                # Check estimated size
-                estimated_size = self.estimate_export_size(image, region, scale)
-                
-                if estimated_size > self.max_chunk_size:
-                    raise ValueError(
-                        f"Estimated export size ({estimated_size/1e6:.1f} MB) exceeds "
-                        f"maximum direct download size ({self.max_chunk_size/1e6:.1f} MB). "
-                        "Use export_to_drive instead."
-                    )
-                    
-                # Get image as numpy arrays using harmonized image
-                arrays = {}
-                band_names = harmonized_image.bandNames().getInfo()
-                
-                if not band_names:
-                    raise ValueError("No bands found in the image. Please check your band selection.")
-                
-                # Get the bounds
-                bounds = region.bounds().getInfo()['coordinates'][0]
-                xs = [p[0] for p in bounds]
-                ys = [p[1] for p in bounds]
-                
-                xmin, xmax = min(xs), max(xs)
-                ymin, ymax = min(ys), max(ys)
-                
-                rect_region = ee.Geometry.Rectangle([xmin, ymin, xmax, ymax])
-                
-                # Download bands using harmonized image
-                with tqdm(total=len(band_names), desc="Downloading bands") as pbar:
-                    for band in band_names:
-                        try:
-                            # Get the data - but don't pass scale parameter to sampleRectangle
-                            pixels = harmonized_image.select(band).sampleRectangle(
-                                region=rect_region,
-                                properties=None,
-                                defaultValue=0
-                            ).getInfo()
-                            
-                            if band in pixels and pixels[band] is not None and len(pixels[band]) > 0:
-                                arrays[band] = np.array(pixels[band])
-                            else:
-                                print(f"Warning: No data returned for band '{band}'")
-                                
-                            pbar.update(1)
-                        except Exception as e:
-                            print(f"Error downloading band {band}: {str(e)}")
-                            pbar.update(1)
-                
-                # Check if we successfully got any data
-                if not arrays:
-                    print("No data was returned from Earth Engine. This could be because:")
-                    print("1. There is no data available for this region in the selected dataset")
-                    print("2. The region might be too large for direct download")
-                    print("3. The Earth Engine API request failed")
-                    print("\nTry one of the following solutions:")
-                    print("- Use 'Export to Google Drive' instead of direct download")
-                    print("- Select a smaller region")
-                    print("- Try a different dataset that covers this region")
-                    raise ValueError("Failed to download any image data")
-                
-                # Create a simple GeoTIFF
-                import rasterio
-                from rasterio.transform import from_bounds
-                
-                # Get dimensions from the first array
-                height, width = next(iter(arrays.values())).shape
-                
-                # Create the geotransform
-                transform = from_bounds(xmin, ymin, xmax, ymax, width, height)
-                
-                # Write the GeoTIFF
-                with rasterio.open(
-                    output_path,
-                    'w',
-                    driver='GTiff',
-                    height=height,
-                    width=width,
-                    count=len(arrays),
-                    dtype=next(iter(arrays.values())).dtype,
-                    crs='+proj=longlat +datum=WGS84 +no_defs',
-                    transform=transform
-                ) as dst:
-                    for i, (band, array) in enumerate(arrays.items(), 1):
-                        dst.write(array, i)
-                        dst.set_band_description(i, band)
-                        
-                print(f"Export complete using fallback method: {output_path}")
-                return output_path
-                
-            except Exception as e2:
-                print(f"Both export methods failed.")
-                print(f"First error: {str(e)}")
-                print(f"Second error: {str(e2)}")
-                print("Please try using Google Drive export instead.")
-                raise ValueError("Failed to export image to local file")
+            print(f"⚠️ Primary geemap method failed: {str(e)}")
+            print("🔄 Falling back to direct download method...")
+
+            # Fallback to direct download
+            return self._export_to_local_with_direct_download(float32_image, output_path, region, scale, crs)
+
+
+    def _export_to_local_with_direct_download(self, image: ee.Image, output_path: Path,
+                                            region: ee.Geometry, scale: float, crs: str) -> Path:
+        """
+        Final fallback using direct download with explicit Float32 preservation.
+        """
+        print("🔄 Using direct download fallback...")
+
+        # Check estimated size
+        estimated_size = self.estimate_export_size(image, region, scale)
+
+        if estimated_size > self.max_chunk_size:
+            raise ValueError(
+                f"Estimated export size ({estimated_size/1e6:.1f} MB) exceeds "
+                f"maximum direct download size ({self.max_chunk_size/1e6:.1f} MB). "
+                "Use export_to_drive instead."
+            )
+
+        # Image is already converted to Float32 in the main method
+        print("✅ Using Float32 image passed from main method")
+        export_ready_image = image
+
+        # Get image as numpy arrays using export-ready image
+        arrays = {}
+        band_names = export_ready_image.bandNames().getInfo()
+
+        if not band_names:
+            raise ValueError("No bands found in the image. Please check your band selection.")
+
+        # Get the bounds
+        bounds = region.bounds().getInfo()['coordinates'][0]
+        xs = [p[0] for p in bounds]
+        ys = [p[1] for p in bounds]
+
+        xmin, xmax = min(xs), max(xs)
+        ymin, ymax = min(ys), max(ys)
+
+        rect_region = ee.Geometry.Rectangle([xmin, ymin, xmax, ymax])
+
+        # Download bands using harmonized image
+        with tqdm(total=len(band_names), desc="Downloading bands") as pbar:
+            for band in band_names:
+                try:
+                    # Get the data - but don't pass scale parameter to sampleRectangle
+                    pixels = export_ready_image.select(band).sampleRectangle(
+                        region=rect_region,
+                        properties=None,
+                        defaultValue=0
+                    ).getInfo()
+
+                    if band in pixels and pixels[band] is not None and len(pixels[band]) > 0:
+                        arrays[band] = np.array(pixels[band])
+                    else:
+                        print(f"Warning: No data returned for band '{band}'")
+
+                    pbar.update(1)
+                except Exception as e:
+                    print(f"Error downloading band {band}: {str(e)}")
+                    pbar.update(1)
+
+        # Check if we successfully got any data
+        if not arrays:
+            print("No data was returned from Earth Engine. This could be because:")
+            print("1. There is no data available for this region in the selected dataset")
+            print("2. The region might be too large for direct download")
+            print("3. The Earth Engine API request failed")
+            print("\nTry one of the following solutions:")
+            print("- Use 'Export to Google Drive' instead of direct download")
+            print("- Select a smaller region")
+            print("- Try a different dataset that covers this region")
+            raise ValueError("Failed to download any image data")
+
+        # Create a simple GeoTIFF
+        import rasterio
+        from rasterio.transform import from_bounds
+
+        # Get dimensions from the first array
+        height, width = next(iter(arrays.values())).shape
+
+        # Create the geotransform
+        transform = from_bounds(xmin, ymin, xmax, ymax, width, height)
+
+        # Write the GeoTIFF with explicit EPSG:4326 and Float32 data type
+        with rasterio.open(
+            output_path,
+            'w',
+            driver='GTiff',
+            height=height,
+            width=width,
+            count=len(arrays),
+            dtype='float32',  # Explicitly set to float32 to preserve decimal values
+            crs=crs,  # Use the specified CRS (default: EPSG:4326)
+            transform=transform
+        ) as dst:
+            for i, (band, array) in enumerate(arrays.items(), 1):
+                # Ensure data is in float32 format before writing
+                array_float32 = array.astype('float32')
+                dst.write(array_float32, i)
+                dst.set_band_description(i, band)
+
+        # Validate the exported TIFF file
+        validation_result = self._validate_tiff_export(output_path, crs)
+        if validation_result['success']:
+            print(f"✅ Direct download export validated: {validation_result['message']}")
+        else:
+            print(f"⚠️ Direct download export validation warning: {validation_result['message']}")
+
+        print(f"✅ Direct download export complete: {output_path}")
+        return output_path
         
     def export_to_cloud_optimized_geotiff(self, image: ee.Image, output_path: Union[str, Path],
                                        region: ee.Geometry, scale: float = 30.0) -> Path:

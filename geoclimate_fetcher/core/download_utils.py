@@ -210,13 +210,103 @@ def _process_single_chunk(collection, bands, geometry, start_date, end_date,
 
 
 def _process_csv_chunks(collection, bands, geometry, date_chunks, scale, temporal_resolution):
-    """Process CSV export using chunking"""
+    """Process CSV export using optimized chunked fetcher"""
+    all_dfs = []
+    chunk_progress = st.empty()
+
+    try:
+        # Get collection EE ID for creating new fetchers
+        ee_id = collection.getInfo()['id'] if hasattr(collection, 'getInfo') else None
+        if not ee_id:
+            # Fallback to slow method if we can't get EE ID
+            return _process_csv_chunks_legacy(collection, bands, geometry, date_chunks, scale, temporal_resolution)
+
+        for chunk_idx, (chunk_start, chunk_end) in enumerate(date_chunks):
+            chunk_progress.info(f"Processing optimized chunk {chunk_idx + 1}/{len(date_chunks)}: {chunk_start} to {chunk_end}")
+
+            try:
+                # Create optimized fetcher for this chunk
+                from geoclimate_fetcher.core.fetchers.collection import ImageCollectionFetcher
+                chunk_fetcher = ImageCollectionFetcher(ee_id, bands, geometry)
+                chunk_fetcher = chunk_fetcher.filter_dates(chunk_start, chunk_end)
+
+                # Use optimized method
+                chunk_df = chunk_fetcher.get_time_series_average(
+                    export_format='CSV',
+                    user_scale=scale,
+                    dataset_native_scale=None  # Will be optimized automatically
+                )
+
+                if chunk_df is not None and not chunk_df.empty:
+                    all_dfs.append(chunk_df)
+                    chunk_progress.info(f"Chunk {chunk_idx + 1}: Retrieved {len(chunk_df)} optimized records")
+                else:
+                    chunk_progress.info(f"Chunk {chunk_idx + 1}: No data found")
+
+            except Exception as chunk_error:
+                st.warning(f"Error in optimized chunk {chunk_idx + 1}: {str(chunk_error)}")
+                # Fallback to legacy method for this chunk
+                chunk_collection = collection.filterDate(chunk_start, chunk_end).filterBounds(geometry)
+                if bands:
+                    chunk_collection = chunk_collection.select(bands)
+                chunk_size = chunk_collection.size().getInfo()
+                if chunk_size > 0:
+                    chunk_rows = _extract_csv_data_from_collection(chunk_collection, geometry, scale, chunk_size)
+                    if chunk_rows:
+                        chunk_df = pd.DataFrame(chunk_rows)
+                        all_dfs.append(chunk_df)
+
+        if all_dfs:
+            # Combine all chunks into single DataFrame
+            combined_df = pd.concat(all_dfs, ignore_index=True)
+
+            # Sort by date column (handle different date column names)
+            date_cols = [col for col in combined_df.columns if 'date' in col.lower()]
+            if date_cols:
+                combined_df = combined_df.sort_values(date_cols[0])
+
+            # Create temporary CSV file
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.csv') as temp_file:
+                csv_path = temp_file.name
+                combined_df.to_csv(csv_path, index=False)
+
+            # Read as bytes
+            with open(csv_path, 'rb') as f:
+                file_data = f.read()
+
+            os.unlink(csv_path)  # Cleanup
+
+            chunk_progress.success(f"✅ Completed! Processed {len(combined_df)} temporal records from {len(date_chunks)} optimized chunks")
+
+            return {
+                'success': True,
+                'file_path': csv_path,
+                'file_data': file_data,
+                'message': f"Time series CSV with {len(combined_df)} temporal records (processed in {len(date_chunks)} optimized chunks)"
+            }
+        else:
+            return {
+                'success': False,
+                'message': "No data could be extracted from any chunks"
+            }
+
+    except Exception as e:
+        # Complete fallback to legacy method
+        st.warning(f"Optimized chunking failed ({str(e)}), falling back to legacy method...")
+        return _process_csv_chunks_legacy(collection, bands, geometry, date_chunks, scale, temporal_resolution)
+    finally:
+        if 'chunk_progress' in locals():
+            chunk_progress.empty()
+
+
+def _process_csv_chunks_legacy(collection, bands, geometry, date_chunks, scale, temporal_resolution):
+    """Legacy CSV chunking method using slow image-by-image processing"""
     all_rows = []
     chunk_progress = st.empty()
 
     try:
         for chunk_idx, (chunk_start, chunk_end) in enumerate(date_chunks):
-            chunk_progress.info(f"Processing chunk {chunk_idx + 1}/{len(date_chunks)}: {chunk_start} to {chunk_end}")
+            chunk_progress.info(f"Processing legacy chunk {chunk_idx + 1}/{len(date_chunks)}: {chunk_start} to {chunk_end}")
 
             # Filter collection for this chunk
             chunk_collection = collection.filterDate(chunk_start, chunk_end).filterBounds(geometry)
@@ -227,7 +317,7 @@ def _process_csv_chunks(collection, bands, geometry, date_chunks, scale, tempora
             chunk_size = chunk_collection.size().getInfo()
 
             if chunk_size > 0:
-                # Process this chunk
+                # Process this chunk using legacy method
                 chunk_rows = _extract_csv_data_from_collection(chunk_collection, geometry, scale, chunk_size)
                 all_rows.extend(chunk_rows)
 
@@ -247,13 +337,13 @@ def _process_csv_chunks(collection, bands, geometry, date_chunks, scale, tempora
 
             os.unlink(csv_path)  # Cleanup
 
-            chunk_progress.success(f"✅ Completed! Processed {len(all_rows)} temporal records from {len(date_chunks)} chunks")
+            chunk_progress.success(f"✅ Completed! Processed {len(all_rows)} temporal records from {len(date_chunks)} legacy chunks")
 
             return {
                 'success': True,
                 'file_path': csv_path,
                 'file_data': file_data,
-                'message': f"Time series CSV with {len(all_rows)} temporal records (processed in {len(date_chunks)} chunks)"
+                'message': f"Time series CSV with {len(all_rows)} temporal records (processed in {len(date_chunks)} legacy chunks)"
             }
         else:
             return {
@@ -264,7 +354,7 @@ def _process_csv_chunks(collection, bands, geometry, date_chunks, scale, tempora
     except Exception as e:
         return {
             'success': False,
-            'message': f"Chunked CSV processing failed: {str(e)}"
+            'message': f"Legacy chunked CSV processing failed: {str(e)}"
         }
     finally:
         if 'chunk_progress' in locals():
@@ -478,13 +568,14 @@ def export_individual_geotiffs_standalone(collection, temp_path, geometry, scale
                 # Clip to geometry
                 clipped_image = image.clip(geometry)
 
-                # Export using geemap
+                # Export using geemap with explicit EPSG:4326 projection
                 geemap.ee_export_image(
                     clipped_image,
                     filename=str(file_path),
                     scale=scale,
                     region=geometry,
-                    file_per_band=False
+                    file_per_band=False,
+                    crs='EPSG:4326'  # Explicitly set coordinate reference system
                 )
 
                 if file_path.exists() and file_path.stat().st_size > 0:

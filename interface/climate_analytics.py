@@ -600,28 +600,17 @@ def _render_precipitation_indices():
 
     st.markdown("### 🌧️ Select Precipitation Indices")
 
-    # Show recommendations prominently
-    if recommended:
-        st.info(f"⭐ **Recommended for {selected_dataset['name']}**: {', '.join(recommended)}")
+    # Note: Recommendations removed per user request - manual selection only
 
-    # Quick selection buttons for common combinations
-    col1, col2, col3 = st.columns(3)
+    # Quick selection buttons
+    col1, col2 = st.columns(2)
     with col1:
-        if st.button("📋 Select All Recommended", use_container_width=True):
-            for idx in recommended:
-                st.session_state[f"idx_{idx}"] = True
-            st.rerun()
-    with col2:
         if st.button("🔄 Clear All", use_container_width=True):
             for idx_key in all_indices.keys():
                 st.session_state[f"idx_{idx_key}"] = False
             st.rerun()
-    with col3:
-        if st.button("⭐ Basic Set", use_container_width=True):
-            basic_indices = ['RX1day', 'CDD', 'PRCPTOT']
-            for idx_key in all_indices.keys():
-                st.session_state[f"idx_{idx_key}"] = idx_key in basic_indices
-            st.rerun()
+    with col2:
+        st.info("💡 Select indices manually below")
 
     st.markdown("---")
 
@@ -646,7 +635,7 @@ def _render_precipitation_indices():
                     help_text = f"{idx_info['description']} ({idx_info['unit']})"
 
                     if st.checkbox(label, key=f"idx_{idx_key}",
-                                 value=is_recommended, help=help_text):
+                                 value=False, help=help_text):
                         selected_indices.append(idx_key)
 
     with tab2:
@@ -662,7 +651,7 @@ def _render_precipitation_indices():
                     help_text = f"{idx_info['description']} ({idx_info['unit']})"
 
                     if st.checkbox(label, key=f"idx_{idx_key}",
-                                 value=is_recommended, help=help_text):
+                                 value=False, help=help_text):
                         selected_indices.append(idx_key)
 
     # Compact summary of selected indices
@@ -689,6 +678,68 @@ def _render_precipitation_indices():
                     idx_info = percentile_indices[idx]
                     st.markdown(f"• {idx_info['name']} ({idx_info['unit']})")
 
+        # Percentile Configuration Section for Precipitation Indices
+        if selected_percentile:
+            st.markdown("---")
+            st.markdown("#### 📊 Percentile Configuration")
+            st.info("💡 Customize percentile thresholds and base period for selected percentile-based indices.")
+
+            # Base period configuration (common for all percentile indices)
+            col1, col2 = st.columns(2)
+            with col1:
+                base_start = st.date_input(
+                    "Base Period Start",
+                    value=datetime(1980, 1, 1).date(),
+                    min_value=datetime(1950, 1, 1).date(),
+                    max_value=datetime(2020, 12, 31).date(),
+                    key="precip_percentile_base_start",
+                    help="Start date for calculating percentile thresholds"
+                )
+            with col2:
+                base_end = st.date_input(
+                    "Base Period End",
+                    value=datetime(2000, 12, 31).date(),
+                    min_value=datetime(1960, 1, 1).date(),
+                    max_value=datetime(2030, 12, 31).date(),
+                    key="precip_percentile_base_end",
+                    help="End date for calculating percentile thresholds"
+                )
+
+            # Store base period in session state
+            st.session_state['climate_precip_base_period'] = {
+                'start': str(base_start),
+                'end': str(base_end)
+            }
+
+            # Individual percentile threshold configuration
+            st.markdown("**Percentile Thresholds:**")
+            cols = st.columns(2)
+            for i, idx_key in enumerate(selected_percentile):
+                idx_info = percentile_indices[idx_key]
+                percentile_config = idx_info.get('percentile_config', {})
+
+                with cols[i % 2]:
+                    percentile_value = st.number_input(
+                        f"{idx_info['name']} Percentile",
+                        min_value=percentile_config.get('min_percentile', 1.0),
+                        max_value=percentile_config.get('max_percentile', 99.0),
+                        value=percentile_config.get('default_percentile', 95.0),
+                        step=0.1,
+                        key=f"percentile_{idx_key}",
+                        help=f"{percentile_config.get('help', 'Percentile threshold')}"
+                    )
+
+                    # Store the percentile value in session state
+                    # Convert dates to YYYY-MM-DD format for Earth Engine compatibility
+                    base_start_str = base_start.strftime('%Y-%m-%d')
+                    base_end_str = base_end.strftime('%Y-%m-%d')
+
+                    st.session_state[f"climate_percentile_{idx_key}"] = {
+                        'percentile': percentile_value,
+                        'base_start': base_start_str,
+                        'base_end': base_end_str
+                    }
+
         # Show details only if user wants them
         if st.checkbox("🔍 Show detailed information", key="show_precip_details"):
             with st.expander("📋 Detailed Index Information", expanded=True):
@@ -700,6 +751,42 @@ def _render_precipitation_indices():
                     if idx_info.get('base_period'):
                         st.markdown(f"• Base period: {idx_info['base_period']}")
                     st.markdown("---")
+
+        # Threshold Configuration Section for Precipitation Indices
+        threshold_indices = {
+            'CDD': {'name': 'Consecutive Dry Days', 'param': 'threshold', 'default': 1.0, 'unit': 'mm', 'help': 'Daily precipitation threshold for defining dry days'},
+            'R20mm': {'name': 'Heavy Rain Days', 'param': 'threshold', 'default': 20.0, 'unit': 'mm', 'help': 'Daily precipitation threshold for heavy rain'},
+            'SDII': {'name': 'Simple Daily Intensity Index', 'param': 'wet_threshold', 'default': 1.0, 'unit': 'mm', 'help': 'Minimum precipitation for wet days'},
+            'PRCPTOT': {'name': 'Total Precipitation', 'param': 'wet_threshold', 'default': 1.0, 'unit': 'mm', 'help': 'Minimum precipitation for wet days'}
+        }
+
+        # Check if any threshold-configurable indices are selected
+        selected_threshold_indices = [idx for idx in selected_indices if idx in threshold_indices]
+
+        if selected_threshold_indices:
+            st.markdown("---")
+            st.markdown("#### ⚙️ Threshold Configuration")
+            st.info("💡 Customize thresholds for selected indices. Default values follow ETCCDI standards.")
+
+            cols = st.columns(2)
+            for i, idx_key in enumerate(selected_threshold_indices):
+                threshold_config = threshold_indices[idx_key]
+                with cols[i % 2]:
+                    threshold_value = st.number_input(
+                        f"{threshold_config['name']} ({threshold_config['unit']})",
+                        min_value=0.0,
+                        max_value=100.0,
+                        value=threshold_config['default'],
+                        step=0.1,
+                        key=f"threshold_{idx_key}",
+                        help=threshold_config['help']
+                    )
+
+                    # Store the threshold value in session state
+                    st.session_state[f"climate_threshold_{idx_key}"] = {
+                        'param': threshold_config['param'],
+                        'value': threshold_value
+                    }
 
         st.success(f"✅ **{len(selected_indices)} precipitation indices selected**")
 
@@ -724,28 +811,17 @@ def _render_temperature_indices():
 
     st.markdown("### 🌡️ Select Temperature Indices")
 
-    # Show recommendations prominently
-    if recommended:
-        st.info(f"⭐ **Recommended for {selected_dataset['name']}**: {', '.join(recommended)}")
+    # Note: Recommendations removed per user request - manual selection only
 
-    # Quick selection buttons for common combinations
-    col1, col2, col3 = st.columns(3)
+    # Quick selection buttons
+    col1, col2 = st.columns(2)
     with col1:
-        if st.button("📋 Select All Recommended", use_container_width=True):
-            for idx in recommended:
-                st.session_state[f"idx_{idx}"] = True
-            st.rerun()
-    with col2:
         if st.button("🔄 Clear All", use_container_width=True):
             for idx_key in all_indices.keys():
                 st.session_state[f"idx_{idx_key}"] = False
             st.rerun()
-    with col3:
-        if st.button("⭐ Basic Set", use_container_width=True):
-            basic_indices = ['TXx', 'TNn', 'DTR']
-            for idx_key in all_indices.keys():
-                st.session_state[f"idx_{idx_key}"] = idx_key in basic_indices
-            st.rerun()
+    with col2:
+        st.info("💡 Select indices manually below")
 
     st.markdown("---")
 
@@ -770,7 +846,7 @@ def _render_temperature_indices():
                     help_text = f"{idx_info['description']} ({idx_info['unit']})"
 
                     if st.checkbox(label, key=f"idx_{idx_key}",
-                                 value=is_recommended, help=help_text):
+                                 value=False, help=help_text):
                         selected_indices.append(idx_key)
 
     with tab2:
@@ -786,7 +862,7 @@ def _render_temperature_indices():
                     help_text = f"{idx_info['description']} ({idx_info['unit']})"
 
                     if st.checkbox(label, key=f"idx_{idx_key}",
-                                 value=is_recommended, help=help_text):
+                                 value=False, help=help_text):
                         selected_indices.append(idx_key)
 
     # Compact summary of selected indices
@@ -813,6 +889,68 @@ def _render_temperature_indices():
                     idx_info = percentile_indices[idx]
                     st.markdown(f"• {idx_info['name']} ({idx_info['unit']})")
 
+        # Percentile Configuration Section for Temperature Indices
+        if selected_percentile:
+            st.markdown("---")
+            st.markdown("#### 📊 Percentile Configuration")
+            st.info("💡 Customize percentile thresholds and base period for selected percentile-based indices.")
+
+            # Base period configuration (common for all percentile indices)
+            col1, col2 = st.columns(2)
+            with col1:
+                base_start = st.date_input(
+                    "Base Period Start",
+                    value=datetime(1980, 1, 1).date(),
+                    min_value=datetime(1950, 1, 1).date(),
+                    max_value=datetime(2020, 12, 31).date(),
+                    key="temp_percentile_base_start",
+                    help="Start date for calculating percentile thresholds"
+                )
+            with col2:
+                base_end = st.date_input(
+                    "Base Period End",
+                    value=datetime(2000, 12, 31).date(),
+                    min_value=datetime(1960, 1, 1).date(),
+                    max_value=datetime(2030, 12, 31).date(),
+                    key="temp_percentile_base_end",
+                    help="End date for calculating percentile thresholds"
+                )
+
+            # Store base period in session state
+            st.session_state['climate_temp_base_period'] = {
+                'start': str(base_start),
+                'end': str(base_end)
+            }
+
+            # Individual percentile threshold configuration
+            st.markdown("**Percentile Thresholds:**")
+            cols = st.columns(2)
+            for i, idx_key in enumerate(selected_percentile):
+                idx_info = percentile_indices[idx_key]
+                percentile_config = idx_info.get('percentile_config', {})
+
+                with cols[i % 2]:
+                    percentile_value = st.number_input(
+                        f"{idx_info['name']} Percentile",
+                        min_value=percentile_config.get('min_percentile', 1.0),
+                        max_value=percentile_config.get('max_percentile', 99.0),
+                        value=percentile_config.get('default_percentile', 90.0),
+                        step=0.1,
+                        key=f"percentile_{idx_key}",
+                        help=f"{percentile_config.get('help', 'Percentile threshold')}"
+                    )
+
+                    # Store the percentile value in session state
+                    # Convert dates to YYYY-MM-DD format for Earth Engine compatibility
+                    base_start_str = base_start.strftime('%Y-%m-%d')
+                    base_end_str = base_end.strftime('%Y-%m-%d')
+
+                    st.session_state[f"climate_percentile_{idx_key}"] = {
+                        'percentile': percentile_value,
+                        'base_start': base_start_str,
+                        'base_end': base_end_str
+                    }
+
         # Show details only if user wants them
         if st.checkbox("🔍 Show detailed information", key="show_temp_details"):
             with st.expander("📋 Detailed Index Information", expanded=True):
@@ -835,6 +973,41 @@ def _render_temperature_indices():
                         if band_names:
                             st.markdown(f"• Required data: {', '.join(band_names)}")
                     st.markdown("---")
+
+        # Threshold Configuration Section for Temperature Indices
+        threshold_indices = {
+            'FD': {'name': 'Frost Days', 'param': 'threshold', 'default': 0.0, 'unit': '°C', 'help': 'Temperature threshold for frost days (days below this temperature)'},
+            'SU': {'name': 'Summer Days', 'param': 'threshold', 'default': 25.0, 'unit': '°C', 'help': 'Temperature threshold for summer days (days above this temperature)'},
+            'GSL': {'name': 'Growing Season Length', 'param': 'threshold', 'default': 5.0, 'unit': '°C', 'help': 'Temperature threshold for growing season (days above this temperature)'}
+        }
+
+        # Check if any threshold-configurable indices are selected
+        selected_threshold_indices = [idx for idx in selected_indices if idx in threshold_indices]
+
+        if selected_threshold_indices:
+            st.markdown("---")
+            st.markdown("#### ⚙️ Threshold Configuration")
+            st.info("💡 Customize thresholds for selected indices. Default values follow ETCCDI standards.")
+
+            cols = st.columns(2)
+            for i, idx_key in enumerate(selected_threshold_indices):
+                threshold_config = threshold_indices[idx_key]
+                with cols[i % 2]:
+                    threshold_value = st.number_input(
+                        f"{threshold_config['name']} ({threshold_config['unit']})",
+                        min_value=-50.0 if idx_key == 'FD' else 0.0,
+                        max_value=50.0,
+                        value=threshold_config['default'],
+                        step=0.1,
+                        key=f"threshold_{idx_key}",
+                        help=threshold_config['help']
+                    )
+
+                    # Store the threshold value in session state
+                    st.session_state[f"climate_threshold_{idx_key}"] = {
+                        'param': threshold_config['param'],
+                        'value': threshold_value
+                    }
 
         st.success(f"✅ **{len(selected_indices)} temperature indices selected**")
 
@@ -1091,6 +1264,36 @@ def _run_climate_analysis():
                 'spatial_scale': st.session_state.get('climate_spatial_scale', 1000),
                 'temporal_resolution': st.session_state.get('climate_temporal_resolution', 'yearly')
             }
+
+            # Add threshold parameters for selected indices
+            threshold_params = {}
+            for idx in st.session_state.climate_selected_indices:
+                threshold_key = f"climate_threshold_{idx}"
+                if threshold_key in st.session_state:
+                    threshold_config = st.session_state[threshold_key]
+                    threshold_params[idx] = {
+                        threshold_config['param']: threshold_config['value']
+                    }
+
+            if threshold_params:
+                config['threshold_params'] = threshold_params
+                st.info(f"🎛️ Using custom thresholds for {len(threshold_params)} indices")
+
+            # Add percentile parameters for selected indices
+            percentile_params = {}
+            for idx in st.session_state.climate_selected_indices:
+                percentile_key = f"climate_percentile_{idx}"
+                if percentile_key in st.session_state:
+                    percentile_config = st.session_state[percentile_key]
+                    percentile_params[idx] = {
+                        'percentile': percentile_config['percentile'],
+                        'base_start': percentile_config['base_start'],
+                        'base_end': percentile_config['base_end']
+                    }
+
+            if percentile_params:
+                config['percentile_params'] = percentile_params
+                st.info(f"📊 Using custom percentiles for {len(percentile_params)} indices")
 
             st.info("🔄 Running server-side climate index calculations...")
             st.info("⏳ This may take a few minutes for large time periods. Using chunked processing to handle Earth Engine limits.")

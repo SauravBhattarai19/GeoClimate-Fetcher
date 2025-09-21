@@ -136,100 +136,172 @@
     },
     "CDD": {
       "name": "Consecutive Dry Days",
-      "description": "Annual maximum number of consecutive days with precipitation < 1mm",
+      "description": "Annual maximum number of consecutive days with precipitation < threshold mm",
       "unit": "days",
       "category": "precipitation",
       "complexity": "simple",
       "required_bands": ["precipitation"],
       "temporal_aggregation": "annual",
-      "etccdi_standard": true
+      "etccdi_standard": true,
+      "threshold_config": {
+        "param": "threshold",
+        "default": 1.0,
+        "unit": "mm",
+        "min_value": 0.1,
+        "max_value": 10.0,
+        "help": "Daily precipitation threshold for defining dry days"
+      }
     },
     "PRCPTOT": {
       "name": "Annual Total Wet-day Precipitation",
-      "description": "Annual total precipitation in wet days (precipitation ≥ 1mm)",
+      "description": "Annual total precipitation in wet days (precipitation ≥ threshold mm)",
       "unit": "mm",
       "category": "precipitation",
       "complexity": "simple",
       "required_bands": ["precipitation"],
       "temporal_aggregation": "annual",
-      "etccdi_standard": true
+      "etccdi_standard": true,
+      "threshold_config": {
+        "param": "wet_threshold",
+        "default": 1.0,
+        "unit": "mm",
+        "min_value": 0.1,
+        "max_value": 10.0,
+        "help": "Minimum precipitation for wet days"
+      }
     },
     "TX90p": {
       "name": "Warm Days",
-      "description": "Annual count of days when Tmax > 90th percentile of 1980-2000 base period",
+      "description": "Annual count of days when Tmax > percentile threshold of base period",
       "unit": "days",
       "category": "temperature",
       "complexity": "percentile",
       "required_bands": ["temperature_max"],
       "base_period": "1980-2000",
       "temporal_aggregation": "annual",
-      "etccdi_standard": true
+      "etccdi_standard": true,
+      "percentile_config": {
+        "default_percentile": 90.0,
+        "min_percentile": 75.0,
+        "max_percentile": 99.0,
+        "default_base_start": "1980-01-01",
+        "default_base_end": "2000-12-31",
+        "help": "Percentile threshold for warm days classification"
+      }
     },
     "TX10p": {
       "name": "Cool Days",
-      "description": "Annual count of days when Tmax < 10th percentile of 1980-2000 base period",
+      "description": "Annual count of days when Tmax < percentile threshold of base period",
       "unit": "days",
       "category": "temperature",
       "complexity": "percentile",
       "required_bands": ["temperature_max"],
       "base_period": "1980-2000",
       "temporal_aggregation": "annual",
-      "etccdi_standard": true
+      "etccdi_standard": true,
+      "percentile_config": {
+        "default_percentile": 10.0,
+        "min_percentile": 1.0,
+        "max_percentile": 25.0,
+        "default_base_start": "1980-01-01",
+        "default_base_end": "2000-12-31",
+        "help": "Percentile threshold for cool days classification"
+      }
     },
     "TN90p": {
       "name": "Warm Nights",
-      "description": "Annual count of days when Tmin > 90th percentile of 1980-2000 base period",
+      "description": "Annual count of days when Tmin > percentile threshold of base period",
       "unit": "days",
       "category": "temperature",
       "complexity": "percentile",
       "required_bands": ["temperature_min"],
       "base_period": "1980-2000",
       "temporal_aggregation": "annual",
-      "etccdi_standard": true
+      "etccdi_standard": true,
+      "percentile_config": {
+        "default_percentile": 90.0,
+        "min_percentile": 75.0,
+        "max_percentile": 99.0,
+        "default_base_start": "1980-01-01",
+        "default_base_end": "2000-12-31",
+        "help": "Percentile threshold for warm nights classification"
+      }
     },
     "TN10p": {
       "name": "Cool Nights",
-      "description": "Annual count of days when Tmin < 10th percentile of 1980-2000 base period",
+      "description": "Annual count of days when Tmin < percentile threshold of base period",
       "unit": "days",
       "category": "temperature",
       "complexity": "percentile",
       "required_bands": ["temperature_min"],
       "base_period": "1980-2000",
       "temporal_aggregation": "annual",
-      "etccdi_standard": true
+      "etccdi_standard": true,
+      "percentile_config": {
+        "default_percentile": 10.0,
+        "min_percentile": 1.0,
+        "max_percentile": 25.0,
+        "default_base_start": "1980-01-01",
+        "default_base_end": "2000-12-31",
+        "help": "Percentile threshold for cool nights classification"
+      }
     },
     "R95p": {
       "name": "Very Wet Days Precipitation",
-      "description": "Annual total precipitation when daily precipitation > 95th percentile of 1980-2000 base period",
+      "description": "Annual total precipitation when daily precipitation > percentile threshold of base period",
       "unit": "mm",
       "category": "precipitation",
       "complexity": "percentile",
       "required_bands": ["precipitation"],
       "base_period": "1980-2000",
       "temporal_aggregation": "annual",
-      "etccdi_standard": true
+      "etccdi_standard": true,
+      "percentile_config": {
+        "default_percentile": 95.0,
+        "min_percentile": 75.0,
+        "max_percentile": 99.9,
+        "default_base_start": "1980-01-01",
+        "default_base_end": "2000-12-31",
+        "help": "Percentile threshold for very wet days classification"
+      }
     },
     "R99p": {
       "name": "Extremely Wet Days Precipitation",
-      "description": "Annual total precipitation when daily precipitation > 99th percentile of 1980-2000 base period",
+      "description": "Annual total precipitation when daily precipitation > percentile threshold of base period",
       "unit": "mm",
       "category": "precipitation",
       "complexity": "percentile",
       "required_bands": ["precipitation"],
       "base_period": "1980-2000",
       "temporal_aggregation": "annual",
-      "etccdi_standard": true
+      "etccdi_standard": true,
+      "percentile_config": {
+        "default_percentile": 99.0,
+        "min_percentile": 90.0,
+        "max_percentile": 99.9,
+        "default_base_start": "1980-01-01",
+        "default_base_end": "2000-12-31",
+        "help": "Percentile threshold for extremely wet days classification"
+      }
     },
     "R75p": {
       "name": "Moderately Wet Days Precipitation",
-      "description": "Annual total precipitation when daily precipitation > 75th percentile of 1980-2000 base period",
+      "description": "Annual total precipitation when daily precipitation > percentile threshold of base period",
       "unit": "mm",
       "category": "precipitation",
       "complexity": "percentile",
       "required_bands": ["precipitation"],
       "base_period": "1980-2000",
       "temporal_aggregation": "annual",
-      "etccdi_standard": true
+      "etccdi_standard": true,
+      "percentile_config": {
+        "default_percentile": 75.0,
+        "min_percentile": 50.0,
+        "max_percentile": 95.0,
+        "default_base_start": "1980-01-01",
+        "default_base_end": "2000-12-31",
+        "help": "Percentile threshold for moderately wet days classification"
+      }
     },
     "TXn": {
       "name": "Coldest Day",
@@ -253,23 +325,39 @@
     },
     "FD": {
       "name": "Frost Days",
-      "description": "Annual count of days when daily minimum temperature < 0°C",
+      "description": "Annual count of days when daily minimum temperature < threshold°C",
       "unit": "days",
       "category": "temperature",
       "complexity": "simple",
       "required_bands": ["temperature_min"],
       "temporal_aggregation": "annual",
-      "etccdi_standard": true
+      "etccdi_standard": true,
+      "threshold_config": {
+        "param": "threshold",
+        "default": 0.0,
+        "unit": "°C",
+        "min_value": -50.0,
+        "max_value": 10.0,
+        "help": "Temperature threshold for frost days (days below this temperature)"
+      }
     },
     "SU": {
       "name": "Summer Days",
-      "description": "Annual count of days when daily maximum temperature > 25°C",
+      "description": "Annual count of days when daily maximum temperature > threshold°C",
       "unit": "days",
       "category": "temperature",
       "complexity": "simple",
       "required_bands": ["temperature_max"],
       "temporal_aggregation": "annual",
-      "etccdi_standard": true
+      "etccdi_standard": true,
+      "threshold_config": {
+        "param": "threshold",
+        "default": 25.0,
+        "unit": "°C",
+        "min_value": 15.0,
+        "max_value": 45.0,
+        "help": "Temperature threshold for summer days (days above this temperature)"
+      }
     },
     "R10mm": {
       "name": "Heavy Rain Days",
@@ -283,23 +371,39 @@
     },
     "R20mm": {
       "name": "Very Heavy Rain Days",
-      "description": "Annual count of days when daily precipitation ≥ 20mm",
+      "description": "Annual count of days when daily precipitation ≥ threshold mm",
       "unit": "days",
       "category": "precipitation",
       "complexity": "simple",
       "required_bands": ["precipitation"],
       "temporal_aggregation": "annual",
-      "etccdi_standard": true
+      "etccdi_standard": true,
+      "threshold_config": {
+        "param": "threshold",
+        "default": 20.0,
+        "unit": "mm",
+        "min_value": 5.0,
+        "max_value": 100.0,
+        "help": "Daily precipitation threshold for heavy rain"
+      }
     },
     "SDII": {
       "name": "Simple Daily Intensity Index",
-      "description": "Annual total precipitation divided by the number of wet days (precipitation ≥ 1mm)",
+      "description": "Annual total precipitation divided by the number of wet days (precipitation ≥ threshold mm)",
       "unit": "mm/day",
       "category": "precipitation",
       "complexity": "simple",
       "required_bands": ["precipitation"],
       "temporal_aggregation": "annual",
-      "etccdi_standard": true
+      "etccdi_standard": true,
+      "threshold_config": {
+        "param": "wet_threshold",
+        "default": 1.0,
+        "unit": "mm",
+        "min_value": 0.1,
+        "max_value": 10.0,
+        "help": "Minimum precipitation for wet days"
+      }
     }
   },
   "metadata": {

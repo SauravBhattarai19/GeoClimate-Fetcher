@@ -196,12 +196,14 @@ class DownloadHelper:
             st.error(f"❌ Error creating multi-file ZIP: {str(e)}")
             return False
 
-    def render_smart_download_options(self, estimated_size_mb: float = None) -> str:
+    def render_smart_download_options(self, estimated_size_mb: float = None,
+                                     export_format: str = None) -> str:
         """
         Render smart download options UI for user preference selection.
 
         Args:
             estimated_size_mb: Not used anymore - size estimation removed
+            export_format: Format being exported ('CSV', 'GeoTIFF', etc.)
 
         Returns:
             Selected export preference: 'auto', 'local', or 'drive'
@@ -230,6 +232,11 @@ class DownloadHelper:
                 'details': 'Cloud processing - handles any size, always works but requires Google Drive access'
             }
         }
+
+        # Update Drive option description for CSV files
+        if export_format == 'CSV':
+            export_options['drive']['description'] = 'Fast CSV upload directly to Drive'
+            export_options['drive']['details'] = 'Optimized for CSV files - instant upload to Google Drive with folder organization'
 
         # Create radio button options
         option_labels = []
@@ -262,14 +269,17 @@ class DownloadHelper:
         if selected_key == 'local':
             st.warning("⚠️ Local-only mode: No fallback if download fails. Consider Auto mode for reliability.")
         elif selected_key == 'drive':
-            st.info("📤 Files will be exported to your Google Drive. You'll receive task monitoring links.")
+            if export_format == 'CSV':
+                st.success("🚀 Fast CSV upload - data will be organized in Google Drive folders!")
+            else:
+                st.info("📤 Files will be exported to your Google Drive. You'll receive task monitoring links.")
 
         return selected_key
 
     def execute_smart_download(self, image, filename: str, region, scale: float,
-                             export_preference: str = 'auto') -> dict:
+                             export_preference: str = 'auto', crs: str = 'EPSG:4326') -> dict:
         """
-        Execute smart download using enhanced GEEExporter.
+        Execute smart download using enhanced GEEExporter with EPSG:4326 and Float32 support.
 
         Args:
             image: Earth Engine Image to export
@@ -277,11 +287,12 @@ class DownloadHelper:
             region: Export region
             scale: Export scale in meters
             export_preference: Export preference from render_smart_download_options()
+            crs: Coordinate reference system (default: EPSG:4326)
 
         Returns:
             Result dictionary from smart export
         """
-        st.markdown("### 🚀 Executing Smart Download")
+        st.markdown("### 🚀 Executing Enhanced Smart Download")
 
         # Initialize exporter if not exists
         if not hasattr(self, 'exporter') or self.exporter is None:
@@ -289,16 +300,17 @@ class DownloadHelper:
 
         # Show progress indicator
         progress_placeholder = st.empty()
-        progress_placeholder.info("🔄 Preparing export...")
+        progress_placeholder.info(f"🔄 Preparing TIFF export with {crs} projection and Float32 data types...")
 
         try:
-            # Execute smart export
+            # Execute enhanced smart export with explicit CRS
             result = self.exporter.smart_export_with_fallback(
                 image=image,
                 filename=filename,
                 region=region,
                 scale=scale,
-                export_preference=export_preference
+                export_preference=export_preference,
+                crs=crs  # Pass the coordinate reference system
             )
 
             # Update progress based on result
@@ -327,22 +339,46 @@ class DownloadHelper:
             }
 
     def _handle_local_result(self, result: dict):
-        """Handle local download result display and file download"""
+        """Handle local download result display and file download with enhanced TIFF info"""
         st.success(f"✅ {result['message']}")
 
-        # Show file info
-        if result.get('actual_size_mb'):
-            st.info(f"📊 File size: {result['actual_size_mb']:.1f} MB")
+        # Show enhanced file info including validation results
+        col1, col2 = st.columns(2)
+
+        with col1:
+            if result.get('actual_size_mb'):
+                st.info(f"📊 **File size:** {result['actual_size_mb']:.1f} MB")
+
+            # Show validation results if available
+            validation = result.get('validation', {})
+            if validation and validation.get('success'):
+                st.success(f"✅ **TIFF Validation:** Passed")
+                if 'crs' in validation:
+                    st.info(f"🗺️ **Projection:** {validation['crs']}")
+                if 'dtypes' in validation:
+                    dtypes_str = ', '.join(str(dt) for dt in validation['dtypes'])
+                    st.info(f"🔢 **Data Types:** {dtypes_str}")
+            elif validation and not validation.get('success'):
+                st.warning(f"⚠️ **TIFF Validation:** {validation.get('message', 'Failed')}")
+
+        with col2:
+            # Show additional validation details
+            if validation and 'dimensions' in validation:
+                dims = validation['dimensions']
+                st.info(f"📐 **Dimensions:** {dims[0]} × {dims[1]} pixels")
+            if validation and 'band_count' in validation:
+                st.info(f"🎚️ **Bands:** {validation['band_count']}")
 
         # Create download button
         if result.get('file_data') and result.get('filename'):
             filename_with_ext = f"{result['filename']}.tif"
             st.download_button(
-                label="💾 Download File",
+                label="💾 Download Enhanced TIFF File",
                 data=result['file_data'],
                 file_name=filename_with_ext,
-                mime='application/octet-stream',
-                type="primary"
+                mime='image/tiff',
+                type="primary",
+                help="Download TIFF file with EPSG:4326 projection and Float32 data types"
             )
 
     def _handle_drive_result(self, result: dict):
@@ -1376,10 +1412,25 @@ class DownloadComponent:
             
             # Download based on format
             if config['file_format'] == 'CSV':
+                # Get dataset metadata for optimization
+                temporal_resolution = config.get('temporal_resolution', 'Daily')
+                native_scale = config.get('dataset_native_scale', None)
+                scale = 10000  # Default 10km, but may be overridden by native scale
+
                 if config['use_chunking']:
-                    df = fetcher.get_time_series_average_chunked(chunk_months=3)
+                    df = fetcher.get_time_series_average_chunked(
+                        chunk_months=3,
+                        export_format='CSV',
+                        user_scale=scale,
+                        temporal_resolution=temporal_resolution,
+                        dataset_native_scale=native_scale
+                    )
                 else:
-                    df = fetcher.get_time_series_average()
+                    df = fetcher.get_time_series_average(
+                        export_format='CSV',
+                        user_scale=scale,
+                        dataset_native_scale=native_scale
+                    )
                 self.exporter.export_time_series_to_csv(df, output_path)
                 
             elif config['file_format'] == 'NetCDF':

@@ -117,7 +117,7 @@ def render_global_navigation(clear_auth_func=None):
                 # Show project info and logout button
                 if st.session_state.get('project_id'):
                     st.caption(f"🔐 {st.session_state.project_id}")
-                if st.button(f"{icon} {label}", key=button_key, use_container_width=True):
+                if st.button(f"{icon} {label}", key=button_key):
                     handle_logout(clear_auth_func)
             else:
                 # Use custom button styling for better visual feedback
@@ -130,7 +130,7 @@ def render_global_navigation(clear_auth_func=None):
                     """, unsafe_allow_html=True)
                 else:
                     # Use Streamlit button for interactivity
-                    if st.button(f"{icon} {label}", key=button_key, use_container_width=True):
+                    if st.button(f"{icon} {label}", key=button_key):
                         handle_navigation_click(mode, label)
 
     st.markdown('</div>', unsafe_allow_html=True)

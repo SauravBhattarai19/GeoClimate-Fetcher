@@ -539,55 +539,178 @@ def _render_download_interface():
                  "• GeoTIFF: Individual raster files with time info (≤5 images) or temporal composite (>5 images)\n"
                  "• NetCDF: Multi-dimensional dataset with proper time axis (requires xarray)"
         )
-        
-        # Scale selection with dataset-specific suggestions
+
+        # Add performance hints based on dataset and format selection
+        if export_format == 'CSV':
+            temporal_resolution = st.session_state.selected_dataset.get('temporal_resolution', 'Daily')
+            days = (st.session_state.end_date - st.session_state.start_date).days
+
+            # Estimate total records for performance prediction
+            if temporal_resolution == '30-minute':
+                estimated_records = days * 48  # 48 records per day
+            elif temporal_resolution == 'Hourly':
+                estimated_records = days * 24
+            elif temporal_resolution == '3-hourly':
+                estimated_records = days * 8
+            elif temporal_resolution == 'Daily':
+                estimated_records = days
+            elif temporal_resolution == '2-Day':
+                estimated_records = days // 2
+            elif temporal_resolution == '6-Day':
+                estimated_records = days // 6
+            elif temporal_resolution == '8-Day':
+                estimated_records = days // 8
+            elif temporal_resolution == '16-Day':
+                estimated_records = days // 16
+            elif temporal_resolution == 'Monthly':
+                estimated_records = days // 30
+            else:
+                estimated_records = days
+
+            # Performance estimates
+            if estimated_records < 1000:
+                performance_hint = "🚀 **Very Fast** (~10-30 seconds)"
+                hint_color = "success"
+            elif estimated_records < 5000:
+                performance_hint = "⚡ **Fast** (~30-90 seconds)"
+                hint_color = "success"
+            elif estimated_records < 20000:
+                performance_hint = "⏱️ **Moderate** (~2-5 minutes)"
+                hint_color = "info"
+            elif estimated_records < 50000:
+                performance_hint = "🐌 **Slow** (~5-15 minutes)"
+                hint_color = "warning"
+            else:
+                performance_hint = "🐌 **Very Slow** (>15 minutes)"
+                hint_color = "warning"
+
+            # Performance hint removed as requested
+
+            # Optimization tips for slow downloads
+            if estimated_records > 20000:
+                st.info("💡 **Optimization Tips**: CSV downloads use 10km scale automatically for maximum performance. Consider shorter date ranges for sub-daily data.")
+
+        # Get dataset pixel size for all formats
         dataset_pixel_size = st.session_state.selected_dataset.get('pixel_size')
 
-        # Create scale options with dataset-specific suggestion
-        base_options = [30, 100, 250, 500, 1000]
+        # Scale selection for both GeoTIFF and CSV formats
+        st.markdown("---")
+        if export_format == 'GeoTIFF':
+            st.markdown("**🎯 Spatial Resolution (GeoTIFF):**")
+        else:  # CSV
+            st.markdown("**🎯 Spatial Resolution (CSV Area Averaging):**")
 
-        # Try to get the native resolution from the dataset
+        # Get native resolution
         native_resolution = None
         if dataset_pixel_size:
             try:
                 native_resolution = int(float(dataset_pixel_size))
-                if native_resolution not in base_options:
-                    # Add native resolution to options and sort
-                    scale_options = sorted(base_options + [native_resolution])
-                else:
-                    scale_options = base_options
             except (ValueError, TypeError):
-                scale_options = base_options
-        else:
-            scale_options = base_options
+                native_resolution = 100  # fallback
 
-        # Determine default index
-        if native_resolution and native_resolution in scale_options:
-            default_index = scale_options.index(native_resolution)
-            help_text = f"Pixel size in meters. Dataset native resolution is {native_resolution}m (recommended)"
-        else:
-            default_index = scale_options.index(100) if 100 in scale_options else 1
-            help_text = "Pixel size in meters. 100m is a good balance between detail and processing speed"
+        # Format-specific guidance
+        if export_format == 'CSV':
+            st.info("💡 **CSV Performance Guide**: Higher scales (coarser resolution) process faster. For area-averaged CSV data, spatial detail has minimal impact unless analyzing very small areas.")
 
-        scale = st.selectbox(
-            "Spatial resolution:",
-            scale_options,
-            index=default_index,
-            help=help_text
+        # Scale input method selection
+        scale_method = st.radio(
+            "Scale selection method:",
+            ["Preset values", "Custom value"],
+            help="Choose preset values for common scales or enter your own custom scale"
         )
 
-        # Show dataset native resolution info
-        if dataset_pixel_size:
-            try:
-                native_res = int(float(dataset_pixel_size))
-                if scale == native_res:
-                    st.success(f"✅ Using native dataset resolution ({native_res}m)")
-                elif scale < native_res:
-                    st.warning(f"⚠️ Selected resolution ({scale}m) is finer than native resolution ({native_res}m). This won't add detail but may increase processing time.")
+        if scale_method == "Preset values":
+            # Create scale options with format-specific defaults
+            if export_format == 'CSV':
+                # CSV options emphasize performance
+                base_options = [1000, 5000, 10000, 25000, 50000]
+                recommended_default = 10000
+            else:
+                # GeoTIFF options emphasize spatial detail
+                base_options = [30, 100, 250, 500, 1000, 5000, 10000]
+                recommended_default = 100
+
+            if native_resolution and native_resolution not in base_options:
+                # Add native resolution to options and sort
+                scale_options = sorted(base_options + [native_resolution])
+            else:
+                scale_options = base_options
+
+            # Determine default index
+            if export_format == 'CSV':
+                # For CSV, default to 10km for performance
+                default_index = scale_options.index(recommended_default) if recommended_default in scale_options else 2
+                help_text = f"10km recommended for CSV (fast processing). Native resolution: {native_resolution}m" if native_resolution else "10km recommended for CSV (fast processing)"
+            else:
+                # For GeoTIFF, prefer native resolution
+                if native_resolution and native_resolution in scale_options:
+                    default_index = scale_options.index(native_resolution)
+                    help_text = f"Dataset native resolution is {native_resolution}m (recommended)"
                 else:
-                    st.info(f"ℹ️ Selected resolution ({scale}m) is coarser than native resolution ({native_res}m). This will reduce file size and processing time.")
-            except (ValueError, TypeError):
-                pass
+                    default_index = scale_options.index(100) if 100 in scale_options else 1
+                    help_text = "100m is a good balance between detail and processing speed"
+
+            scale = st.selectbox(
+                "Spatial resolution:",
+                scale_options,
+                index=default_index,
+                help=help_text,
+                format_func=lambda x: f"{x}m ({'Fast' if x >= 10000 else 'Medium' if x >= 1000 else 'Detailed'})"
+            )
+
+        else:  # Custom value
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                if export_format == 'CSV':
+                    default_custom = 10000
+                    help_text = f"Enter scale in meters. For CSV: Higher values = faster processing. Native resolution: {native_resolution}m" if native_resolution else "Enter scale in meters. For CSV: Higher values = faster processing"
+                else:
+                    default_custom = native_resolution if native_resolution else 100
+                    help_text = f"Enter scale in meters. Native resolution: {native_resolution}m" if native_resolution else "Enter scale in meters. Smaller values = higher detail but slower processing"
+
+                scale = st.number_input(
+                    "Custom scale (meters):",
+                    min_value=10,
+                    max_value=100000,
+                    value=default_custom,
+                    step=10,
+                    help=help_text
+                )
+            with col2:
+                if export_format == 'CSV':
+                    if st.button("🚀 Fast (10km)", help="Set to 10km for fastest CSV processing"):
+                        scale = 10000
+                        st.rerun()
+                else:
+                    if native_resolution:
+                        if st.button("Use Native", help=f"Set to dataset's native resolution ({native_resolution}m)"):
+                            scale = native_resolution
+                            st.rerun()
+
+        # Format-specific performance and accuracy guidance
+        if export_format == 'CSV':
+            if scale >= 10000:
+                st.success(f"🚀 **Fast Processing**: {scale}m scale optimized for CSV area averaging")
+            elif scale >= 1000:
+                st.warning(f"⚡ **Medium Speed**: {scale}m scale - moderate processing time")
+            else:
+                st.error(f"🐌 **Slow Processing**: {scale}m scale may be slow for large time series. Consider 10km+ for CSV area averaging")
+
+            # Additional guidance for small areas
+            st.caption("📍 **Note**: For very small study areas (<1km²), finer resolution may provide more accurate results despite longer processing time.")
+        else:
+            # GeoTIFF specific guidance about native resolution
+            if dataset_pixel_size:
+                try:
+                    native_res = int(float(dataset_pixel_size))
+                    if scale == native_res:
+                        st.success(f"✅ Using native dataset resolution ({native_res}m)")
+                    elif scale < native_res:
+                        st.warning(f"⚠️ Selected resolution ({scale}m) is finer than native resolution ({native_res}m). This won't add detail but may increase processing time.")
+                    else:
+                        st.info(f"ℹ️ Selected resolution ({scale}m) is coarser than native resolution ({native_res}m). This will reduce file size and processing time.")
+                except (ValueError, TypeError):
+                    pass
     
     # Smart Download Interface
     st.markdown("---")
@@ -595,31 +718,42 @@ def _render_download_interface():
     # Initialize download helper
     download_helper = DownloadHelper()
 
-    # Render smart download options (no size estimation needed)
-    export_preference = download_helper.render_smart_download_options()
+    # Render smart download options with format-aware descriptions
+    export_preference = download_helper.render_smart_download_options(
+        export_format=export_format
+    )
 
     # Download button
     col1, col2, col3 = st.columns([1, 2, 1])
 
     with col2:
         if st.button("🚀 Start Smart Download", type="primary", use_container_width=True):
-            # IMMEDIATE FIX: Use reliable methods
-            if export_preference == 'local':
-                st.info("🔄 Using reliable local download method...")
-                _process_download(export_format, scale)
-            elif export_preference == 'auto':
-                # Try the reliable local method first, then fall back to Drive
-                st.info("🤖 Smart Auto: Trying local download first...")
-                try:
-                    success = _process_download(export_format, scale)
-                    if not success:
-                        st.warning("Local download failed. Falling back to Google Drive...")
+            # Route CSV downloads through optimized path
+            if export_format == 'CSV':
+                if export_preference == 'drive':
+                    st.info("📊 Using fast CSV Drive export...")
+                    _process_csv_drive_export(export_format, scale)
+                else:
+                    st.info("📊 Using optimized CSV processing...")
+                    _process_smart_download(export_format, scale, export_preference)
+            else:
+                # For GeoTIFF format, use preference-based routing
+                if export_preference == 'local':
+                    st.info("🔄 Using reliable local download method...")
+                    _process_download(export_format, scale)
+                elif export_preference == 'auto':
+                    # Try the reliable local method first, then fall back to Drive
+                    st.info("🤖 Smart Auto: Trying local download first...")
+                    try:
+                        success = _process_download(export_format, scale)
+                        if not success:
+                            st.warning("Local download failed. Falling back to Google Drive...")
+                            _process_smart_download(export_format, scale, 'drive')
+                    except Exception as e:
+                        st.warning(f"Local download failed: {str(e)}. Falling back to Google Drive...")
                         _process_smart_download(export_format, scale, 'drive')
-                except Exception as e:
-                    st.warning(f"Local download failed: {str(e)}. Falling back to Google Drive...")
-                    _process_smart_download(export_format, scale, 'drive')
-            else:  # drive
-                _process_smart_download(export_format, scale, export_preference)
+                else:  # drive
+                    _process_smart_download(export_format, scale, export_preference)
     
     # Reset button
     if st.button("🔄 Start Over", help="Clear all selections and start from the beginning"):
@@ -1219,10 +1353,26 @@ def _process_image_collection_download(ee_id, bands, geometry, start_date, end_d
 
         # Process based on format
         if export_format == 'CSV':
+            # Get temporal resolution for smart processing
+            temporal_resolution = dataset.get('temporal_resolution', 'Daily')
+
+            # Show processing info
             st.info("📊 Extracting time series data...")
 
-            # Get time series data
-            df = fetcher.get_time_series_average()
+            # Get native scale for optimization
+            native_scale = None
+            if dataset_pixel_size:
+                try:
+                    native_scale = float(dataset_pixel_size)
+                except (ValueError, TypeError):
+                    native_scale = None
+
+            # Get time series data with optimizations
+            df = fetcher.get_time_series_average(
+                export_format='CSV',
+                user_scale=scale,
+                dataset_native_scale=native_scale
+            )
 
             if df is not None and not df.empty:
                 # Create CSV data
@@ -1431,12 +1581,13 @@ def _process_static_image_download(ee_id, bands, geometry, export_format, scale,
                 with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as temp_file:
                     temp_path = temp_file.name
 
-                # Export image to local file
+                # Export image to local file with EPSG:4326 projection
                 result_path = exporter.export_image_to_local(
                     image=fetcher.image,
                     output_path=temp_path,
                     region=geometry,
-                    scale=scale
+                    scale=scale,
+                    crs='EPSG:4326'  # Ensure EPSG:4326 projection for TIFF exports
                 )
 
                 if os.path.exists(result_path):
@@ -1575,11 +1726,6 @@ def _process_smart_download(export_format, scale, export_preference):
         with st.spinner("🌍 Fetching Earth Engine data..."):
             # Handle different dataset types
             if dataset.get('snippet_type') == 'ImageCollection':
-                # For ImageCollections, only GeoTIFF is supported in smart mode for now
-                if export_format != 'GeoTIFF':
-                    st.warning("⚠️ Smart download currently supports GeoTIFF format for ImageCollections. Falling back to standard download.")
-                    return _process_download(export_format, scale)
-
                 # Get ImageCollection
                 fetcher = ImageCollectionFetcher(
                     ee_id=dataset['ee_id'],
@@ -1590,23 +1736,179 @@ def _process_smart_download(export_format, scale, export_preference):
                 # Apply date filtering
                 fetcher = fetcher.filter_dates(start_date, end_date)
 
-                # For ImageCollections, create a median composite for smart download
-                composite_image = fetcher.collection.median()
+                # Handle CSV format with optimized path
+                if export_format == 'CSV':
+                    st.info("📊 Using optimized CSV processing for area-averaged time series...")
 
-                # Generate filename
-                from datetime import datetime
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                dataset_name = dataset.get('name', 'data').replace(' ', '_').replace('/', '_')
-                filename = f"{dataset_name}_composite_{timestamp}"
+                    # Use the optimized get_time_series_average method
+                    try:
+                        # Get dataset native scale for optimization
+                        dataset_native_scale = dataset.get('pixel_size')
+                        if dataset_native_scale:
+                            try:
+                                dataset_native_scale = float(dataset_native_scale)
+                            except (ValueError, TypeError):
+                                dataset_native_scale = None
 
-                # Execute smart download
-                result = download_helper.execute_smart_download(
-                    image=composite_image,
-                    filename=filename,
-                    region=geometry,
-                    scale=scale,
-                    export_preference=export_preference
-                )
+                        # Get optimized time series data with automatic chunking if needed
+                        temporal_resolution = dataset.get('temporal_resolution', 'Daily')
+
+                        # Check if we need chunking based on date range and temporal resolution
+                        days_diff = (end_date - start_date).days + 1
+
+                        # Estimate if collection will exceed 5000 elements
+                        if temporal_resolution == 'Hourly' and days_diff > 200:
+                            # Use chunked method for large hourly collections
+                            df = fetcher.get_time_series_average_chunked(
+                                chunk_months=3,
+                                export_format='CSV',
+                                user_scale=scale,
+                                temporal_resolution=temporal_resolution,
+                                dataset_native_scale=dataset_native_scale
+                            )
+                        elif temporal_resolution == '30-minute' and days_diff > 100:
+                            # Use chunked method for large sub-hourly collections
+                            df = fetcher.get_time_series_average_chunked(
+                                chunk_months=1,
+                                export_format='CSV',
+                                user_scale=scale,
+                                temporal_resolution=temporal_resolution,
+                                dataset_native_scale=dataset_native_scale
+                            )
+                        elif temporal_resolution == 'Daily' and days_diff > 3650:
+                            # Use chunked method for very large daily collections (>10 years)
+                            df = fetcher.get_time_series_average_chunked(
+                                chunk_months=12,
+                                export_format='CSV',
+                                user_scale=scale,
+                                temporal_resolution=temporal_resolution,
+                                dataset_native_scale=dataset_native_scale
+                            )
+                        else:
+                            # Use optimized single-pass method
+                            df = fetcher.get_time_series_average(
+                                export_format='CSV',
+                                user_scale=scale,
+                                dataset_native_scale=dataset_native_scale
+                            )
+
+                        if df is None or df.empty:
+                            st.error("❌ No data returned from optimized processing")
+                            st.warning("⚠️ Falling back to standard download method...")
+                            return _process_download(export_format, scale)
+
+                        # Generate filename
+                        from datetime import datetime
+                        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                        dataset_name = dataset.get('name', 'data').replace(' ', '_').replace('/', '_')
+                        filename = f"{dataset_name}_timeseries_{timestamp}.csv"
+
+                        # Convert DataFrame to CSV
+                        csv_data = df.to_csv(index=False)
+                        file_size_mb = len(csv_data.encode('utf-8')) / (1024 * 1024)
+
+                        # Set up download results
+                        download_results = {
+                            'file_data': csv_data.encode('utf-8'),
+                            'filename': filename,
+                            'mime_type': "text/csv",
+                            'file_size_mb': file_size_mb,
+                            'export_format': 'CSV',
+                            'dataset_name': dataset.get('name', 'Unknown'),
+                            'success_message': f"Optimized CSV download ({file_size_mb:.1f} MB)",
+                            'scale': scale,
+                            'download_timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        }
+
+                        st.session_state.download_complete = True
+                        st.session_state.download_results = download_results
+
+                        st.success(f"✅ CSV data processed successfully! ({file_size_mb:.1f} MB)")
+                        st.info(f"📊 Generated {len(df)} time series records")
+
+                        # Early visualization option for CSV
+                        st.markdown("---")
+                        st.markdown("### 🎯 Quick Actions")
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            if st.button("📊 Visualize Data", type="primary", use_container_width=True):
+                                try:
+                                    _launch_early_visualization(download_results, dataset, export_format, scale)
+                                except Exception as viz_error:
+                                    st.error(f"❌ Visualization error: {str(viz_error)}")
+                        with col2:
+                            st.download_button(
+                                label="💾 Download CSV",
+                                data=csv_data,
+                                file_name=filename,
+                                mime="text/csv",
+                                type="secondary",
+                                use_container_width=True
+                            )
+                        return
+
+                    except Exception as csv_error:
+                        st.error(f"❌ CSV processing failed: {str(csv_error)}")
+                        if "Collection query aborted after accumulating over 5000 elements" in str(csv_error):
+                            st.warning("⚠️ Large collection detected. Trying chunked processing...")
+                            try:
+                                # Force chunked processing for large collections
+                                df = fetcher.get_time_series_average_chunked(
+                                    chunk_months=6,
+                                    export_format='CSV',
+                                    user_scale=scale,
+                                    temporal_resolution=dataset.get('temporal_resolution', 'Daily'),
+                                    dataset_native_scale=dataset_native_scale
+                                )
+                                if df is not None and not df.empty:
+                                    # Process chunked result same as above
+                                    from datetime import datetime
+                                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                                    dataset_name = dataset.get('name', 'data').replace(' ', '_').replace('/', '_')
+                                    filename = f"{dataset_name}_timeseries_{timestamp}.csv"
+                                    csv_data = df.to_csv(index=False)
+                                    file_size_mb = len(csv_data.encode('utf-8')) / (1024 * 1024)
+
+                                    download_results = {
+                                        'file_data': csv_data.encode('utf-8'),
+                                        'filename': filename,
+                                        'mime_type': "text/csv",
+                                        'file_size_mb': file_size_mb,
+                                        'export_format': 'CSV',
+                                        'dataset_name': dataset.get('name', 'Unknown'),
+                                        'success_message': f"Chunked CSV download ({file_size_mb:.1f} MB)",
+                                        'scale': scale,
+                                        'download_timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                                    }
+
+                                    st.session_state.download_complete = True
+                                    st.session_state.download_results = download_results
+                                    st.success(f"✅ Chunked CSV processing successful! ({len(df)} records)")
+                                    return
+                            except Exception as chunk_error:
+                                st.error(f"❌ Chunked processing also failed: {str(chunk_error)}")
+
+                        st.warning("⚠️ Falling back to standard download method...")
+                        return _process_download(export_format, scale)
+
+                else:
+                    # For GeoTIFF format, create a median composite for smart download
+                    composite_image = fetcher.collection.median()
+
+                    # Generate filename
+                    from datetime import datetime
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    dataset_name = dataset.get('name', 'data').replace(' ', '_').replace('/', '_')
+                    filename = f"{dataset_name}_composite_{timestamp}"
+
+                    # Execute smart download
+                    result = download_helper.execute_smart_download(
+                        image=composite_image,
+                        filename=filename,
+                        region=geometry,
+                        scale=scale,
+                        export_preference=export_preference
+                    )
 
             else:
                 # For single images (StaticRaster)
@@ -1848,14 +2150,169 @@ def _matches_temporal_filter(temporal_resolution, filter_value):
         return filter_lower in temp_res_lower
 
 
+def _process_csv_drive_export(export_format, scale):
+    """Process CSV export to Google Drive using Earth Engine Tasks"""
+    try:
+        # Get all user selections
+        dataset = st.session_state.selected_dataset
+        bands = st.session_state.selected_bands
+        start_date = st.session_state.start_date
+        end_date = st.session_state.end_date
+
+        # Get geometry from geometry handler
+        try:
+            geometry = st.session_state.geometry_handler.current_geometry
+        except Exception as e:
+            st.error(f"❌ Geometry error: {str(e)}")
+            return
+
+        st.info("📤 **Google Drive CSV Export**: Using Earth Engine Tasks for large collections...")
+
+        # For CSV to Google Drive, we use Earth Engine's table export (FeatureCollection)
+        # which can handle large collections better than local processing
+
+        # Create collection and apply filters
+        collection = ee.ImageCollection(dataset['ee_id'])
+        collection = collection.filterDate(start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'))
+        collection = collection.filterBounds(geometry)
+
+        if bands:
+            collection = collection.select(bands)
+
+        # Check collection size
+        collection_size = collection.size().getInfo()
+        st.info(f"🔄 Collection contains {collection_size} images. Preparing Google Drive export...")
+
+        if collection_size == 0:
+            st.error("❌ No images found for the specified date range and region")
+            return
+
+        # Create feature collection with time series data
+        def image_to_feature(image):
+            """Convert image to feature with area-averaged values"""
+            # Get the date
+            date = ee.Date(image.get('system:time_start')).format('YYYY-MM-dd')
+
+            # Calculate area-averaged values
+            stats = image.reduceRegion(
+                reducer=ee.Reducer.mean(),
+                geometry=geometry,
+                scale=scale,
+                maxPixels=1e9
+            )
+
+            # Create clean properties with only date and band values
+            clean_props = ee.Dictionary({'date': date})
+
+            # Add only the band values (exclude system properties)
+            for band in bands:
+                clean_props = clean_props.set(band, stats.get(band))
+
+            # Create feature with null geometry and clean properties
+            return ee.Feature(None, clean_props)
+
+        # Map over collection to create features
+        features = collection.map(image_to_feature)
+
+        # Generate filename with clean characters
+        from datetime import datetime
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        dataset_name = dataset.get('name', 'data')
+
+        # Clean dataset name for filename (allow only safe characters)
+        import re
+        clean_dataset_name = re.sub(r'[^a-zA-Z0-9._-]', '_', dataset_name)
+        filename = f"{clean_dataset_name}_timeseries_{timestamp}"
+
+        # Clean description for Earth Engine (max 100 chars, only allowed characters)
+        clean_description = re.sub(r'[^a-zA-Z0-9._,:;-]', '_', f"CSV_Export_{clean_dataset_name}")
+        if len(clean_description) > 100:
+            clean_description = clean_description[:97] + "..."
+
+        # Export to Google Drive using Earth Engine Task
+        task = ee.batch.Export.table.toDrive(
+            collection=features,
+            description=clean_description,
+            folder="GeoClimate_Exports",
+            fileNamePrefix=filename,
+            fileFormat='CSV'
+        )
+
+        # Start the task
+        task.start()
+
+        # Show task information
+        st.success("✅ **Google Drive export task started!**")
+
+        task_id = task.id
+        task_url = f"https://code.earthengine.google.com/tasks"
+
+        st.markdown("### 📋 Export Details")
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.info(f"**Task ID**: {task_id}")
+            st.info(f"**Filename**: {filename}.csv")
+            st.info(f"**Drive Folder**: GeoClimate_Exports")
+            st.info(f"**Images**: {collection_size}")
+
+        with col2:
+            st.markdown(f"**🔗 [Monitor Task Progress]({task_url})**")
+            st.markdown("**📁 [Open Google Drive](https://drive.google.com/drive/folders/)**")
+            st.markdown("**📊 [Earth Engine Console](https://code.earthengine.google.com/)**")
+
+        st.markdown("---")
+        st.markdown("### ⏱️ **What happens next:**")
+        st.markdown("""
+        1. 🔄 **Processing**: Earth Engine processes your collection in the cloud
+        2. 📤 **Upload**: Results automatically upload to your Google Drive
+        3. 📁 **Organization**: File saved in 'GeoClimate_Exports' folder
+        4. ✅ **Completion**: Check Google Drive folder for completed file
+        """)
+
+        st.info("💡 **Tip**: Large collections may take 5-30 minutes. Check the task monitor link above for progress.")
+
+        # Store task info in session state for tracking
+        if 'drive_export_tasks' not in st.session_state:
+            st.session_state.drive_export_tasks = []
+
+        task_info = {
+            'task_id': task_id,
+            'filename': f"{filename}.csv",
+            'folder': 'GeoClimate_Exports',
+            'dataset': dataset_name,
+            'start_date': start_date.strftime('%Y-%m-%d'),
+            'end_date': end_date.strftime('%Y-%m-%d'),
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'status': 'RUNNING',
+            'task_url': task_url
+        }
+        st.session_state.drive_export_tasks.append(task_info)
+
+    except Exception as e:
+        st.error(f"❌ CSV Drive export failed: {str(e)}")
+
+        # Check if it's the 5000 elements error and provide specific guidance
+        if "Collection query aborted after accumulating over 5000 elements" in str(e):
+            st.warning("⚠️ **Large Collection Detected**")
+            st.info("💡 **Recommendation**: The collection is too large for local processing. The Google Drive export using Earth Engine Tasks should handle this better. If this error persists, try:")
+            st.markdown("""
+            - ✅ Use shorter date ranges (e.g., 1-2 years at a time)
+            - ✅ Select fewer bands if multiple are selected
+            - ✅ Use the 'Auto' download method instead
+            """)
+        else:
+            st.info("💡 You can try the 'Auto' download method instead.")
+
+
 def _display_dataset_options(datasets):
     """Display dataset selection options"""
     st.markdown("### 📊 Available Datasets:")
-    
+
     for i, dataset in enumerate(datasets):
         with st.expander(f"📊 {dataset.get('name', 'Unknown Dataset')}", expanded=False):
             col1, col2 = st.columns([2, 1])
-            
+
             with col1:
                 st.markdown(f"**Description:** {dataset.get('description', 'No description available')}")
                 st.markdown(f"**Category:** {dataset.get('category', 'Unknown')}")
@@ -1876,7 +2333,7 @@ def _display_dataset_options(datasets):
                     st.markdown(f"**Earth Engine ID:** `{dataset['ee_id']}`")
                 if dataset.get('provider'):
                     st.markdown(f"**Provider:** {dataset.get('provider')}")
-            
+
             with col2:
                 if st.button(f"Select Dataset", key=f"select_dataset_{i}", type="primary"):
                     st.session_state.selected_dataset = dataset

@@ -148,13 +148,13 @@ class DatasetConfig:
 
         return True, "Valid date range"
 
-    def get_climate_indices(self, category: Optional[str] = None, complexity: str = "simple") -> Dict[str, Dict]:
+    def get_climate_indices(self, category: Optional[str] = None, complexity: Optional[str] = None) -> Dict[str, Dict]:
         """
         Get available climate indices
 
         Args:
             category: Filter by category ('temperature', 'precipitation') or None for all
-            complexity: Filter by complexity level ('simple', 'advanced')
+            complexity: Filter by complexity level ('simple', 'percentile') or None for all
 
         Returns:
             Dict mapping index IDs to their configurations
@@ -167,8 +167,8 @@ class DatasetConfig:
             if category and index_info.get('category') != category:
                 continue
 
-            # Filter by complexity
-            if index_info.get('complexity') != complexity:
+            # Filter by complexity if specified
+            if complexity and index_info.get('complexity') != complexity:
                 continue
 
             filtered_indices[index_id] = index_info

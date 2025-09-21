@@ -69,18 +69,18 @@ def render_hydrology_analyzer():
         col1, col2, col3 = st.columns([2, 1, 1])
         
         with col1:
-            if st.button("🚀 Run Hydrology Analysis", type="primary", width='stretch'):
+            if st.button("🚀 Run Hydrology Analysis", type="primary", use_container_width=True):
                 # Trigger analysis
                 st.session_state.hydro_run_analysis = True
                 st.rerun()
         
         with col2:
-            if st.button("🔄 Reset Configuration", width='stretch'):
+            if st.button("🔄 Reset Configuration", use_container_width=True):
                 _reset_hydrology_configuration()
                 st.rerun()
         
         with col3:
-            if st.button("📊 View Sample Results", width='stretch'):
+            if st.button("📊 View Sample Results", use_container_width=True):
                 st.session_state.hydro_show_sample = True
                 st.rerun()
     else:
@@ -477,7 +477,7 @@ def _render_time_series_analysis():
         height=400
     )
 
-    st.plotly_chart(fig, width='stretch')
+    st.plotly_chart(fig, use_container_width=True)
 
     # Show data summary for filtered view
     if selected_year != 'All Years':
@@ -556,7 +556,7 @@ def _render_time_series_analysis():
         height=400
     )
 
-    st.plotly_chart(fig_monthly, width='stretch')
+    st.plotly_chart(fig_monthly, use_container_width=True)
 
     # Show monthly summary for filtered view
     if selected_monthly_year != 'All Years':
@@ -683,7 +683,7 @@ def _render_time_series_analysis():
                 fig_yearly.update_yaxes(title_text="Precipitation (mm)", row=2, col=1)
                 fig_yearly.update_yaxes(title_text="Precipitation (mm/day)", row=2, col=2)
 
-                st.plotly_chart(fig_yearly, width='stretch')
+                st.plotly_chart(fig_yearly, use_container_width=True)
 
                 # Summary of trends
                 trend_summary = []
@@ -822,7 +822,7 @@ def _render_statistical_analysis():
             with st.expander("📊 Yearly Data Table", expanded=False):
                 yearly_df = yearly_stats['yearly_data'].copy()
                 yearly_df = yearly_df.round(2)
-                st.dataframe(yearly_df, width='stretch', hide_index=True)
+                st.dataframe(yearly_df, use_container_width=True, hide_index=True)
 
             # Show key insights
             summary = yearly_stats['summary']
@@ -896,7 +896,7 @@ def _render_statistical_analysis():
         height=400
     )
 
-    st.plotly_chart(fig, width='stretch')
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def _render_return_period_analysis():
@@ -956,7 +956,7 @@ def _render_return_period_analysis():
                 'Probability (%)': [f"{100/rp:.2f}" for rp in return_periods]
             })
 
-            st.dataframe(return_df, width='stretch', hide_index=True)
+            st.dataframe(return_df, use_container_width=True, hide_index=True)
 
             # Analyze data for outlier detection and plot preparation
             all_values = []
@@ -1039,7 +1039,7 @@ def _render_return_period_analysis():
                 showlegend=True
             )
 
-            st.plotly_chart(fig, width='stretch')
+            st.plotly_chart(fig, use_container_width=True)
 
             # Show filtering info if distributions were removed
             removed_count = len(return_analysis['distributions']) - len(valid_distributions)
@@ -1062,7 +1062,7 @@ def _render_return_period_analysis():
 
             if fit_data:
                 fit_df = pd.DataFrame(fit_data)
-                st.dataframe(fit_df, width='stretch', hide_index=True)
+                st.dataframe(fit_df, use_container_width=True, hide_index=True)
 
     except Exception as e:
         st.error(f"❌ Error in return period analysis: {str(e)}")
