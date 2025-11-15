@@ -4216,9 +4216,16 @@ class ClimateIndicesCalculator:
         return trend_stats
 
     def calculate_simple_RX1day(self, precip_collection: ee.ImageCollection,
-                              start_date: str, end_date: str) -> ee.ImageCollection:
+                              start_date: str, end_date: str,
+                              temporal_resolution: str = 'monthly') -> ee.ImageCollection:
         """
-        Calculate monthly maximum 1-day precipitation (simplified implementation)
+        Calculate maximum 1-day precipitation (simplified implementation)
+
+        Args:
+            precip_collection: Daily precipitation collection
+            start_date: Start date string
+            end_date: End date string
+            temporal_resolution: 'monthly' or 'yearly' aggregation
         """
         # Apply unit conversion if dataset is specified
         if self.dataset_id:
@@ -4246,22 +4253,48 @@ class ClimateIndicesCalculator:
                 'unit': 'mm'
             })
 
-        # Create year-month sequence
+        # Handle temporal resolution
         start_year = ee.Date(start_date).get('year')
         end_year = ee.Date(end_date).get('year')
 
-        years = ee.List.sequence(start_year, end_year)
-        months = ee.List.sequence(1, 12)
+        if temporal_resolution == 'yearly':
+            # Yearly aggregation: calculate annual maximum 1-day precipitation
+            def calculate_yearly_max(year):
+                # Filter to specific year
+                yearly_data = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                )
 
-        year_months = years.map(
-            lambda y: months.map(lambda m: ee.Number(y).multiply(100).add(m))
-        ).flatten()
+                # Get yearly maximum 1-day precipitation
+                max_precip = yearly_data.max().clip(self.geometry)
 
-        results = ee.ImageCollection.fromImages(
-            year_months.map(monthly_max_precip)
-        )
+                return max_precip.set({
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                    'index_name': 'RX1day',
+                    'unit': 'mm'
+                })
 
-        return results
+            years = ee.List.sequence(start_year, end_year)
+            yearly_results = ee.ImageCollection.fromImages(
+                years.map(calculate_yearly_max)
+            )
+            return yearly_results
+
+        else:
+            # Monthly aggregation (default)
+            years = ee.List.sequence(start_year, end_year)
+            months = ee.List.sequence(1, 12)
+
+            year_months = years.map(
+                lambda y: months.map(lambda m: ee.Number(y).multiply(100).add(m))
+            ).flatten()
+
+            results = ee.ImageCollection.fromImages(
+                year_months.map(monthly_max_precip)
+            )
+
+            return results
 
     def calculate_mann_kendall_trend(self, time_series_collection: ee.ImageCollection) -> ee.Image:
         """
@@ -4961,7 +4994,8 @@ class ClimateIndicesCalculator:
             )
         elif index_name == 'RX1day':
             return self.calculate_simple_RX1day(
-                collection_dict.get('precipitation'), start_date, end_date
+                collection_dict.get('precipitation'), start_date, end_date,
+                temporal_resolution=temporal_resolution
             )
         elif index_name == 'CDD':
             threshold = kwargs.get('threshold', 1.0)
