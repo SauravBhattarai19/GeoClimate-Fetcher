@@ -361,11 +361,21 @@ class ClimateIndicesCalculator:
                         start_date: str, end_date: str,
                         base_start: str = "1980-01-01",
                         base_end: str = "2000-12-31",
-                        percentile: float = 90.0) -> ee.ImageCollection:
+                        percentile: float = 90.0,
+                        temporal_resolution: str = 'yearly') -> ee.ImageCollection:
         """
-        Calculate annual count of days when Tmax > percentile threshold of base period
+        Calculate count of days when Tmax > percentile threshold of base period
 
-        Formula: TXXXp = count(TX > TX_percentile) annual count in days
+        Formula: TXXXp = count(TX > TX_percentile) count in days
+
+        Args:
+            tmax_collection: Daily maximum temperature collection
+            start_date: Start date string
+            end_date: End date string
+            base_start: Base period start date
+            base_end: Base period end date
+            percentile: Percentile threshold (default 90.0)
+            temporal_resolution: 'monthly' or 'yearly' aggregation
         """
         # Calculate specified percentile from base period
         base_collection = tmax_collection.filterDate(base_start, base_end)
@@ -375,33 +385,74 @@ class ClimateIndicesCalculator:
         # Filter to analysis period
         filtered = tmax_collection.filterDate(start_date, end_date)
 
-        def calculate_annual_tx90p(year):
-            year = ee.Number(year)
-
-            # Get year data
-            yearly = filtered.filter(
-                ee.Filter.calendarRange(year, year, 'year')
-            )
-
-            # Count exceedances
-            exceedances = yearly.map(lambda img: img.gt(percentile_threshold))
-            exceedance_count = exceedances.sum()
-
-            return exceedance_count.set({
-                'year': year,
-                'system:time_start': ee.Date.fromYMD(year, 1, 1).millis()
-            })
-
         # Create year sequence
         start_year = ee.Date(start_date).get('year')
         end_year = ee.Date(end_date).get('year')
-        years = ee.List.sequence(start_year, end_year)
 
-        results = ee.ImageCollection.fromImages(
-            years.map(calculate_annual_tx90p)
-        )
+        if temporal_resolution == 'monthly':
+            # Monthly aggregation
+            def calculate_monthly_tx90p(year_month):
+                year = ee.Number(year_month).divide(100).int()
+                month = ee.Number(year_month).mod(100).int()
 
-        return results
+                monthly = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                ).filter(
+                    ee.Filter.calendarRange(month, month, 'month')
+                )
+
+                # Count exceedances
+                exceedances = monthly.map(lambda img: img.gt(percentile_threshold))
+                exceedance_count = exceedances.sum()
+
+                return exceedance_count.set({
+                    'month': month,
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, month, 1).millis(),
+                    'index_name': 'TX90p',
+                    'unit': 'days'
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+            months = ee.List.sequence(1, 12)
+
+            year_months = years.map(
+                lambda y: months.map(lambda m: ee.Number(y).multiply(100).add(m))
+            ).flatten()
+
+            results = ee.ImageCollection.fromImages(
+                year_months.map(calculate_monthly_tx90p)
+            )
+            return results
+
+        else:
+            # Yearly aggregation (default)
+            def calculate_annual_tx90p(year):
+                year = ee.Number(year)
+
+                # Get year data
+                yearly = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                )
+
+                # Count exceedances
+                exceedances = yearly.map(lambda img: img.gt(percentile_threshold))
+                exceedance_count = exceedances.sum()
+
+                return exceedance_count.set({
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                    'index_name': 'TX90p',
+                    'unit': 'days'
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+
+            results = ee.ImageCollection.fromImages(
+                years.map(calculate_annual_tx90p)
+            )
+
+            return results
 
     def calculate_mann_kendall_trend(self, time_series_collection: ee.ImageCollection) -> ee.Image:
         """
@@ -601,11 +652,21 @@ class ClimateIndicesCalculator:
                         start_date: str, end_date: str,
                         base_start: str = "1980-01-01",
                         base_end: str = "2000-12-31",
-                        percentile: float = 10.0) -> ee.ImageCollection:
+                        percentile: float = 10.0,
+                        temporal_resolution: str = 'yearly') -> ee.ImageCollection:
         """
-        Calculate annual count of days when Tmax < percentile threshold of base period
+        Calculate count of days when Tmax < percentile threshold of base period
 
-        Formula: TXXXp = count(TX < TX_percentile) annual count in days
+        Formula: TXXXp = count(TX < TX_percentile) count in days
+
+        Args:
+            tmax_collection: Daily maximum temperature collection
+            start_date: Start date string
+            end_date: End date string
+            base_start: Base period start date
+            base_end: Base period end date
+            percentile: Percentile threshold (default 10.0)
+            temporal_resolution: 'monthly' or 'yearly' aggregation
         """
         # Calculate specified percentile from base period
         base_collection = tmax_collection.filterDate(base_start, base_end)
@@ -615,43 +676,94 @@ class ClimateIndicesCalculator:
         # Filter to analysis period
         filtered = tmax_collection.filterDate(start_date, end_date)
 
-        def calculate_annual_tx10p(year):
-            year = ee.Number(year)
-
-            # Get year data
-            yearly = filtered.filter(
-                ee.Filter.calendarRange(year, year, 'year')
-            )
-
-            # Count exceedances
-            exceedances = yearly.map(lambda img: img.lt(percentile_threshold))
-            exceedance_count = exceedances.sum()
-
-            return exceedance_count.set({
-                'year': year,
-                'system:time_start': ee.Date.fromYMD(year, 1, 1).millis()
-            })
-
         # Create year sequence
         start_year = ee.Date(start_date).get('year')
         end_year = ee.Date(end_date).get('year')
-        years = ee.List.sequence(start_year, end_year)
 
-        results = ee.ImageCollection.fromImages(
-            years.map(calculate_annual_tx10p)
-        )
+        if temporal_resolution == 'monthly':
+            # Monthly aggregation
+            def calculate_monthly_tx10p(year_month):
+                year = ee.Number(year_month).divide(100).int()
+                month = ee.Number(year_month).mod(100).int()
 
-        return results
+                monthly = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                ).filter(
+                    ee.Filter.calendarRange(month, month, 'month')
+                )
+
+                # Count exceedances
+                exceedances = monthly.map(lambda img: img.lt(percentile_threshold))
+                exceedance_count = exceedances.sum()
+
+                return exceedance_count.set({
+                    'month': month,
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, month, 1).millis(),
+                    'index_name': 'TX10p',
+                    'unit': 'days'
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+            months = ee.List.sequence(1, 12)
+
+            year_months = years.map(
+                lambda y: months.map(lambda m: ee.Number(y).multiply(100).add(m))
+            ).flatten()
+
+            results = ee.ImageCollection.fromImages(
+                year_months.map(calculate_monthly_tx10p)
+            )
+            return results
+
+        else:
+            # Yearly aggregation (default)
+            def calculate_annual_tx10p(year):
+                year = ee.Number(year)
+
+                # Get year data
+                yearly = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                )
+
+                # Count exceedances
+                exceedances = yearly.map(lambda img: img.lt(percentile_threshold))
+                exceedance_count = exceedances.sum()
+
+                return exceedance_count.set({
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                    'index_name': 'TX10p',
+                    'unit': 'days'
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+
+            results = ee.ImageCollection.fromImages(
+                years.map(calculate_annual_tx10p)
+            )
+
+            return results
 
     def calculate_TN90p(self, tmin_collection: ee.ImageCollection,
                         start_date: str, end_date: str,
                         base_start: str = "1980-01-01",
                         base_end: str = "2000-12-31",
-                        percentile: float = 90.0) -> ee.ImageCollection:
+                        percentile: float = 90.0,
+                        temporal_resolution: str = 'yearly') -> ee.ImageCollection:
         """
-        Calculate annual count of days when Tmin > percentile threshold of base period
+        Calculate count of days when Tmin > percentile threshold of base period
 
-        Formula: TNXXXp = count(TN > TN_percentile) annual count in days
+        Formula: TNXXXp = count(TN > TN_percentile) count in days
+
+        Args:
+            tmin_collection: Daily minimum temperature collection
+            start_date: Start date string
+            end_date: End date string
+            base_start: Base period start date
+            base_end: Base period end date
+            percentile: Percentile threshold (default 90.0)
+            temporal_resolution: 'monthly' or 'yearly' aggregation
         """
         # Calculate specified percentile from base period
         base_collection = tmin_collection.filterDate(base_start, base_end)
@@ -661,43 +773,94 @@ class ClimateIndicesCalculator:
         # Filter to analysis period
         filtered = tmin_collection.filterDate(start_date, end_date)
 
-        def calculate_annual_tn90p(year):
-            year = ee.Number(year)
-
-            # Get year data
-            yearly = filtered.filter(
-                ee.Filter.calendarRange(year, year, 'year')
-            )
-
-            # Count exceedances
-            exceedances = yearly.map(lambda img: img.gt(percentile_threshold))
-            exceedance_count = exceedances.sum()
-
-            return exceedance_count.set({
-                'year': year,
-                'system:time_start': ee.Date.fromYMD(year, 1, 1).millis()
-            })
-
         # Create year sequence
         start_year = ee.Date(start_date).get('year')
         end_year = ee.Date(end_date).get('year')
-        years = ee.List.sequence(start_year, end_year)
 
-        results = ee.ImageCollection.fromImages(
-            years.map(calculate_annual_tn90p)
-        )
+        if temporal_resolution == 'monthly':
+            # Monthly aggregation
+            def calculate_monthly_tn90p(year_month):
+                year = ee.Number(year_month).divide(100).int()
+                month = ee.Number(year_month).mod(100).int()
 
-        return results
+                monthly = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                ).filter(
+                    ee.Filter.calendarRange(month, month, 'month')
+                )
+
+                # Count exceedances
+                exceedances = monthly.map(lambda img: img.gt(percentile_threshold))
+                exceedance_count = exceedances.sum()
+
+                return exceedance_count.set({
+                    'month': month,
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, month, 1).millis(),
+                    'index_name': 'TN90p',
+                    'unit': 'days'
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+            months = ee.List.sequence(1, 12)
+
+            year_months = years.map(
+                lambda y: months.map(lambda m: ee.Number(y).multiply(100).add(m))
+            ).flatten()
+
+            results = ee.ImageCollection.fromImages(
+                year_months.map(calculate_monthly_tn90p)
+            )
+            return results
+
+        else:
+            # Yearly aggregation (default)
+            def calculate_annual_tn90p(year):
+                year = ee.Number(year)
+
+                # Get year data
+                yearly = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                )
+
+                # Count exceedances
+                exceedances = yearly.map(lambda img: img.gt(percentile_threshold))
+                exceedance_count = exceedances.sum()
+
+                return exceedance_count.set({
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                    'index_name': 'TN90p',
+                    'unit': 'days'
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+
+            results = ee.ImageCollection.fromImages(
+                years.map(calculate_annual_tn90p)
+            )
+
+            return results
 
     def calculate_TN10p(self, tmin_collection: ee.ImageCollection,
                         start_date: str, end_date: str,
                         base_start: str = "1980-01-01",
                         base_end: str = "2000-12-31",
-                        percentile: float = 10.0) -> ee.ImageCollection:
+                        percentile: float = 10.0,
+                        temporal_resolution: str = 'yearly') -> ee.ImageCollection:
         """
-        Calculate annual count of days when Tmin < percentile threshold of base period
+        Calculate count of days when Tmin < percentile threshold of base period
 
-        Formula: TNXXXp = count(TN < TN_percentile) annual count in days
+        Formula: TNXXXp = count(TN < TN_percentile) count in days
+
+        Args:
+            tmin_collection: Daily minimum temperature collection
+            start_date: Start date string
+            end_date: End date string
+            base_start: Base period start date
+            base_end: Base period end date
+            percentile: Percentile threshold (default 10.0)
+            temporal_resolution: 'monthly' or 'yearly' aggregation
         """
         # Calculate specified percentile from base period
         base_collection = tmin_collection.filterDate(base_start, base_end)
@@ -707,33 +870,74 @@ class ClimateIndicesCalculator:
         # Filter to analysis period
         filtered = tmin_collection.filterDate(start_date, end_date)
 
-        def calculate_annual_tn10p(year):
-            year = ee.Number(year)
-
-            # Get year data
-            yearly = filtered.filter(
-                ee.Filter.calendarRange(year, year, 'year')
-            )
-
-            # Count exceedances
-            exceedances = yearly.map(lambda img: img.lt(percentile_threshold))
-            exceedance_count = exceedances.sum()
-
-            return exceedance_count.set({
-                'year': year,
-                'system:time_start': ee.Date.fromYMD(year, 1, 1).millis()
-            })
-
         # Create year sequence
         start_year = ee.Date(start_date).get('year')
         end_year = ee.Date(end_date).get('year')
-        years = ee.List.sequence(start_year, end_year)
 
-        results = ee.ImageCollection.fromImages(
-            years.map(calculate_annual_tn10p)
-        )
+        if temporal_resolution == 'monthly':
+            # Monthly aggregation
+            def calculate_monthly_tn10p(year_month):
+                year = ee.Number(year_month).divide(100).int()
+                month = ee.Number(year_month).mod(100).int()
 
-        return results
+                monthly = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                ).filter(
+                    ee.Filter.calendarRange(month, month, 'month')
+                )
+
+                # Count exceedances
+                exceedances = monthly.map(lambda img: img.lt(percentile_threshold))
+                exceedance_count = exceedances.sum()
+
+                return exceedance_count.set({
+                    'month': month,
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, month, 1).millis(),
+                    'index_name': 'TN10p',
+                    'unit': 'days'
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+            months = ee.List.sequence(1, 12)
+
+            year_months = years.map(
+                lambda y: months.map(lambda m: ee.Number(y).multiply(100).add(m))
+            ).flatten()
+
+            results = ee.ImageCollection.fromImages(
+                year_months.map(calculate_monthly_tn10p)
+            )
+            return results
+
+        else:
+            # Yearly aggregation (default)
+            def calculate_annual_tn10p(year):
+                year = ee.Number(year)
+
+                # Get year data
+                yearly = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                )
+
+                # Count exceedances
+                exceedances = yearly.map(lambda img: img.lt(percentile_threshold))
+                exceedance_count = exceedances.sum()
+
+                return exceedance_count.set({
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                    'index_name': 'TN10p',
+                    'unit': 'days'
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+
+            results = ee.ImageCollection.fromImages(
+                years.map(calculate_annual_tn10p)
+            )
+
+            return results
 
     def calculate_TXn(self, tmax_collection: ee.ImageCollection,
                       start_date: str, end_date: str,
@@ -5478,19 +5682,23 @@ class ClimateIndicesCalculator:
         # New percentile-based indices
         elif index_name == 'TX90p':
             return self.calculate_TX90p(
-                collection_dict.get('temperature_max'), start_date, end_date, **kwargs
+                collection_dict.get('temperature_max'), start_date, end_date,
+                temporal_resolution=temporal_resolution, **kwargs
             )
         elif index_name == 'TX10p':
             return self.calculate_TX10p(
-                collection_dict.get('temperature_max'), start_date, end_date, **kwargs
+                collection_dict.get('temperature_max'), start_date, end_date,
+                temporal_resolution=temporal_resolution, **kwargs
             )
         elif index_name == 'TN90p':
             return self.calculate_TN90p(
-                collection_dict.get('temperature_min'), start_date, end_date, **kwargs
+                collection_dict.get('temperature_min'), start_date, end_date,
+                temporal_resolution=temporal_resolution, **kwargs
             )
         elif index_name == 'TN10p':
             return self.calculate_TN10p(
-                collection_dict.get('temperature_min'), start_date, end_date, **kwargs
+                collection_dict.get('temperature_min'), start_date, end_date,
+                temporal_resolution=temporal_resolution, **kwargs
             )
         elif index_name == 'R95p':
             return self.calculate_R95p(
