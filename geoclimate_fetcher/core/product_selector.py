@@ -621,10 +621,91 @@ class GriddedDataHandler:
         
         return None
     
-    def get_point_data(self, ee_id: str, bands: List[str], point_coords: Tuple[float, float], 
+    def _aggregate_sub_daily_to_daily(self, collection: 'ee.ImageCollection', ee_id: str,
+                                        start_date: date, end_date: date, bands: List[str]) -> 'ee.ImageCollection':
+        """Aggregate sub-daily data to daily using GEE server-side functions
+
+        Args:
+            collection: Earth Engine ImageCollection with sub-daily data
+            ee_id: Dataset ID for looking up aggregation config
+            start_date: Start date
+            end_date: End date
+            bands: List of band names
+
+        Returns:
+            Daily aggregated ImageCollection
+        """
+        try:
+            # Load dataset config to get sub-daily aggregation settings
+            datasets_path = Path(__file__).parent.parent / "data" / "datasets.json"
+            with open(datasets_path, 'r') as f:
+                config = json.load(f)
+
+            dataset_config = config.get('datasets', {}).get(ee_id, {})
+            sub_daily_config = dataset_config.get('sub_daily_aggregation', {})
+
+            if not sub_daily_config.get('is_sub_daily', False):
+                return collection
+
+            aggregation_method = sub_daily_config.get('aggregation_method', 'sum')
+            rate_multiplier = sub_daily_config.get('rate_to_total_multiplier', 1.0)
+
+            logging.info(f"Aggregating sub-daily data to daily for {ee_id} using {aggregation_method} method")
+
+            # Create list of dates to aggregate
+            from datetime import timedelta
+            date_list = []
+            current = start_date
+            while current <= end_date:
+                date_list.append(current)
+                current += timedelta(days=1)
+
+            # Convert to EE list of date strings
+            ee_dates = ee.List([d.strftime('%Y-%m-%d') for d in date_list])
+
+            # Function to aggregate one day's worth of sub-daily data
+            def aggregate_day(date_str):
+                date_str = ee.String(date_str)
+                day_start = ee.Date(date_str)
+                day_end = day_start.advance(1, 'day')
+
+                # Filter to this day only
+                daily_images = collection.filterDate(day_start, day_end)
+
+                # Select bands if specified
+                if bands and bands != ['auto-detect']:
+                    daily_images = daily_images.select(bands)
+
+                # Aggregate based on method
+                if aggregation_method == 'sum':
+                    # Sum all sub-daily values and multiply by time interval
+                    daily_total = daily_images.sum().multiply(rate_multiplier)
+                elif aggregation_method == 'mean':
+                    daily_total = daily_images.mean()
+                elif aggregation_method == 'max':
+                    daily_total = daily_images.max()
+                elif aggregation_method == 'min':
+                    daily_total = daily_images.min()
+                else:
+                    daily_total = daily_images.sum().multiply(rate_multiplier)
+
+                # Set the date property
+                return daily_total.set('system:time_start', day_start.millis()).set('date', date_str)
+
+            # Map over all dates to create daily collection
+            daily_collection = ee.ImageCollection.fromImages(ee_dates.map(aggregate_day))
+
+            logging.info(f"Aggregated to {len(date_list)} daily images")
+            return daily_collection
+
+        except Exception as e:
+            logging.error(f"Error aggregating sub-daily data: {str(e)}")
+            return collection
+
+    def get_point_data(self, ee_id: str, bands: List[str], point_coords: Tuple[float, float],
                       start_date: date, end_date: date, variable: str) -> pd.DataFrame:
         """Extract point data from gridded dataset with chunking for large collections
-        
+
         Args:
             ee_id: Earth Engine dataset ID
             bands: List of band names
@@ -632,45 +713,60 @@ class GriddedDataHandler:
             start_date: Start date
             end_date: End date
             variable: Variable type (prcp, tmax, tmin)
-            
+
         Returns:
             DataFrame with gridded data at point location
         """
         try:
             from datetime import datetime, timedelta
-            
+
             # Convert date objects to strings for Earth Engine
             if isinstance(start_date, date):
                 start_str = start_date.strftime('%Y-%m-%d')
             else:
                 start_str = start_date
-                
+
             if isinstance(end_date, date):
                 end_str = end_date.strftime('%Y-%m-%d')
             else:
                 end_str = end_date
-            
+
             # Create Earth Engine point
             point = ee.Geometry.Point(point_coords)
-            
+
             # Load dataset
             collection = ee.ImageCollection(ee_id)
-            
+
             # Filter by date
             collection = collection.filterDate(start_str, end_str)
-            
+
+            # Check if this is a sub-daily dataset and aggregate to daily first
+            datasets_path = Path(__file__).parent.parent / "data" / "datasets.json"
+            if datasets_path.exists():
+                try:
+                    with open(datasets_path, 'r') as f:
+                        config = json.load(f)
+                    dataset_config = config.get('datasets', {}).get(ee_id, {})
+                    sub_daily_config = dataset_config.get('sub_daily_aggregation', {})
+
+                    if sub_daily_config.get('is_sub_daily', False):
+                        logging.info(f"Detected sub-daily dataset {ee_id}, aggregating to daily first...")
+                        collection = self._aggregate_sub_daily_to_daily(collection, ee_id, start_date, end_date, bands)
+                except Exception as e:
+                    logging.warning(f"Could not check sub-daily config: {str(e)}")
+
             # Check collection size first
             collection_size = collection.size().getInfo()
             logging.info(f"Collection size for {ee_id}: {collection_size} images")
-            
+
             if collection_size > 1000:
                 logging.warning(f"Large collection detected ({collection_size} images). Using chunked processing.")
                 return self._get_point_data_chunked(ee_id, bands, point_coords, start_date, end_date, variable)
-            
+
             # Select bands
             if bands and bands != ['auto-detect']:
                 collection = collection.select(bands)
-            
+
             # For smaller collections, use direct processing
             def extract_values(image):
                 date = image.date().format('YYYY-MM-dd')
@@ -685,7 +781,7 @@ class GriddedDataHandler:
                     'date': date,
                     'values': values
                 })
-            
+
             # Map over collection with limited size
             limited_collection = collection.limit(500)  # Limit to 500 images max
             time_series = limited_collection.map(extract_values)
@@ -784,19 +880,34 @@ class GriddedDataHandler:
         try:
             # Create Earth Engine point
             point = ee.Geometry.Point(point_coords)
-            
+
             # Load dataset
             collection = ee.ImageCollection(ee_id)
-            
+
             # Filter by date
             start_str = start_date.strftime('%Y-%m-%d')
             end_str = end_date.strftime('%Y-%m-%d')
             collection = collection.filterDate(start_str, end_str)
-            
+
+            # Check if this is a sub-daily dataset and aggregate to daily first
+            datasets_path = Path(__file__).parent.parent / "data" / "datasets.json"
+            if datasets_path.exists():
+                try:
+                    with open(datasets_path, 'r') as f:
+                        config = json.load(f)
+                    dataset_config = config.get('datasets', {}).get(ee_id, {})
+                    sub_daily_config = dataset_config.get('sub_daily_aggregation', {})
+
+                    if sub_daily_config.get('is_sub_daily', False):
+                        logging.info(f"Aggregating sub-daily chunk to daily for {ee_id}...")
+                        collection = self._aggregate_sub_daily_to_daily(collection, ee_id, start_date, end_date, bands)
+                except Exception as e:
+                    logging.warning(f"Could not check sub-daily config in chunk: {str(e)}")
+
             # Select bands
             if bands and bands != ['auto-detect']:
                 collection = collection.select(bands)
-            
+
             # Extract time series at point
             def extract_values(image):
                 date = image.date().format('YYYY-MM-dd')

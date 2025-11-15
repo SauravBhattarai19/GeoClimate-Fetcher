@@ -144,14 +144,22 @@
       "snippet_type": "ImageCollection",
       "geographic_coverage": "Global",
       "description": "NASA Global Precipitation Measurement (GPM) IMERG Release 07 - high resolution global precipitation estimates",
+      "sub_daily_aggregation": {
+        "is_sub_daily": true,
+        "images_per_day": 48,
+        "time_interval_hours": 0.5,
+        "aggregation_method": "sum",
+        "rate_to_total_multiplier": 0.5,
+        "notes": "Each image is mm/hr rate for 30-min period. Daily total = sum(rate * 0.5)"
+      },
       "bands": {
         "precipitation": {
           "band_name": "precipitation",
           "unit": "mm/day",
           "original_unit": "mm/hr",
-          "scaling_factor": 24.0,
+          "scaling_factor": 1.0,
           "offset": 0.0,
-          "description": "Half-hourly precipitation rate (converted to daily equivalent)"
+          "description": "Half-hourly precipitation rate (aggregated to daily total)"
         }
       },
       "supports_analysis": ["precipitation"],
