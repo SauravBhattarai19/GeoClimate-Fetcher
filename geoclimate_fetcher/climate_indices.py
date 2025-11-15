@@ -4861,7 +4861,8 @@ class ClimateIndicesCalculator:
             return yearly_results
 
         elif temporal_resolution in ['climatology_mean', 'climatology_median']:
-            # Climatology: single image representing mean/median across all years
+            # Climatology mode: Return YEARLY collection for time series plotting
+            # The spatial export will aggregate to single image based on metadata
             def calculate_yearly_max(year):
                 yearly_data = filtered.filter(
                     ee.Filter.calendarRange(year, year, 'year')
@@ -4869,7 +4870,9 @@ class ClimateIndicesCalculator:
                 max_precip = yearly_data.max().clip(self.geometry)
                 return max_precip.set({
                     'year': year,
-                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis()
+                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                    'index_name': 'RX1day',
+                    'unit': 'mm'
                 })
 
             years = ee.List.sequence(start_year, end_year)
@@ -4877,25 +4880,21 @@ class ClimateIndicesCalculator:
                 years.map(calculate_yearly_max)
             )
 
-            # Calculate climatology (mean or median across all years)
-            if temporal_resolution == 'climatology_median' or climatology_reducer == 'median':
-                climatology_img = yearly_collection.median().clip(self.geometry)
-            else:
-                climatology_img = yearly_collection.mean().clip(self.geometry)
+            # Add climatology metadata to the collection
+            # This tells the export function to aggregate before exporting
+            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
 
-            # Set metadata for the single climatology image
-            climatology_img = climatology_img.set({
-                'start_year': start_year,
-                'end_year': end_year,
-                'system:time_start': ee.Date(start_date).millis(),
-                'index_name': 'RX1day',
-                'unit': 'mm',
+            # Return yearly collection with climatology metadata
+            # Time series plot will show yearly values (informative)
+            # Spatial export will check metadata and aggregate to single image
+            return yearly_collection.set({
+                'climatology_mode': True,
+                'climatology_type': climatology_type,
                 'temporal_resolution': temporal_resolution,
-                'climatology_type': climatology_reducer if temporal_resolution == 'climatology_mean' else 'median'
+                'index_name': 'RX1day',
+                'start_year': start_year,
+                'end_year': end_year
             })
-
-            # Return as single-image collection
-            return ee.ImageCollection([climatology_img])
 
         else:
             # Monthly aggregation (default)
@@ -5168,7 +5167,7 @@ class ClimateIndicesCalculator:
             return results
 
         elif temporal_resolution in ['climatology_mean', 'climatology_median']:
-            # Climatology: single image representing mean/median across all years
+            # Climatology mode: Return YEARLY collection for time series plotting
             def calculate_annual_cdd(year):
                 annual = filtered.filter(
                     ee.Filter.calendarRange(year, year, 'year')
@@ -5177,7 +5176,9 @@ class ClimateIndicesCalculator:
                 total_dry = dry_days.sum()
                 return total_dry.set({
                     'year': year,
-                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis()
+                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                    'index_name': 'CDD',
+                    'unit': 'days'
                 })
 
             years = ee.List.sequence(start_year, end_year)
@@ -5185,23 +5186,17 @@ class ClimateIndicesCalculator:
                 years.map(calculate_annual_cdd)
             )
 
-            # Calculate climatology (mean or median across all years)
-            if temporal_resolution == 'climatology_median' or climatology_reducer == 'median':
-                climatology_img = yearly_collection.median().clip(self.geometry)
-            else:
-                climatology_img = yearly_collection.mean().clip(self.geometry)
+            # Add climatology metadata to the collection
+            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
 
-            climatology_img = climatology_img.set({
-                'start_year': start_year,
-                'end_year': end_year,
-                'system:time_start': ee.Date(start_date).millis(),
-                'index_name': 'CDD',
-                'unit': 'days',
+            return yearly_collection.set({
+                'climatology_mode': True,
+                'climatology_type': climatology_type,
                 'temporal_resolution': temporal_resolution,
-                'climatology_type': climatology_reducer if temporal_resolution == 'climatology_mean' else 'median'
+                'index_name': 'CDD',
+                'start_year': start_year,
+                'end_year': end_year
             })
-
-            return ee.ImageCollection([climatology_img])
 
         else:
             # Yearly aggregation (default)
@@ -5496,7 +5491,9 @@ class ClimateIndicesCalculator:
                 ).sum()
                 return wet_total.set({
                     'year': year,
-                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis()
+                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                    'index_name': 'PRCPTOT',
+                    'unit': 'mm'
                 })
 
             years = ee.List.sequence(start_year, end_year)
@@ -5504,23 +5501,17 @@ class ClimateIndicesCalculator:
                 years.map(calculate_annual_prcptot)
             )
 
-            # Calculate climatology (mean or median across all years)
-            if temporal_resolution == 'climatology_median' or climatology_reducer == 'median':
-                climatology_img = yearly_collection.median().clip(self.geometry)
-            else:
-                climatology_img = yearly_collection.mean().clip(self.geometry)
+            # Add climatology metadata to the collection
+            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
 
-            climatology_img = climatology_img.set({
-                'start_year': start_year,
-                'end_year': end_year,
-                'system:time_start': ee.Date(start_date).millis(),
-                'index_name': 'PRCPTOT',
-                'unit': 'mm',
+            return yearly_collection.set({
+                'climatology_mode': True,
+                'climatology_type': climatology_type,
                 'temporal_resolution': temporal_resolution,
-                'climatology_type': climatology_reducer if temporal_resolution == 'climatology_mean' else 'median'
+                'index_name': 'PRCPTOT',
+                'start_year': start_year,
+                'end_year': end_year
             })
-
-            return ee.ImageCollection([climatology_img])
 
         else:
             # Yearly aggregation (default)
