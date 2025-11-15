@@ -133,6 +133,31 @@
         "temperature": ["TXx", "TNn", "DTR", "TX90p", "TN10p", "FD", "SU", "TXn", "TNx"],
         "precipitation": ["RX1day", "CDD", "PRCPTOT", "R95p", "R99p", "R75p", "R10mm", "R20mm", "SDII"]
       }
+    },
+    "NASA/GPM_L3/IMERG_V07": {
+      "name": "GPM IMERG V07 (Global Precipitation Measurement)",
+      "provider": "NASA GES DISC at NASA Goddard Space Flight Center",
+      "start_date": "2000-06-01",
+      "end_date": "present",
+      "temporal_resolution": "half-hourly",
+      "pixel_size_m": 11132,
+      "snippet_type": "ImageCollection",
+      "geographic_coverage": "Global",
+      "description": "NASA Global Precipitation Measurement (GPM) IMERG Release 07 - high resolution global precipitation estimates",
+      "bands": {
+        "precipitation": {
+          "band_name": "precipitation",
+          "unit": "mm/day",
+          "original_unit": "mm/hr",
+          "scaling_factor": 24.0,
+          "offset": 0.0,
+          "description": "Half-hourly precipitation rate (converted to daily equivalent)"
+        }
+      },
+      "supports_analysis": ["precipitation"],
+      "recommended_indices": {
+        "precipitation": ["RX1day", "CDD", "PRCPTOT", "R95p", "R99p", "R75p", "R10mm", "R20mm", "SDII"]
+      }
     }
   },
   "climate_indices": {
