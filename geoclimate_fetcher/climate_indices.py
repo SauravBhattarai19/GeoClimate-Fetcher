@@ -4794,7 +4794,8 @@ class ClimateIndicesCalculator:
 
     def calculate_simple_RX1day(self, precip_collection: ee.ImageCollection,
                               start_date: str, end_date: str,
-                              temporal_resolution: str = 'monthly') -> ee.ImageCollection:
+                              temporal_resolution: str = 'monthly',
+                              climatology_reducer: str = 'mean') -> ee.ImageCollection:
         """
         Calculate maximum 1-day precipitation (simplified implementation)
 
@@ -4802,7 +4803,8 @@ class ClimateIndicesCalculator:
             precip_collection: Daily precipitation collection
             start_date: Start date string
             end_date: End date string
-            temporal_resolution: 'monthly' or 'yearly' aggregation
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
+            climatology_reducer: 'mean' or 'median' for climatology calculations
         """
         # Apply unit conversion if dataset is specified
         if self.dataset_id:
@@ -4857,6 +4859,43 @@ class ClimateIndicesCalculator:
                 years.map(calculate_yearly_max)
             )
             return yearly_results
+
+        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+            # Climatology: single image representing mean/median across all years
+            def calculate_yearly_max(year):
+                yearly_data = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                )
+                max_precip = yearly_data.max().clip(self.geometry)
+                return max_precip.set({
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis()
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+            yearly_collection = ee.ImageCollection.fromImages(
+                years.map(calculate_yearly_max)
+            )
+
+            # Calculate climatology (mean or median across all years)
+            if temporal_resolution == 'climatology_median' or climatology_reducer == 'median':
+                climatology_img = yearly_collection.median().clip(self.geometry)
+            else:
+                climatology_img = yearly_collection.mean().clip(self.geometry)
+
+            # Set metadata for the single climatology image
+            climatology_img = climatology_img.set({
+                'start_year': start_year,
+                'end_year': end_year,
+                'system:time_start': ee.Date(start_date).millis(),
+                'index_name': 'RX1day',
+                'unit': 'mm',
+                'temporal_resolution': temporal_resolution,
+                'climatology_type': climatology_reducer if temporal_resolution == 'climatology_mean' else 'median'
+            })
+
+            # Return as single-image collection
+            return ee.ImageCollection([climatology_img])
 
         else:
             # Monthly aggregation (default)
@@ -5070,7 +5109,8 @@ class ClimateIndicesCalculator:
     def calculate_simple_CDD(self, precip_collection: ee.ImageCollection,
                            start_date: str, end_date: str,
                            threshold: float = 1.0,
-                           temporal_resolution: str = 'yearly') -> ee.ImageCollection:
+                           temporal_resolution: str = 'yearly',
+                           climatology_reducer: str = 'mean') -> ee.ImageCollection:
         """
         Calculate consecutive dry days (simplified - counts total dry days)
 
@@ -5079,7 +5119,8 @@ class ClimateIndicesCalculator:
             start_date: Start date string
             end_date: End date string
             threshold: Precipitation threshold for dry day (default 1.0 mm)
-            temporal_resolution: 'monthly' or 'yearly' aggregation
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
+            climatology_reducer: 'mean' or 'median' for climatology calculations
         """
         # Apply unit conversion if dataset is specified
         if self.dataset_id:
@@ -5125,6 +5166,42 @@ class ClimateIndicesCalculator:
                 year_months.map(calculate_monthly_cdd)
             )
             return results
+
+        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+            # Climatology: single image representing mean/median across all years
+            def calculate_annual_cdd(year):
+                annual = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                )
+                dry_days = annual.map(lambda img: img.lt(threshold).clip(self.geometry))
+                total_dry = dry_days.sum()
+                return total_dry.set({
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis()
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+            yearly_collection = ee.ImageCollection.fromImages(
+                years.map(calculate_annual_cdd)
+            )
+
+            # Calculate climatology (mean or median across all years)
+            if temporal_resolution == 'climatology_median' or climatology_reducer == 'median':
+                climatology_img = yearly_collection.median().clip(self.geometry)
+            else:
+                climatology_img = yearly_collection.mean().clip(self.geometry)
+
+            climatology_img = climatology_img.set({
+                'start_year': start_year,
+                'end_year': end_year,
+                'system:time_start': ee.Date(start_date).millis(),
+                'index_name': 'CDD',
+                'unit': 'days',
+                'temporal_resolution': temporal_resolution,
+                'climatology_type': climatology_reducer if temporal_resolution == 'climatology_mean' else 'median'
+            })
+
+            return ee.ImageCollection([climatology_img])
 
         else:
             # Yearly aggregation (default)
@@ -5349,7 +5426,8 @@ class ClimateIndicesCalculator:
     def calculate_simple_PRCPTOT(self, precip_collection: ee.ImageCollection,
                                start_date: str, end_date: str,
                                wet_threshold: float = 1.0,
-                               temporal_resolution: str = 'yearly') -> ee.ImageCollection:
+                               temporal_resolution: str = 'yearly',
+                               climatology_reducer: str = 'mean') -> ee.ImageCollection:
         """
         Calculate total precipitation on wet days (simplified implementation)
 
@@ -5358,7 +5436,8 @@ class ClimateIndicesCalculator:
             start_date: Start date string
             end_date: End date string
             wet_threshold: Threshold for wet day (default 1.0 mm)
-            temporal_resolution: 'monthly' or 'yearly' aggregation
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
+            climatology_reducer: 'mean' or 'median' for climatology calculations
         """
         # Apply unit conversion if dataset is specified
         if self.dataset_id:
@@ -5405,6 +5484,43 @@ class ClimateIndicesCalculator:
                 year_months.map(calculate_monthly_prcptot)
             )
             return results
+
+        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+            # Climatology: single image representing mean/median across all years
+            def calculate_annual_prcptot(year):
+                annual = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                )
+                wet_total = annual.map(
+                    lambda img: img.updateMask(img.gte(wet_threshold)).clip(self.geometry)
+                ).sum()
+                return wet_total.set({
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis()
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+            yearly_collection = ee.ImageCollection.fromImages(
+                years.map(calculate_annual_prcptot)
+            )
+
+            # Calculate climatology (mean or median across all years)
+            if temporal_resolution == 'climatology_median' or climatology_reducer == 'median':
+                climatology_img = yearly_collection.median().clip(self.geometry)
+            else:
+                climatology_img = yearly_collection.mean().clip(self.geometry)
+
+            climatology_img = climatology_img.set({
+                'start_year': start_year,
+                'end_year': end_year,
+                'system:time_start': ee.Date(start_date).millis(),
+                'index_name': 'PRCPTOT',
+                'unit': 'mm',
+                'temporal_resolution': temporal_resolution,
+                'climatology_type': climatology_reducer if temporal_resolution == 'climatology_mean' else 'median'
+            })
+
+            return ee.ImageCollection([climatology_img])
 
         else:
             # Yearly aggregation (default)
