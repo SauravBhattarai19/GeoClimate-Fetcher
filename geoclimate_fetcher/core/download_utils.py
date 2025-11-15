@@ -552,6 +552,10 @@ def export_individual_geotiffs_standalone(collection, temp_path, geometry, scale
 
         if climatology_type == 'median':
             climatology_img = collection.median().clip(geometry)
+        elif climatology_type == 'min':
+            climatology_img = collection.min().clip(geometry)
+        elif climatology_type == 'max':
+            climatology_img = collection.max().clip(geometry)
         else:
             climatology_img = collection.mean().clip(geometry)
 

@@ -268,8 +268,8 @@ class ClimateIndicesCalculator:
             tmax_collection: Daily maximum temperature collection
             start_date: Start date string
             end_date: End date string
-            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
-            climatology_reducer: 'mean' or 'median' for climatology calculations
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', 'climatology_median', 'climatology_min', or 'climatology_max' aggregation
+            climatology_reducer: 'mean', 'median', 'min', or 'max' for climatology calculations
         """
         # Filter collection to date range
         filtered = tmax_collection.filterDate(start_date, end_date)
@@ -318,7 +318,7 @@ class ClimateIndicesCalculator:
 
             return monthly_results
 
-        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+        elif temporal_resolution in ['climatology_mean', 'climatology_median', 'climatology_min', 'climatology_max']:
             # Climatology mode: Return YEARLY collection for time series plotting
             # The export function will aggregate to single image based on metadata
             def calculate_annual_txx_clim(year):
@@ -345,7 +345,14 @@ class ClimateIndicesCalculator:
             )
 
             # Set metadata for climatology mode
-            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            if temporal_resolution == 'climatology_median':
+                climatology_type = 'median'
+            elif temporal_resolution == 'climatology_min':
+                climatology_type = 'min'
+            elif temporal_resolution == 'climatology_max':
+                climatology_type = 'max'
+            else:
+                climatology_type = 'mean'
             return yearly_collection.set({
                 'climatology_mode': True,
                 'climatology_type': climatology_type,
@@ -396,8 +403,8 @@ class ClimateIndicesCalculator:
             tmin_collection: Daily minimum temperature collection
             start_date: Start date string
             end_date: End date string
-            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
-            climatology_reducer: 'mean' or 'median' for climatology calculations
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', 'climatology_median', 'climatology_min', or 'climatology_max' aggregation
+            climatology_reducer: 'mean', 'median', 'min', or 'max' for climatology calculations
         """
         # Filter collection to date range
         filtered = tmin_collection.filterDate(start_date, end_date)
@@ -446,7 +453,7 @@ class ClimateIndicesCalculator:
 
             return monthly_results
 
-        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+        elif temporal_resolution in ['climatology_mean', 'climatology_median', 'climatology_min', 'climatology_max']:
             # Climatology mode: Return YEARLY collection for time series plotting
             # The export function will aggregate to single image based on metadata
             def calculate_annual_tnn_clim(year):
@@ -473,7 +480,14 @@ class ClimateIndicesCalculator:
             )
 
             # Set metadata for climatology mode
-            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            if temporal_resolution == 'climatology_median':
+                climatology_type = 'median'
+            elif temporal_resolution == 'climatology_min':
+                climatology_type = 'min'
+            elif temporal_resolution == 'climatology_max':
+                climatology_type = 'max'
+            else:
+                climatology_type = 'mean'
             return yearly_collection.set({
                 'climatology_mode': True,
                 'climatology_type': climatology_type,
@@ -530,8 +544,8 @@ class ClimateIndicesCalculator:
             base_start: Base period start date
             base_end: Base period end date
             percentile: Percentile threshold (default 90.0)
-            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
-            climatology_reducer: 'mean' or 'median' for climatology calculations
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', 'climatology_median', 'climatology_min', or 'climatology_max' aggregation
+            climatology_reducer: 'mean', 'median', 'min', or 'max' for climatology calculations
         """
         # Calculate specified percentile from base period
         base_collection = tmax_collection.filterDate(base_start, base_end)
@@ -581,7 +595,7 @@ class ClimateIndicesCalculator:
             )
             return results
 
-        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+        elif temporal_resolution in ['climatology_mean', 'climatology_median', 'climatology_min', 'climatology_max']:
             # Climatology mode: Return YEARLY collection for time series plotting
             # The export function will aggregate to single image based on metadata
             def calculate_annual_tx90p_clim(year):
@@ -609,7 +623,14 @@ class ClimateIndicesCalculator:
             )
 
             # Set metadata for climatology mode
-            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            if temporal_resolution == 'climatology_median':
+                climatology_type = 'median'
+            elif temporal_resolution == 'climatology_min':
+                climatology_type = 'min'
+            elif temporal_resolution == 'climatology_max':
+                climatology_type = 'max'
+            else:
+                climatology_type = 'mean'
             return yearly_collection.set({
                 'climatology_mode': True,
                 'climatology_type': climatology_type,
@@ -861,8 +882,8 @@ class ClimateIndicesCalculator:
             base_start: Base period start date
             base_end: Base period end date
             percentile: Percentile threshold (default 10.0)
-            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
-            climatology_reducer: 'mean' or 'median' for climatology calculations
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', 'climatology_median', 'climatology_min', or 'climatology_max' aggregation
+            climatology_reducer: 'mean', 'median', 'min', or 'max' for climatology calculations
         """
         # Calculate specified percentile from base period
         base_collection = tmax_collection.filterDate(base_start, base_end)
@@ -912,7 +933,7 @@ class ClimateIndicesCalculator:
             )
             return results
 
-        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+        elif temporal_resolution in ['climatology_mean', 'climatology_median', 'climatology_min', 'climatology_max']:
             # Climatology mode: Return YEARLY collection for time series plotting
             # The export function will aggregate to single image based on metadata
             def calculate_annual_tx10p_clim(year):
@@ -940,7 +961,14 @@ class ClimateIndicesCalculator:
             )
 
             # Set metadata for climatology mode
-            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            if temporal_resolution == 'climatology_median':
+                climatology_type = 'median'
+            elif temporal_resolution == 'climatology_min':
+                climatology_type = 'min'
+            elif temporal_resolution == 'climatology_max':
+                climatology_type = 'max'
+            else:
+                climatology_type = 'mean'
             return yearly_collection.set({
                 'climatology_mode': True,
                 'climatology_type': climatology_type,
@@ -998,8 +1026,8 @@ class ClimateIndicesCalculator:
             base_start: Base period start date
             base_end: Base period end date
             percentile: Percentile threshold (default 90.0)
-            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
-            climatology_reducer: 'mean' or 'median' for climatology calculations
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', 'climatology_median', 'climatology_min', or 'climatology_max' aggregation
+            climatology_reducer: 'mean', 'median', 'min', or 'max' for climatology calculations
         """
         # Calculate specified percentile from base period
         base_collection = tmin_collection.filterDate(base_start, base_end)
@@ -1049,7 +1077,7 @@ class ClimateIndicesCalculator:
             )
             return results
 
-        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+        elif temporal_resolution in ['climatology_mean', 'climatology_median', 'climatology_min', 'climatology_max']:
             # Climatology mode: Return YEARLY collection for time series plotting
             # The export function will aggregate to single image based on metadata
             def calculate_annual_tn90p_clim(year):
@@ -1077,7 +1105,14 @@ class ClimateIndicesCalculator:
             )
 
             # Set metadata for climatology mode
-            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            if temporal_resolution == 'climatology_median':
+                climatology_type = 'median'
+            elif temporal_resolution == 'climatology_min':
+                climatology_type = 'min'
+            elif temporal_resolution == 'climatology_max':
+                climatology_type = 'max'
+            else:
+                climatology_type = 'mean'
             return yearly_collection.set({
                 'climatology_mode': True,
                 'climatology_type': climatology_type,
@@ -1135,8 +1170,8 @@ class ClimateIndicesCalculator:
             base_start: Base period start date
             base_end: Base period end date
             percentile: Percentile threshold (default 10.0)
-            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
-            climatology_reducer: 'mean' or 'median' for climatology calculations
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', 'climatology_median', 'climatology_min', or 'climatology_max' aggregation
+            climatology_reducer: 'mean', 'median', 'min', or 'max' for climatology calculations
         """
         # Calculate specified percentile from base period
         base_collection = tmin_collection.filterDate(base_start, base_end)
@@ -1186,7 +1221,7 @@ class ClimateIndicesCalculator:
             )
             return results
 
-        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+        elif temporal_resolution in ['climatology_mean', 'climatology_median', 'climatology_min', 'climatology_max']:
             # Climatology mode: Return YEARLY collection for time series plotting
             # The export function will aggregate to single image based on metadata
             def calculate_annual_tn10p_clim(year):
@@ -1214,7 +1249,14 @@ class ClimateIndicesCalculator:
             )
 
             # Set metadata for climatology mode
-            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            if temporal_resolution == 'climatology_median':
+                climatology_type = 'median'
+            elif temporal_resolution == 'climatology_min':
+                climatology_type = 'min'
+            elif temporal_resolution == 'climatology_max':
+                climatology_type = 'max'
+            else:
+                climatology_type = 'mean'
             return yearly_collection.set({
                 'climatology_mode': True,
                 'climatology_type': climatology_type,
@@ -1266,8 +1308,8 @@ class ClimateIndicesCalculator:
             tmax_collection: Daily maximum temperature collection
             start_date: Start date string
             end_date: End date string
-            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
-            climatology_reducer: 'mean' or 'median' for climatology calculations
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', 'climatology_median', 'climatology_min', or 'climatology_max' aggregation
+            climatology_reducer: 'mean', 'median', 'min', or 'max' for climatology calculations
         """
         # Filter to analysis period
         filtered = tmax_collection.filterDate(start_date, end_date)
@@ -1314,7 +1356,7 @@ class ClimateIndicesCalculator:
 
             return results
 
-        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+        elif temporal_resolution in ['climatology_mean', 'climatology_median', 'climatology_min', 'climatology_max']:
             # Climatology mode: Return YEARLY collection for time series plotting
             # The export function will aggregate to single image based on metadata
             def calculate_yearly_txn_clim(year):
@@ -1339,7 +1381,14 @@ class ClimateIndicesCalculator:
             )
 
             # Set metadata for climatology mode
-            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            if temporal_resolution == 'climatology_median':
+                climatology_type = 'median'
+            elif temporal_resolution == 'climatology_min':
+                climatology_type = 'min'
+            elif temporal_resolution == 'climatology_max':
+                climatology_type = 'max'
+            else:
+                climatology_type = 'mean'
             return yearly_collection.set({
                 'climatology_mode': True,
                 'climatology_type': climatology_type,
@@ -1387,8 +1436,8 @@ class ClimateIndicesCalculator:
             tmin_collection: Daily minimum temperature collection
             start_date: Start date string
             end_date: End date string
-            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
-            climatology_reducer: 'mean' or 'median' for climatology calculations
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', 'climatology_median', 'climatology_min', or 'climatology_max' aggregation
+            climatology_reducer: 'mean', 'median', 'min', or 'max' for climatology calculations
         """
         # Filter to analysis period
         filtered = tmin_collection.filterDate(start_date, end_date)
@@ -1435,7 +1484,7 @@ class ClimateIndicesCalculator:
 
             return results
 
-        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+        elif temporal_resolution in ['climatology_mean', 'climatology_median', 'climatology_min', 'climatology_max']:
             # Climatology mode: Return YEARLY collection for time series plotting
             # The export function will aggregate to single image based on metadata
             def calculate_yearly_tnx_clim(year):
@@ -1460,7 +1509,14 @@ class ClimateIndicesCalculator:
             )
 
             # Set metadata for climatology mode
-            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            if temporal_resolution == 'climatology_median':
+                climatology_type = 'median'
+            elif temporal_resolution == 'climatology_min':
+                climatology_type = 'min'
+            elif temporal_resolution == 'climatology_max':
+                climatology_type = 'max'
+            else:
+                climatology_type = 'mean'
             return yearly_collection.set({
                 'climatology_mode': True,
                 'climatology_type': climatology_type,
@@ -1549,8 +1605,8 @@ class ClimateIndicesCalculator:
             start_date: Start date string
             end_date: End date string
             threshold: Precipitation threshold (default 20.0 mm)
-            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
-            climatology_reducer: 'mean' or 'median' for climatology calculations
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', 'climatology_median', 'climatology_min', or 'climatology_max' aggregation
+            climatology_reducer: 'mean', 'median', 'min', or 'max' for climatology calculations
         """
         # Filter to analysis period
         filtered = precip_collection.filterDate(start_date, end_date)
@@ -1595,7 +1651,7 @@ class ClimateIndicesCalculator:
             )
             return results
 
-        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+        elif temporal_resolution in ['climatology_mean', 'climatology_median', 'climatology_min', 'climatology_max']:
             # Climatology mode: Return YEARLY collection for time series plotting
             # The export function will aggregate to single image based on metadata
             def calculate_annual_r20_clim(year):
@@ -1623,7 +1679,14 @@ class ClimateIndicesCalculator:
             )
 
             # Set metadata for climatology mode
-            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            if temporal_resolution == 'climatology_median':
+                climatology_type = 'median'
+            elif temporal_resolution == 'climatology_min':
+                climatology_type = 'min'
+            elif temporal_resolution == 'climatology_max':
+                climatology_type = 'max'
+            else:
+                climatology_type = 'mean'
             return yearly_collection.set({
                 'climatology_mode': True,
                 'climatology_type': climatology_type,
@@ -2570,8 +2633,8 @@ class ClimateIndicesCalculator:
             tmin_collection: Daily minimum temperature collection
             start_date: Start date string
             end_date: End date string
-            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
-            climatology_reducer: 'mean' or 'median' for climatology calculations
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', 'climatology_median', 'climatology_min', or 'climatology_max' aggregation
+            climatology_reducer: 'mean', 'median', 'min', or 'max' for climatology calculations
         """
         # Filter collections to date range
         tmax_filtered = tmax_collection.filterDate(start_date, end_date)
@@ -2629,7 +2692,7 @@ class ClimateIndicesCalculator:
 
             return results
 
-        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+        elif temporal_resolution in ['climatology_mean', 'climatology_median', 'climatology_min', 'climatology_max']:
             # Climatology mode: Return YEARLY collection for time series plotting
             # The export function will aggregate to single image based on metadata
             def calculate_yearly_dtr_clim(year):
@@ -2664,7 +2727,14 @@ class ClimateIndicesCalculator:
             )
 
             # Set metadata for climatology mode
-            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            if temporal_resolution == 'climatology_median':
+                climatology_type = 'median'
+            elif temporal_resolution == 'climatology_min':
+                climatology_type = 'min'
+            elif temporal_resolution == 'climatology_max':
+                climatology_type = 'max'
+            else:
+                climatology_type = 'mean'
             return yearly_collection.set({
                 'climatology_mode': True,
                 'climatology_type': climatology_type,
@@ -3643,8 +3713,8 @@ class ClimateIndicesCalculator:
             precip_collection: Daily precipitation collection
             start_date: Start date string
             end_date: End date string
-            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
-            climatology_reducer: 'mean' or 'median' for climatology calculations
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', 'climatology_median', 'climatology_min', or 'climatology_max' aggregation
+            climatology_reducer: 'mean', 'median', 'min', or 'max' for climatology calculations
         """
         filtered = precip_collection.filterDate(start_date, end_date)
 
@@ -3686,7 +3756,7 @@ class ClimateIndicesCalculator:
             )
             return results
 
-        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+        elif temporal_resolution in ['climatology_mean', 'climatology_median', 'climatology_min', 'climatology_max']:
             # Climatology mode: Return YEARLY collection for time series plotting
             def calculate_annual_r10(year):
                 annual = filtered.filter(
@@ -3705,7 +3775,14 @@ class ClimateIndicesCalculator:
                 years.map(calculate_annual_r10)
             )
 
-            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            if temporal_resolution == 'climatology_median':
+                climatology_type = 'median'
+            elif temporal_resolution == 'climatology_min':
+                climatology_type = 'min'
+            elif temporal_resolution == 'climatology_max':
+                climatology_type = 'max'
+            else:
+                climatology_type = 'mean'
             return yearly_collection.set({
                 'climatology_mode': True,
                 'climatology_type': climatology_type,
@@ -3949,8 +4026,8 @@ class ClimateIndicesCalculator:
             start_date: Start date string
             end_date: End date string
             wet_threshold: Threshold for wet day (default 1.0 mm)
-            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
-            climatology_reducer: 'mean' or 'median' for climatology calculations
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', 'climatology_median', 'climatology_min', or 'climatology_max' aggregation
+            climatology_reducer: 'mean', 'median', 'min', or 'max' for climatology calculations
         """
         filtered = precip_collection.filterDate(start_date, end_date)
 
@@ -4000,7 +4077,7 @@ class ClimateIndicesCalculator:
             )
             return results
 
-        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+        elif temporal_resolution in ['climatology_mean', 'climatology_median', 'climatology_min', 'climatology_max']:
             # Climatology mode: Return YEARLY collection for time series plotting
             # The export function will aggregate to single image based on metadata
             def calculate_annual_sdii_clim(year):
@@ -4033,7 +4110,14 @@ class ClimateIndicesCalculator:
             )
 
             # Set metadata for climatology mode
-            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            if temporal_resolution == 'climatology_median':
+                climatology_type = 'median'
+            elif temporal_resolution == 'climatology_min':
+                climatology_type = 'min'
+            elif temporal_resolution == 'climatology_max':
+                climatology_type = 'max'
+            else:
+                climatology_type = 'mean'
             return yearly_collection.set({
                 'climatology_mode': True,
                 'climatology_type': climatology_type,
@@ -4289,8 +4373,8 @@ class ClimateIndicesCalculator:
             base_start: Base period start date
             base_end: Base period end date
             percentile: Percentile threshold (default 95.0)
-            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
-            climatology_reducer: 'mean' or 'median' for climatology calculations
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', 'climatology_median', 'climatology_min', or 'climatology_max' aggregation
+            climatology_reducer: 'mean', 'median', 'min', or 'max' for climatology calculations
         """
         # Calculate specified percentile from base period
         base_collection = precip_collection.filterDate(base_start, base_end)
@@ -4340,7 +4424,7 @@ class ClimateIndicesCalculator:
             )
             return results
 
-        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+        elif temporal_resolution in ['climatology_mean', 'climatology_median', 'climatology_min', 'climatology_max']:
             # Climatology mode: Return YEARLY collection for time series plotting
             # The export function will aggregate to single image based on metadata
             def calculate_annual_r95p_clim(year):
@@ -4368,7 +4452,14 @@ class ClimateIndicesCalculator:
             )
 
             # Set metadata for climatology mode
-            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            if temporal_resolution == 'climatology_median':
+                climatology_type = 'median'
+            elif temporal_resolution == 'climatology_min':
+                climatology_type = 'min'
+            elif temporal_resolution == 'climatology_max':
+                climatology_type = 'max'
+            else:
+                climatology_type = 'mean'
             return yearly_collection.set({
                 'climatology_mode': True,
                 'climatology_type': climatology_type,
@@ -4426,8 +4517,8 @@ class ClimateIndicesCalculator:
             base_start: Base period start date
             base_end: Base period end date
             percentile: Percentile threshold (default 99.0)
-            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
-            climatology_reducer: 'mean' or 'median' for climatology calculations
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', 'climatology_median', 'climatology_min', or 'climatology_max' aggregation
+            climatology_reducer: 'mean', 'median', 'min', or 'max' for climatology calculations
         """
         # Calculate specified percentile from base period
         base_collection = precip_collection.filterDate(base_start, base_end)
@@ -4477,7 +4568,7 @@ class ClimateIndicesCalculator:
             )
             return results
 
-        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+        elif temporal_resolution in ['climatology_mean', 'climatology_median', 'climatology_min', 'climatology_max']:
             # Climatology mode: Return YEARLY collection for time series plotting
             # The export function will aggregate to single image based on metadata
             def calculate_annual_r99p_clim(year):
@@ -4505,7 +4596,14 @@ class ClimateIndicesCalculator:
             )
 
             # Set metadata for climatology mode
-            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            if temporal_resolution == 'climatology_median':
+                climatology_type = 'median'
+            elif temporal_resolution == 'climatology_min':
+                climatology_type = 'min'
+            elif temporal_resolution == 'climatology_max':
+                climatology_type = 'max'
+            else:
+                climatology_type = 'mean'
             return yearly_collection.set({
                 'climatology_mode': True,
                 'climatology_type': climatology_type,
@@ -4563,8 +4661,8 @@ class ClimateIndicesCalculator:
             base_start: Base period start date
             base_end: Base period end date
             percentile: Percentile threshold (default 75.0)
-            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
-            climatology_reducer: 'mean' or 'median' for climatology calculations
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', 'climatology_median', 'climatology_min', or 'climatology_max' aggregation
+            climatology_reducer: 'mean', 'median', 'min', or 'max' for climatology calculations
         """
         # Calculate specified percentile from base period
         base_collection = precip_collection.filterDate(base_start, base_end)
@@ -4614,7 +4712,7 @@ class ClimateIndicesCalculator:
             )
             return results
 
-        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+        elif temporal_resolution in ['climatology_mean', 'climatology_median', 'climatology_min', 'climatology_max']:
             # Climatology mode: Return YEARLY collection for time series plotting
             # The export function will aggregate to single image based on metadata
             def calculate_annual_r75p_clim(year):
@@ -4642,7 +4740,14 @@ class ClimateIndicesCalculator:
             )
 
             # Set metadata for climatology mode
-            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            if temporal_resolution == 'climatology_median':
+                climatology_type = 'median'
+            elif temporal_resolution == 'climatology_min':
+                climatology_type = 'min'
+            elif temporal_resolution == 'climatology_max':
+                climatology_type = 'max'
+            else:
+                climatology_type = 'mean'
             return yearly_collection.set({
                 'climatology_mode': True,
                 'climatology_type': climatology_type,
@@ -5524,8 +5629,8 @@ class ClimateIndicesCalculator:
             precip_collection: Daily precipitation collection
             start_date: Start date string
             end_date: End date string
-            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
-            climatology_reducer: 'mean' or 'median' for climatology calculations
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', 'climatology_median', 'climatology_min', or 'climatology_max' aggregation
+            climatology_reducer: 'mean', 'median', 'min', or 'max' for climatology calculations
         """
         # Apply unit conversion if dataset is specified
         if self.dataset_id:
@@ -5581,7 +5686,7 @@ class ClimateIndicesCalculator:
             )
             return yearly_results
 
-        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+        elif temporal_resolution in ['climatology_mean', 'climatology_median', 'climatology_min', 'climatology_max']:
             # Climatology mode: Return YEARLY collection for time series plotting
             # The spatial export will aggregate to single image based on metadata
             def calculate_yearly_max(year):
@@ -5603,7 +5708,14 @@ class ClimateIndicesCalculator:
 
             # Add climatology metadata to the collection
             # This tells the export function to aggregate before exporting
-            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            if temporal_resolution == 'climatology_median':
+                climatology_type = 'median'
+            elif temporal_resolution == 'climatology_min':
+                climatology_type = 'min'
+            elif temporal_resolution == 'climatology_max':
+                climatology_type = 'max'
+            else:
+                climatology_type = 'mean'
 
             # Return yearly collection with climatology metadata
             # Time series plot will show yearly values (informative)
@@ -5839,8 +5951,8 @@ class ClimateIndicesCalculator:
             start_date: Start date string
             end_date: End date string
             threshold: Precipitation threshold for dry day (default 1.0 mm)
-            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
-            climatology_reducer: 'mean' or 'median' for climatology calculations
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', 'climatology_median', 'climatology_min', or 'climatology_max' aggregation
+            climatology_reducer: 'mean', 'median', 'min', or 'max' for climatology calculations
         """
         # Apply unit conversion if dataset is specified
         if self.dataset_id:
@@ -5887,7 +5999,7 @@ class ClimateIndicesCalculator:
             )
             return results
 
-        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+        elif temporal_resolution in ['climatology_mean', 'climatology_median', 'climatology_min', 'climatology_max']:
             # Climatology mode: Return YEARLY collection for time series plotting
             def calculate_annual_cdd(year):
                 annual = filtered.filter(
@@ -5908,7 +6020,14 @@ class ClimateIndicesCalculator:
             )
 
             # Add climatology metadata to the collection
-            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            if temporal_resolution == 'climatology_median':
+                climatology_type = 'median'
+            elif temporal_resolution == 'climatology_min':
+                climatology_type = 'min'
+            elif temporal_resolution == 'climatology_max':
+                climatology_type = 'max'
+            else:
+                climatology_type = 'mean'
 
             return yearly_collection.set({
                 'climatology_mode': True,
@@ -6152,8 +6271,8 @@ class ClimateIndicesCalculator:
             start_date: Start date string
             end_date: End date string
             wet_threshold: Threshold for wet day (default 1.0 mm)
-            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
-            climatology_reducer: 'mean' or 'median' for climatology calculations
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', 'climatology_median', 'climatology_min', or 'climatology_max' aggregation
+            climatology_reducer: 'mean', 'median', 'min', or 'max' for climatology calculations
         """
         # Apply unit conversion if dataset is specified
         if self.dataset_id:
@@ -6201,7 +6320,7 @@ class ClimateIndicesCalculator:
             )
             return results
 
-        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+        elif temporal_resolution in ['climatology_mean', 'climatology_median', 'climatology_min', 'climatology_max']:
             # Climatology: single image representing mean/median across all years
             def calculate_annual_prcptot(year):
                 annual = filtered.filter(
@@ -6223,7 +6342,14 @@ class ClimateIndicesCalculator:
             )
 
             # Add climatology metadata to the collection
-            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            if temporal_resolution == 'climatology_median':
+                climatology_type = 'median'
+            elif temporal_resolution == 'climatology_min':
+                climatology_type = 'min'
+            elif temporal_resolution == 'climatology_max':
+                climatology_type = 'max'
+            else:
+                climatology_type = 'mean'
 
             return yearly_collection.set({
                 'climatology_mode': True,
