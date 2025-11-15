@@ -255,114 +255,269 @@ class ClimateIndicesCalculator:
 
     # Temperature Indices Calculations
     
-    def calculate_TXx(self, tmax_collection: ee.ImageCollection, 
-                      start_date: str, end_date: str) -> ee.ImageCollection:
+    def calculate_TXx(self, tmax_collection: ee.ImageCollection,
+                      start_date: str, end_date: str,
+                      temporal_resolution: str = 'yearly',
+                      climatology_reducer: str = 'mean') -> ee.ImageCollection:
         """
-        Calculate monthly maximum value of daily maximum temperature
-        
-        Formula: TXx = max(TX) for each month
+        Calculate maximum value of daily maximum temperature
+
+        Formula: TXx = max(TX) for each period (monthly or yearly)
+
+        Args:
+            tmax_collection: Daily maximum temperature collection
+            start_date: Start date string
+            end_date: End date string
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
+            climatology_reducer: 'mean' or 'median' for climatology calculations
         """
         # Filter collection to date range
         filtered = tmax_collection.filterDate(start_date, end_date)
-        
-        # Calculate monthly maxima for ALL months in the date range
-        def calculate_monthly_max(month_year):
-            month = ee.Number(month_year).int()
-            year = month.divide(100).int()
-            month = month.mod(100)
-            
-            # Filter to specific month and year
-            monthly_data = filtered.filter(
-                ee.Filter.calendarRange(year, year, 'year')
-            ).filter(
-                ee.Filter.calendarRange(month, month, 'month')
-            )
-            
-            # Return monthly maximum
-            max_img = monthly_data.max()
-            
-            return max_img.set({
-                'month': month,
-                'year': year,
-                'system:time_start': ee.Date.fromYMD(year, month, 1).millis()
-            })
-        
+
         # Create year-month sequence for ALL months in the date range
         start_year = ee.Date(start_date).get('year')
         end_year = ee.Date(end_date).get('year')
-        
-        years = ee.List.sequence(start_year, end_year)
-        months = ee.List.sequence(1, 12)
-        
-        # Create ALL year-month combinations (encode as YYYYMM)
-        year_months = years.map(
-            lambda y: months.map(lambda m: ee.Number(y).multiply(100).add(m))
-        ).flatten()
-        
-        # Calculate monthly maxima for ALL combinations
-        monthly_results = ee.ImageCollection.fromImages(
-            year_months.map(calculate_monthly_max)
-        )
-        
-        return monthly_results
+
+        if temporal_resolution == 'monthly':
+            # Calculate monthly maxima for ALL months in the date range
+            def calculate_monthly_max(month_year):
+                month = ee.Number(month_year).int()
+                year = month.divide(100).int()
+                month = month.mod(100)
+
+                # Filter to specific month and year
+                monthly_data = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                ).filter(
+                    ee.Filter.calendarRange(month, month, 'month')
+                )
+
+                # Return monthly maximum
+                max_img = monthly_data.max()
+
+                return max_img.set({
+                    'month': month,
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, month, 1).millis(),
+                    'index_name': 'TXx',
+                    'unit': 'celsius'
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+            months = ee.List.sequence(1, 12)
+
+            # Create ALL year-month combinations (encode as YYYYMM)
+            year_months = years.map(
+                lambda y: months.map(lambda m: ee.Number(y).multiply(100).add(m))
+            ).flatten()
+
+            # Calculate monthly maxima for ALL combinations
+            monthly_results = ee.ImageCollection.fromImages(
+                year_months.map(calculate_monthly_max)
+            )
+
+            return monthly_results
+
+        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+            # Climatology mode: Return YEARLY collection for time series plotting
+            # The export function will aggregate to single image based on metadata
+            def calculate_annual_txx_clim(year):
+                year = ee.Number(year)
+
+                # Get year data
+                yearly = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                )
+
+                # Return annual maximum
+                max_img = yearly.max()
+
+                return max_img.set({
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                    'index_name': 'TXx',
+                    'unit': 'celsius'
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+            yearly_collection = ee.ImageCollection.fromImages(
+                years.map(calculate_annual_txx_clim)
+            )
+
+            # Set metadata for climatology mode
+            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            return yearly_collection.set({
+                'climatology_mode': True,
+                'climatology_type': climatology_type,
+                'temporal_resolution': temporal_resolution,
+                'index_name': 'TXx',
+                'start_year': start_year,
+                'end_year': end_year
+            })
+
+        else:
+            # Yearly aggregation (default)
+            def calculate_annual_txx(year):
+                year = ee.Number(year)
+
+                # Get year data
+                yearly = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                )
+
+                # Return annual maximum
+                max_img = yearly.max()
+
+                return max_img.set({
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                    'index_name': 'TXx',
+                    'unit': 'celsius'
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+
+            results = ee.ImageCollection.fromImages(
+                years.map(calculate_annual_txx)
+            )
+
+            return results
     
-    def calculate_TNn(self, tmin_collection: ee.ImageCollection, 
-                      start_date: str, end_date: str) -> ee.ImageCollection:
+    def calculate_TNn(self, tmin_collection: ee.ImageCollection,
+                      start_date: str, end_date: str,
+                      temporal_resolution: str = 'yearly',
+                      climatology_reducer: str = 'mean') -> ee.ImageCollection:
         """
-        Calculate monthly minimum value of daily minimum temperature
-        
-        Formula: TNn = min(TN) for each month
+        Calculate minimum value of daily minimum temperature
+
+        Formula: TNn = min(TN) for each period (monthly or yearly)
+
+        Args:
+            tmin_collection: Daily minimum temperature collection
+            start_date: Start date string
+            end_date: End date string
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
+            climatology_reducer: 'mean' or 'median' for climatology calculations
         """
         # Filter collection to date range
         filtered = tmin_collection.filterDate(start_date, end_date)
-        
-        # Calculate monthly minima for ALL months in the date range
-        def calculate_monthly_min(month_year):
-            month = ee.Number(month_year).int()
-            year = month.divide(100).int()
-            month = month.mod(100)
-            
-            # Filter to specific month and year
-            monthly_data = filtered.filter(
-                ee.Filter.calendarRange(year, year, 'year')
-            ).filter(
-                ee.Filter.calendarRange(month, month, 'month')
-            )
-            
-            # Return monthly minimum
-            min_img = monthly_data.min()
-            
-            return min_img.set({
-                'month': month,
-                'year': year,
-                'system:time_start': ee.Date.fromYMD(year, month, 1).millis()
-            })
-        
+
         # Create year-month sequence for ALL months in the date range
         start_year = ee.Date(start_date).get('year')
         end_year = ee.Date(end_date).get('year')
-        
-        years = ee.List.sequence(start_year, end_year)
-        months = ee.List.sequence(1, 12)
-        
-        # Create ALL year-month combinations (encode as YYYYMM)
-        year_months = years.map(
-            lambda y: months.map(lambda m: ee.Number(y).multiply(100).add(m))
-        ).flatten()
-        
-        # Calculate monthly minima for ALL combinations
-        monthly_results = ee.ImageCollection.fromImages(
-            year_months.map(calculate_monthly_min)
-        )
-        
-        return monthly_results
+
+        if temporal_resolution == 'monthly':
+            # Calculate monthly minima for ALL months in the date range
+            def calculate_monthly_min(month_year):
+                month = ee.Number(month_year).int()
+                year = month.divide(100).int()
+                month = month.mod(100)
+
+                # Filter to specific month and year
+                monthly_data = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                ).filter(
+                    ee.Filter.calendarRange(month, month, 'month')
+                )
+
+                # Return monthly minimum
+                min_img = monthly_data.min()
+
+                return min_img.set({
+                    'month': month,
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, month, 1).millis(),
+                    'index_name': 'TNn',
+                    'unit': 'celsius'
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+            months = ee.List.sequence(1, 12)
+
+            # Create ALL year-month combinations (encode as YYYYMM)
+            year_months = years.map(
+                lambda y: months.map(lambda m: ee.Number(y).multiply(100).add(m))
+            ).flatten()
+
+            # Calculate monthly minima for ALL combinations
+            monthly_results = ee.ImageCollection.fromImages(
+                year_months.map(calculate_monthly_min)
+            )
+
+            return monthly_results
+
+        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+            # Climatology mode: Return YEARLY collection for time series plotting
+            # The export function will aggregate to single image based on metadata
+            def calculate_annual_tnn_clim(year):
+                year = ee.Number(year)
+
+                # Get year data
+                yearly = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                )
+
+                # Return annual minimum
+                min_img = yearly.min()
+
+                return min_img.set({
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                    'index_name': 'TNn',
+                    'unit': 'celsius'
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+            yearly_collection = ee.ImageCollection.fromImages(
+                years.map(calculate_annual_tnn_clim)
+            )
+
+            # Set metadata for climatology mode
+            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            return yearly_collection.set({
+                'climatology_mode': True,
+                'climatology_type': climatology_type,
+                'temporal_resolution': temporal_resolution,
+                'index_name': 'TNn',
+                'start_year': start_year,
+                'end_year': end_year
+            })
+
+        else:
+            # Yearly aggregation (default)
+            def calculate_annual_tnn(year):
+                year = ee.Number(year)
+
+                # Get year data
+                yearly = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                )
+
+                # Return annual minimum
+                min_img = yearly.min()
+
+                return min_img.set({
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                    'index_name': 'TNn',
+                    'unit': 'celsius'
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+
+            results = ee.ImageCollection.fromImages(
+                years.map(calculate_annual_tnn)
+            )
+
+            return results
     
     def calculate_TX90p(self, tmax_collection: ee.ImageCollection,
                         start_date: str, end_date: str,
                         base_start: str = "1980-01-01",
                         base_end: str = "2000-12-31",
                         percentile: float = 90.0,
-                        temporal_resolution: str = 'yearly') -> ee.ImageCollection:
+                        temporal_resolution: str = 'yearly',
+                        climatology_reducer: str = 'mean') -> ee.ImageCollection:
         """
         Calculate count of days when Tmax > percentile threshold of base period
 
@@ -375,7 +530,8 @@ class ClimateIndicesCalculator:
             base_start: Base period start date
             base_end: Base period end date
             percentile: Percentile threshold (default 90.0)
-            temporal_resolution: 'monthly' or 'yearly' aggregation
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
+            climatology_reducer: 'mean' or 'median' for climatology calculations
         """
         # Calculate specified percentile from base period
         base_collection = tmax_collection.filterDate(base_start, base_end)
@@ -424,6 +580,44 @@ class ClimateIndicesCalculator:
                 year_months.map(calculate_monthly_tx90p)
             )
             return results
+
+        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+            # Climatology mode: Return YEARLY collection for time series plotting
+            # The export function will aggregate to single image based on metadata
+            def calculate_annual_tx90p_clim(year):
+                year = ee.Number(year)
+
+                # Get year data
+                yearly = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                )
+
+                # Count exceedances
+                exceedances = yearly.map(lambda img: img.gt(percentile_threshold))
+                exceedance_count = exceedances.sum()
+
+                return exceedance_count.set({
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                    'index_name': 'TX90p',
+                    'unit': 'days'
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+            yearly_collection = ee.ImageCollection.fromImages(
+                years.map(calculate_annual_tx90p_clim)
+            )
+
+            # Set metadata for climatology mode
+            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            return yearly_collection.set({
+                'climatology_mode': True,
+                'climatology_type': climatology_type,
+                'temporal_resolution': temporal_resolution,
+                'index_name': 'TX90p',
+                'start_year': start_year,
+                'end_year': end_year
+            })
 
         else:
             # Yearly aggregation (default)
@@ -653,7 +847,8 @@ class ClimateIndicesCalculator:
                         base_start: str = "1980-01-01",
                         base_end: str = "2000-12-31",
                         percentile: float = 10.0,
-                        temporal_resolution: str = 'yearly') -> ee.ImageCollection:
+                        temporal_resolution: str = 'yearly',
+                        climatology_reducer: str = 'mean') -> ee.ImageCollection:
         """
         Calculate count of days when Tmax < percentile threshold of base period
 
@@ -666,7 +861,8 @@ class ClimateIndicesCalculator:
             base_start: Base period start date
             base_end: Base period end date
             percentile: Percentile threshold (default 10.0)
-            temporal_resolution: 'monthly' or 'yearly' aggregation
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
+            climatology_reducer: 'mean' or 'median' for climatology calculations
         """
         # Calculate specified percentile from base period
         base_collection = tmax_collection.filterDate(base_start, base_end)
@@ -716,6 +912,44 @@ class ClimateIndicesCalculator:
             )
             return results
 
+        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+            # Climatology mode: Return YEARLY collection for time series plotting
+            # The export function will aggregate to single image based on metadata
+            def calculate_annual_tx10p_clim(year):
+                year = ee.Number(year)
+
+                # Get year data
+                yearly = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                )
+
+                # Count exceedances
+                exceedances = yearly.map(lambda img: img.lt(percentile_threshold))
+                exceedance_count = exceedances.sum()
+
+                return exceedance_count.set({
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                    'index_name': 'TX10p',
+                    'unit': 'days'
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+            yearly_collection = ee.ImageCollection.fromImages(
+                years.map(calculate_annual_tx10p_clim)
+            )
+
+            # Set metadata for climatology mode
+            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            return yearly_collection.set({
+                'climatology_mode': True,
+                'climatology_type': climatology_type,
+                'temporal_resolution': temporal_resolution,
+                'index_name': 'TX10p',
+                'start_year': start_year,
+                'end_year': end_year
+            })
+
         else:
             # Yearly aggregation (default)
             def calculate_annual_tx10p(year):
@@ -750,7 +984,8 @@ class ClimateIndicesCalculator:
                         base_start: str = "1980-01-01",
                         base_end: str = "2000-12-31",
                         percentile: float = 90.0,
-                        temporal_resolution: str = 'yearly') -> ee.ImageCollection:
+                        temporal_resolution: str = 'yearly',
+                        climatology_reducer: str = 'mean') -> ee.ImageCollection:
         """
         Calculate count of days when Tmin > percentile threshold of base period
 
@@ -763,7 +998,8 @@ class ClimateIndicesCalculator:
             base_start: Base period start date
             base_end: Base period end date
             percentile: Percentile threshold (default 90.0)
-            temporal_resolution: 'monthly' or 'yearly' aggregation
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
+            climatology_reducer: 'mean' or 'median' for climatology calculations
         """
         # Calculate specified percentile from base period
         base_collection = tmin_collection.filterDate(base_start, base_end)
@@ -813,6 +1049,44 @@ class ClimateIndicesCalculator:
             )
             return results
 
+        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+            # Climatology mode: Return YEARLY collection for time series plotting
+            # The export function will aggregate to single image based on metadata
+            def calculate_annual_tn90p_clim(year):
+                year = ee.Number(year)
+
+                # Get year data
+                yearly = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                )
+
+                # Count exceedances
+                exceedances = yearly.map(lambda img: img.gt(percentile_threshold))
+                exceedance_count = exceedances.sum()
+
+                return exceedance_count.set({
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                    'index_name': 'TN90p',
+                    'unit': 'days'
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+            yearly_collection = ee.ImageCollection.fromImages(
+                years.map(calculate_annual_tn90p_clim)
+            )
+
+            # Set metadata for climatology mode
+            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            return yearly_collection.set({
+                'climatology_mode': True,
+                'climatology_type': climatology_type,
+                'temporal_resolution': temporal_resolution,
+                'index_name': 'TN90p',
+                'start_year': start_year,
+                'end_year': end_year
+            })
+
         else:
             # Yearly aggregation (default)
             def calculate_annual_tn90p(year):
@@ -847,7 +1121,8 @@ class ClimateIndicesCalculator:
                         base_start: str = "1980-01-01",
                         base_end: str = "2000-12-31",
                         percentile: float = 10.0,
-                        temporal_resolution: str = 'yearly') -> ee.ImageCollection:
+                        temporal_resolution: str = 'yearly',
+                        climatology_reducer: str = 'mean') -> ee.ImageCollection:
         """
         Calculate count of days when Tmin < percentile threshold of base period
 
@@ -860,7 +1135,8 @@ class ClimateIndicesCalculator:
             base_start: Base period start date
             base_end: Base period end date
             percentile: Percentile threshold (default 10.0)
-            temporal_resolution: 'monthly' or 'yearly' aggregation
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
+            climatology_reducer: 'mean' or 'median' for climatology calculations
         """
         # Calculate specified percentile from base period
         base_collection = tmin_collection.filterDate(base_start, base_end)
@@ -910,6 +1186,44 @@ class ClimateIndicesCalculator:
             )
             return results
 
+        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+            # Climatology mode: Return YEARLY collection for time series plotting
+            # The export function will aggregate to single image based on metadata
+            def calculate_annual_tn10p_clim(year):
+                year = ee.Number(year)
+
+                # Get year data
+                yearly = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                )
+
+                # Count exceedances
+                exceedances = yearly.map(lambda img: img.lt(percentile_threshold))
+                exceedance_count = exceedances.sum()
+
+                return exceedance_count.set({
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                    'index_name': 'TN10p',
+                    'unit': 'days'
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+            yearly_collection = ee.ImageCollection.fromImages(
+                years.map(calculate_annual_tn10p_clim)
+            )
+
+            # Set metadata for climatology mode
+            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            return yearly_collection.set({
+                'climatology_mode': True,
+                'climatology_type': climatology_type,
+                'temporal_resolution': temporal_resolution,
+                'index_name': 'TN10p',
+                'start_year': start_year,
+                'end_year': end_year
+            })
+
         else:
             # Yearly aggregation (default)
             def calculate_annual_tn10p(year):
@@ -941,7 +1255,8 @@ class ClimateIndicesCalculator:
 
     def calculate_TXn(self, tmax_collection: ee.ImageCollection,
                       start_date: str, end_date: str,
-                      temporal_resolution: str = 'monthly') -> ee.ImageCollection:
+                      temporal_resolution: str = 'yearly',
+                      climatology_reducer: str = 'mean') -> ee.ImageCollection:
         """
         Calculate minimum value of daily maximum temperature
 
@@ -951,7 +1266,8 @@ class ClimateIndicesCalculator:
             tmax_collection: Daily maximum temperature collection
             start_date: Start date string
             end_date: End date string
-            temporal_resolution: 'monthly' or 'yearly' aggregation
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
+            climatology_reducer: 'mean' or 'median' for climatology calculations
         """
         # Filter to analysis period
         filtered = tmax_collection.filterDate(start_date, end_date)
@@ -960,32 +1276,8 @@ class ClimateIndicesCalculator:
         start_year = ee.Date(start_date).get('year')
         end_year = ee.Date(end_date).get('year')
 
-        if temporal_resolution == 'yearly':
-            # Yearly aggregation
-            def calculate_yearly_txn(year):
-                yearly = filtered.filter(
-                    ee.Filter.calendarRange(year, year, 'year')
-                )
-
-                # Calculate minimum for year
-                yearly_min = yearly.min()
-
-                return yearly_min.set({
-                    'year': year,
-                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
-                    'index_name': 'TXn',
-                    'unit': '°C'
-                })
-
-            years = ee.List.sequence(start_year, end_year)
-
-            results = ee.ImageCollection.fromImages(
-                years.map(calculate_yearly_txn)
-            )
-            return results
-
-        else:
-            # Monthly aggregation (default)
+        if temporal_resolution == 'monthly':
+            # Monthly aggregation
             def calculate_monthly_txn(month_year):
                 month = ee.Number(month_year).int()
                 year = month.divide(100).int()
@@ -1022,9 +1314,70 @@ class ClimateIndicesCalculator:
 
             return results
 
+        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+            # Climatology mode: Return YEARLY collection for time series plotting
+            # The export function will aggregate to single image based on metadata
+            def calculate_yearly_txn_clim(year):
+                year = ee.Number(year)
+                yearly = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                )
+
+                # Calculate minimum for year
+                yearly_min = yearly.min()
+
+                return yearly_min.set({
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                    'index_name': 'TXn',
+                    'unit': '°C'
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+            yearly_collection = ee.ImageCollection.fromImages(
+                years.map(calculate_yearly_txn_clim)
+            )
+
+            # Set metadata for climatology mode
+            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            return yearly_collection.set({
+                'climatology_mode': True,
+                'climatology_type': climatology_type,
+                'temporal_resolution': temporal_resolution,
+                'index_name': 'TXn',
+                'start_year': start_year,
+                'end_year': end_year
+            })
+
+        else:
+            # Yearly aggregation (default)
+            def calculate_yearly_txn(year):
+                year = ee.Number(year)
+                yearly = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                )
+
+                # Calculate minimum for year
+                yearly_min = yearly.min()
+
+                return yearly_min.set({
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                    'index_name': 'TXn',
+                    'unit': '°C'
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+
+            results = ee.ImageCollection.fromImages(
+                years.map(calculate_yearly_txn)
+            )
+            return results
+
     def calculate_TNx(self, tmin_collection: ee.ImageCollection,
                       start_date: str, end_date: str,
-                      temporal_resolution: str = 'monthly') -> ee.ImageCollection:
+                      temporal_resolution: str = 'yearly',
+                      climatology_reducer: str = 'mean') -> ee.ImageCollection:
         """
         Calculate maximum value of daily minimum temperature
 
@@ -1034,7 +1387,8 @@ class ClimateIndicesCalculator:
             tmin_collection: Daily minimum temperature collection
             start_date: Start date string
             end_date: End date string
-            temporal_resolution: 'monthly' or 'yearly' aggregation
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
+            climatology_reducer: 'mean' or 'median' for climatology calculations
         """
         # Filter to analysis period
         filtered = tmin_collection.filterDate(start_date, end_date)
@@ -1043,32 +1397,8 @@ class ClimateIndicesCalculator:
         start_year = ee.Date(start_date).get('year')
         end_year = ee.Date(end_date).get('year')
 
-        if temporal_resolution == 'yearly':
-            # Yearly aggregation
-            def calculate_yearly_tnx(year):
-                yearly = filtered.filter(
-                    ee.Filter.calendarRange(year, year, 'year')
-                )
-
-                # Calculate maximum for year
-                yearly_max = yearly.max()
-
-                return yearly_max.set({
-                    'year': year,
-                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
-                    'index_name': 'TNx',
-                    'unit': '°C'
-                })
-
-            years = ee.List.sequence(start_year, end_year)
-
-            results = ee.ImageCollection.fromImages(
-                years.map(calculate_yearly_tnx)
-            )
-            return results
-
-        else:
-            # Monthly aggregation (default)
+        if temporal_resolution == 'monthly':
+            # Monthly aggregation
             def calculate_monthly_tnx(month_year):
                 month = ee.Number(month_year).int()
                 year = month.divide(100).int()
@@ -1103,6 +1433,66 @@ class ClimateIndicesCalculator:
                 year_months.map(calculate_monthly_tnx)
             )
 
+            return results
+
+        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+            # Climatology mode: Return YEARLY collection for time series plotting
+            # The export function will aggregate to single image based on metadata
+            def calculate_yearly_tnx_clim(year):
+                year = ee.Number(year)
+                yearly = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                )
+
+                # Calculate maximum for year
+                yearly_max = yearly.max()
+
+                return yearly_max.set({
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                    'index_name': 'TNx',
+                    'unit': '°C'
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+            yearly_collection = ee.ImageCollection.fromImages(
+                years.map(calculate_yearly_tnx_clim)
+            )
+
+            # Set metadata for climatology mode
+            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            return yearly_collection.set({
+                'climatology_mode': True,
+                'climatology_type': climatology_type,
+                'temporal_resolution': temporal_resolution,
+                'index_name': 'TNx',
+                'start_year': start_year,
+                'end_year': end_year
+            })
+
+        else:
+            # Yearly aggregation (default)
+            def calculate_yearly_tnx(year):
+                year = ee.Number(year)
+                yearly = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                )
+
+                # Calculate maximum for year
+                yearly_max = yearly.max()
+
+                return yearly_max.set({
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                    'index_name': 'TNx',
+                    'unit': '°C'
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+
+            results = ee.ImageCollection.fromImages(
+                years.map(calculate_yearly_tnx)
+            )
             return results
 
     def calculate_SU(self, tmax_collection: ee.ImageCollection,
@@ -1147,7 +1537,8 @@ class ClimateIndicesCalculator:
     def calculate_R20mm(self, precip_collection: ee.ImageCollection,
                         start_date: str, end_date: str,
                         threshold: float = 20.0,
-                        temporal_resolution: str = 'yearly') -> ee.ImageCollection:
+                        temporal_resolution: str = 'yearly',
+                        climatology_reducer: str = 'mean') -> ee.ImageCollection:
         """
         Calculate count of days when daily precipitation ≥ 20mm
 
@@ -1158,7 +1549,8 @@ class ClimateIndicesCalculator:
             start_date: Start date string
             end_date: End date string
             threshold: Precipitation threshold (default 20.0 mm)
-            temporal_resolution: 'monthly' or 'yearly' aggregation
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
+            climatology_reducer: 'mean' or 'median' for climatology calculations
         """
         # Filter to analysis period
         filtered = precip_collection.filterDate(start_date, end_date)
@@ -1202,6 +1594,44 @@ class ClimateIndicesCalculator:
                 year_months.map(calculate_monthly_r20)
             )
             return results
+
+        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+            # Climatology mode: Return YEARLY collection for time series plotting
+            # The export function will aggregate to single image based on metadata
+            def calculate_annual_r20_clim(year):
+                year = ee.Number(year)
+
+                # Get year data
+                yearly = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                )
+
+                # Count heavy rain days
+                heavy_rain_days = yearly.map(lambda img: img.gte(threshold))
+                heavy_rain_count = heavy_rain_days.sum()
+
+                return heavy_rain_count.set({
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                    'index_name': 'R20mm',
+                    'unit': 'days'
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+            yearly_collection = ee.ImageCollection.fromImages(
+                years.map(calculate_annual_r20_clim)
+            )
+
+            # Set metadata for climatology mode
+            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            return yearly_collection.set({
+                'climatology_mode': True,
+                'climatology_type': climatology_type,
+                'temporal_resolution': temporal_resolution,
+                'index_name': 'R20mm',
+                'start_year': start_year,
+                'end_year': end_year
+            })
 
         else:
             # Yearly aggregation (default)
@@ -2127,63 +2557,158 @@ class ClimateIndicesCalculator:
     
     def calculate_DTR(self, tmax_collection: ee.ImageCollection,
                       tmin_collection: ee.ImageCollection,
-                      start_date: str, end_date: str) -> ee.ImageCollection:
+                      start_date: str, end_date: str,
+                      temporal_resolution: str = 'yearly',
+                      climatology_reducer: str = 'mean') -> ee.ImageCollection:
         """
-        Calculate monthly mean diurnal temperature range (simplified approach)
-        
+        Calculate mean diurnal temperature range
+
         Formula: DTR = mean(TX - TN)
+
+        Args:
+            tmax_collection: Daily maximum temperature collection
+            tmin_collection: Daily minimum temperature collection
+            start_date: Start date string
+            end_date: End date string
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
+            climatology_reducer: 'mean' or 'median' for climatology calculations
         """
         # Filter collections to date range
         tmax_filtered = tmax_collection.filterDate(start_date, end_date)
         tmin_filtered = tmin_collection.filterDate(start_date, end_date)
-        
-        def calculate_monthly_dtr(month_year):
-            month = ee.Number(month_year).int()
-            year = month.divide(100).int()
-            month = month.mod(100)
-            
-            # Get monthly data
-            monthly_tmax = tmax_filtered.filter(
-                ee.Filter.calendarRange(year, year, 'year')
-            ).filter(
-                ee.Filter.calendarRange(month, month, 'month')
-            )
-            
-            monthly_tmin = tmin_filtered.filter(
-                ee.Filter.calendarRange(year, year, 'year')
-            ).filter(
-                ee.Filter.calendarRange(month, month, 'month')
-            )
-            
-            # Calculate mean temperatures for the month
-            mean_tmax = monthly_tmax.mean()
-            mean_tmin = monthly_tmin.mean()
-            
-            # Calculate DTR
-            dtr = mean_tmax.subtract(mean_tmin)
-            
-            return dtr.set({
-                'month': month,
-                'year': year,
-                'system:time_start': ee.Date.fromYMD(year, month, 1).millis()
-            })
-        
+
         # Create year-month sequence
         start_year = ee.Date(start_date).get('year')
         end_year = ee.Date(end_date).get('year')
-        
-        years = ee.List.sequence(start_year, end_year)
-        months = ee.List.sequence(1, 12)
-        
-        year_months = years.map(
-            lambda y: months.map(lambda m: ee.Number(y).multiply(100).add(m))
-        ).flatten()
-        
-        results = ee.ImageCollection.fromImages(
-            year_months.map(calculate_monthly_dtr)
-        )
-        
-        return results
+
+        if temporal_resolution == 'monthly':
+            # Monthly aggregation
+            def calculate_monthly_dtr(month_year):
+                month = ee.Number(month_year).int()
+                year = month.divide(100).int()
+                month = month.mod(100)
+
+                # Get monthly data
+                monthly_tmax = tmax_filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                ).filter(
+                    ee.Filter.calendarRange(month, month, 'month')
+                )
+
+                monthly_tmin = tmin_filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                ).filter(
+                    ee.Filter.calendarRange(month, month, 'month')
+                )
+
+                # Calculate mean temperatures for the month
+                mean_tmax = monthly_tmax.mean()
+                mean_tmin = monthly_tmin.mean()
+
+                # Calculate DTR
+                dtr = mean_tmax.subtract(mean_tmin)
+
+                return dtr.set({
+                    'month': month,
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, month, 1).millis(),
+                    'index_name': 'DTR',
+                    'unit': '°C'
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+            months = ee.List.sequence(1, 12)
+
+            year_months = years.map(
+                lambda y: months.map(lambda m: ee.Number(y).multiply(100).add(m))
+            ).flatten()
+
+            results = ee.ImageCollection.fromImages(
+                year_months.map(calculate_monthly_dtr)
+            )
+
+            return results
+
+        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+            # Climatology mode: Return YEARLY collection for time series plotting
+            # The export function will aggregate to single image based on metadata
+            def calculate_yearly_dtr_clim(year):
+                year = ee.Number(year)
+
+                # Get yearly data
+                yearly_tmax = tmax_filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                )
+
+                yearly_tmin = tmin_filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                )
+
+                # Calculate mean temperatures for the year
+                mean_tmax = yearly_tmax.mean()
+                mean_tmin = yearly_tmin.mean()
+
+                # Calculate DTR
+                dtr = mean_tmax.subtract(mean_tmin)
+
+                return dtr.set({
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                    'index_name': 'DTR',
+                    'unit': '°C'
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+            yearly_collection = ee.ImageCollection.fromImages(
+                years.map(calculate_yearly_dtr_clim)
+            )
+
+            # Set metadata for climatology mode
+            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            return yearly_collection.set({
+                'climatology_mode': True,
+                'climatology_type': climatology_type,
+                'temporal_resolution': temporal_resolution,
+                'index_name': 'DTR',
+                'start_year': start_year,
+                'end_year': end_year
+            })
+
+        else:
+            # Yearly aggregation (default)
+            def calculate_yearly_dtr(year):
+                year = ee.Number(year)
+
+                # Get yearly data
+                yearly_tmax = tmax_filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                )
+
+                yearly_tmin = tmin_filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                )
+
+                # Calculate mean temperatures for the year
+                mean_tmax = yearly_tmax.mean()
+                mean_tmin = yearly_tmin.mean()
+
+                # Calculate DTR
+                dtr = mean_tmax.subtract(mean_tmin)
+
+                return dtr.set({
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                    'index_name': 'DTR',
+                    'unit': '°C'
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+
+            results = ee.ImageCollection.fromImages(
+                years.map(calculate_yearly_dtr)
+            )
+
+            return results
 
     def calculate_mann_kendall_trend(self, time_series_collection: ee.ImageCollection) -> ee.Image:
         """
@@ -3107,7 +3632,8 @@ class ClimateIndicesCalculator:
     
     def calculate_R10mm(self, precip_collection: ee.ImageCollection,
                         start_date: str, end_date: str,
-                        temporal_resolution: str = 'yearly') -> ee.ImageCollection:
+                        temporal_resolution: str = 'yearly',
+                        climatology_reducer: str = 'mean') -> ee.ImageCollection:
         """
         Calculate count of heavy precipitation days (≥ 10mm)
 
@@ -3117,7 +3643,8 @@ class ClimateIndicesCalculator:
             precip_collection: Daily precipitation collection
             start_date: Start date string
             end_date: End date string
-            temporal_resolution: 'monthly' or 'yearly' aggregation
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
+            climatology_reducer: 'mean' or 'median' for climatology calculations
         """
         filtered = precip_collection.filterDate(start_date, end_date)
 
@@ -3158,6 +3685,35 @@ class ClimateIndicesCalculator:
                 year_months.map(calculate_monthly_r10)
             )
             return results
+
+        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+            # Climatology mode: Return YEARLY collection for time series plotting
+            def calculate_annual_r10(year):
+                annual = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                )
+                heavy_days = annual.map(lambda img: img.gte(10)).sum()
+                return heavy_days.set({
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                    'index_name': 'R10mm',
+                    'unit': 'days'
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+            yearly_collection = ee.ImageCollection.fromImages(
+                years.map(calculate_annual_r10)
+            )
+
+            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            return yearly_collection.set({
+                'climatology_mode': True,
+                'climatology_type': climatology_type,
+                'temporal_resolution': temporal_resolution,
+                'index_name': 'R10mm',
+                'start_year': start_year,
+                'end_year': end_year
+            })
 
         else:
             # Yearly aggregation (default)
@@ -3381,7 +3937,8 @@ class ClimateIndicesCalculator:
     def calculate_SDII(self, precip_collection: ee.ImageCollection,
                        start_date: str, end_date: str,
                        wet_threshold: float = 1.0,
-                       temporal_resolution: str = 'yearly') -> ee.ImageCollection:
+                       temporal_resolution: str = 'yearly',
+                       climatology_reducer: str = 'mean') -> ee.ImageCollection:
         """
         Calculate Simple Daily Intensity Index
 
@@ -3392,7 +3949,8 @@ class ClimateIndicesCalculator:
             start_date: Start date string
             end_date: End date string
             wet_threshold: Threshold for wet day (default 1.0 mm)
-            temporal_resolution: 'monthly' or 'yearly' aggregation
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
+            climatology_reducer: 'mean' or 'median' for climatology calculations
         """
         filtered = precip_collection.filterDate(start_date, end_date)
 
@@ -3441,6 +3999,49 @@ class ClimateIndicesCalculator:
                 year_months.map(calculate_monthly_sdii)
             )
             return results
+
+        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+            # Climatology mode: Return YEARLY collection for time series plotting
+            # The export function will aggregate to single image based on metadata
+            def calculate_annual_sdii_clim(year):
+                year = ee.Number(year)
+                annual = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                )
+
+                # Sum precipitation on wet days
+                wet_precip = annual.map(
+                    lambda img: img.updateMask(img.gte(wet_threshold))
+                ).sum()
+
+                # Count wet days
+                wet_days = annual.map(lambda img: img.gte(wet_threshold)).sum()
+
+                # Calculate SDII
+                sdii = wet_precip.divide(wet_days)
+
+                return sdii.set({
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                    'index_name': 'SDII',
+                    'unit': 'mm/day'
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+            yearly_collection = ee.ImageCollection.fromImages(
+                years.map(calculate_annual_sdii_clim)
+            )
+
+            # Set metadata for climatology mode
+            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            return yearly_collection.set({
+                'climatology_mode': True,
+                'climatology_type': climatology_type,
+                'temporal_resolution': temporal_resolution,
+                'index_name': 'SDII',
+                'start_year': start_year,
+                'end_year': end_year
+            })
 
         else:
             # Yearly aggregation (default)
@@ -3674,7 +4275,8 @@ class ClimateIndicesCalculator:
                        base_start: str = "1980-01-01",
                        base_end: str = "2000-12-31",
                        percentile: float = 95.0,
-                       temporal_resolution: str = 'yearly') -> ee.ImageCollection:
+                       temporal_resolution: str = 'yearly',
+                       climatology_reducer: str = 'mean') -> ee.ImageCollection:
         """
         Calculate total precipitation when daily precipitation > percentile threshold of base period
 
@@ -3687,7 +4289,8 @@ class ClimateIndicesCalculator:
             base_start: Base period start date
             base_end: Base period end date
             percentile: Percentile threshold (default 95.0)
-            temporal_resolution: 'monthly' or 'yearly' aggregation
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
+            climatology_reducer: 'mean' or 'median' for climatology calculations
         """
         # Calculate specified percentile from base period
         base_collection = precip_collection.filterDate(base_start, base_end)
@@ -3737,6 +4340,44 @@ class ClimateIndicesCalculator:
             )
             return results
 
+        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+            # Climatology mode: Return YEARLY collection for time series plotting
+            # The export function will aggregate to single image based on metadata
+            def calculate_annual_r95p_clim(year):
+                year = ee.Number(year)
+
+                # Get year data
+                yearly = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                )
+
+                # Sum precipitation above percentile threshold
+                wet_days = yearly.map(lambda img: img.where(img.gt(percentile_threshold), img, 0))
+                total_precip = wet_days.sum()
+
+                return total_precip.set({
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                    'index_name': 'R95p',
+                    'unit': 'mm'
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+            yearly_collection = ee.ImageCollection.fromImages(
+                years.map(calculate_annual_r95p_clim)
+            )
+
+            # Set metadata for climatology mode
+            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            return yearly_collection.set({
+                'climatology_mode': True,
+                'climatology_type': climatology_type,
+                'temporal_resolution': temporal_resolution,
+                'index_name': 'R95p',
+                'start_year': start_year,
+                'end_year': end_year
+            })
+
         else:
             # Yearly aggregation (default)
             def calculate_annual_r95p(year):
@@ -3771,7 +4412,8 @@ class ClimateIndicesCalculator:
                        base_start: str = "1980-01-01",
                        base_end: str = "2000-12-31",
                        percentile: float = 99.0,
-                       temporal_resolution: str = 'yearly') -> ee.ImageCollection:
+                       temporal_resolution: str = 'yearly',
+                       climatology_reducer: str = 'mean') -> ee.ImageCollection:
         """
         Calculate total precipitation when daily precipitation > percentile threshold of base period
 
@@ -3784,7 +4426,8 @@ class ClimateIndicesCalculator:
             base_start: Base period start date
             base_end: Base period end date
             percentile: Percentile threshold (default 99.0)
-            temporal_resolution: 'monthly' or 'yearly' aggregation
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
+            climatology_reducer: 'mean' or 'median' for climatology calculations
         """
         # Calculate specified percentile from base period
         base_collection = precip_collection.filterDate(base_start, base_end)
@@ -3834,6 +4477,44 @@ class ClimateIndicesCalculator:
             )
             return results
 
+        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+            # Climatology mode: Return YEARLY collection for time series plotting
+            # The export function will aggregate to single image based on metadata
+            def calculate_annual_r99p_clim(year):
+                year = ee.Number(year)
+
+                # Get year data
+                yearly = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                )
+
+                # Sum precipitation above percentile threshold
+                wet_days = yearly.map(lambda img: img.where(img.gt(percentile_threshold), img, 0))
+                total_precip = wet_days.sum()
+
+                return total_precip.set({
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                    'index_name': 'R99p',
+                    'unit': 'mm'
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+            yearly_collection = ee.ImageCollection.fromImages(
+                years.map(calculate_annual_r99p_clim)
+            )
+
+            # Set metadata for climatology mode
+            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            return yearly_collection.set({
+                'climatology_mode': True,
+                'climatology_type': climatology_type,
+                'temporal_resolution': temporal_resolution,
+                'index_name': 'R99p',
+                'start_year': start_year,
+                'end_year': end_year
+            })
+
         else:
             # Yearly aggregation (default)
             def calculate_annual_r99p(year):
@@ -3868,7 +4549,8 @@ class ClimateIndicesCalculator:
                        base_start: str = "1980-01-01",
                        base_end: str = "2000-12-31",
                        percentile: float = 75.0,
-                       temporal_resolution: str = 'yearly') -> ee.ImageCollection:
+                       temporal_resolution: str = 'yearly',
+                       climatology_reducer: str = 'mean') -> ee.ImageCollection:
         """
         Calculate total precipitation when daily precipitation > percentile threshold of base period
 
@@ -3881,7 +4563,8 @@ class ClimateIndicesCalculator:
             base_start: Base period start date
             base_end: Base period end date
             percentile: Percentile threshold (default 75.0)
-            temporal_resolution: 'monthly' or 'yearly' aggregation
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', or 'climatology_median' aggregation
+            climatology_reducer: 'mean' or 'median' for climatology calculations
         """
         # Calculate specified percentile from base period
         base_collection = precip_collection.filterDate(base_start, base_end)
@@ -3930,6 +4613,44 @@ class ClimateIndicesCalculator:
                 year_months.map(calculate_monthly_r75p)
             )
             return results
+
+        elif temporal_resolution in ['climatology_mean', 'climatology_median']:
+            # Climatology mode: Return YEARLY collection for time series plotting
+            # The export function will aggregate to single image based on metadata
+            def calculate_annual_r75p_clim(year):
+                year = ee.Number(year)
+
+                # Get year data
+                yearly = filtered.filter(
+                    ee.Filter.calendarRange(year, year, 'year')
+                )
+
+                # Sum precipitation above percentile threshold
+                wet_days = yearly.map(lambda img: img.where(img.gt(percentile_threshold), img, 0))
+                total_precip = wet_days.sum()
+
+                return total_precip.set({
+                    'year': year,
+                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                    'index_name': 'R75p',
+                    'unit': 'mm'
+                })
+
+            years = ee.List.sequence(start_year, end_year)
+            yearly_collection = ee.ImageCollection.fromImages(
+                years.map(calculate_annual_r75p_clim)
+            )
+
+            # Set metadata for climatology mode
+            climatology_type = 'median' if temporal_resolution == 'climatology_median' else 'mean'
+            return yearly_collection.set({
+                'climatology_mode': True,
+                'climatology_type': climatology_type,
+                'temporal_resolution': temporal_resolution,
+                'index_name': 'R75p',
+                'start_year': start_year,
+                'end_year': end_year
+            })
 
         else:
             # Yearly aggregation (default)
