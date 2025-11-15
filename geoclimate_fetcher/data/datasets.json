@@ -91,6 +91,48 @@
         "temperature": ["TXx", "TNn", "DTR", "TX90p", "TN10p", "FD", "SU"],
         "precipitation": ["RX1day", "CDD", "PRCPTOT", "R95p", "R10mm", "SDII"]
       }
+    },
+    "ECMWF/ERA5_LAND/DAILY_AGGR": {
+      "name": "ERA5-Land Daily Aggregated",
+      "provider": "Google and Copernicus Climate Data Store",
+      "start_date": "1950-01-02",
+      "end_date": "present",
+      "temporal_resolution": "daily",
+      "pixel_size_m": 11132,
+      "snippet_type": "ImageCollection",
+      "geographic_coverage": "Global",
+      "description": "ERA5-Land daily aggregated reanalysis data with higher spatial resolution than ERA5",
+      "bands": {
+        "temperature_max": {
+          "band_name": "temperature_2m_max",
+          "unit": "°C",
+          "original_unit": "K",
+          "scaling_factor": 1.0,
+          "offset": -273.15,
+          "description": "Daily maximum 2m air temperature"
+        },
+        "temperature_min": {
+          "band_name": "temperature_2m_min",
+          "unit": "°C",
+          "original_unit": "K",
+          "scaling_factor": 1.0,
+          "offset": -273.15,
+          "description": "Daily minimum 2m air temperature"
+        },
+        "precipitation": {
+          "band_name": "total_precipitation_sum",
+          "unit": "mm/day",
+          "original_unit": "m",
+          "scaling_factor": 1000.0,
+          "offset": 0.0,
+          "description": "Daily total precipitation"
+        }
+      },
+      "supports_analysis": ["temperature", "precipitation"],
+      "recommended_indices": {
+        "temperature": ["TXx", "TNn", "DTR", "TX90p", "TN10p", "FD", "SU", "TXn", "TNx"],
+        "precipitation": ["RX1day", "CDD", "PRCPTOT", "R95p", "R99p", "R75p", "R10mm", "R20mm", "SDII"]
+      }
     }
   },
   "climate_indices": {
