@@ -180,32 +180,71 @@ def _render_geometry_upload():
                     if num_geometries > 5:
                         st.info(f"Showing first 5 of {num_geometries} geometries")
 
+                # Calculate original GeoJSON size
+                original_size = len(json.dumps(geojson_data))
+                original_size_mb = original_size / (1024 * 1024)
+
                 # Geometry Simplification Settings
-                st.markdown("### ⚙️ Geometry Simplification")
+                st.markdown("### ⚙️ Geometry Simplification (Required for Large Files)")
+
+                if original_size_mb > 5:
+                    st.error(f"""
+                    ⚠️ **Large File Detected: {original_size_mb:.2f} MB**
+
+                    Earth Engine has a 10MB payload limit. Your file is {original_size_mb:.2f} MB.
+                    **You MUST simplify geometries** to reduce the file size before processing.
+                    """)
+                else:
+                    st.info(f"📁 Current file size: {original_size_mb:.2f} MB (EE limit: 10MB)")
+
                 st.warning("""
-                **Important:** Complex/fine geometries can cause GEE computation timeout.
-                Simplification reduces vertices while preserving shape, significantly improving performance.
+                **Important:** Geometry simplification reduces vertices while preserving shape.
+                - Reduces payload size to stay under Earth Engine's 10MB limit
+                - Improves computation performance significantly
+                - Higher tolerance = more simplification = smaller file
                 """)
 
                 simplify_tolerance = st.number_input(
                     "Simplification Tolerance (meters)",
                     min_value=0,
-                    max_value=10000,
-                    value=100,
-                    step=10,
-                    help="Higher values = more simplification. Recommended: 100-500m for regional data. 0 = no simplification."
+                    max_value=50000,
+                    value=1000 if original_size_mb > 5 else 100,
+                    step=100,
+                    help="Higher values = more simplification. Recommended: 1000-5000m for large files, 100-500m for smaller ones. 0 = no simplification (may fail for large files)."
                 )
 
-                if simplify_tolerance == 0:
-                    st.warning("⚠️ No simplification may cause slow processing or timeout for complex geometries.")
-                elif simplify_tolerance > 500:
-                    st.info("ℹ️ High simplification may reduce spatial accuracy but improves performance significantly.")
+                # Apply local simplification and show size reduction
+                if simplify_tolerance > 0:
+                    with st.spinner("Applying local geometry simplification..."):
+                        simplified_geojson, new_size = _simplify_geojson_locally(geojson_data, simplify_tolerance)
+                        new_size_mb = new_size / (1024 * 1024)
+                        reduction_pct = ((original_size - new_size) / original_size) * 100
+
+                    st.success(f"""
+                    ✅ **Simplification Applied:**
+                    - Original size: {original_size_mb:.2f} MB
+                    - New size: {new_size_mb:.2f} MB
+                    - Reduction: {reduction_pct:.1f}%
+                    """)
+
+                    if new_size_mb > 10:
+                        st.error(f"❌ File still too large ({new_size_mb:.2f} MB > 10MB). Increase simplification tolerance.")
+                    elif new_size_mb > 8:
+                        st.warning(f"⚠️ File is close to limit ({new_size_mb:.2f} MB). Consider increasing tolerance.")
+                    else:
+                        st.success(f"✅ File size OK: {new_size_mb:.2f} MB (under 10MB limit)")
+
+                    # Use simplified version
+                    geojson_to_store = simplified_geojson
                 else:
-                    st.success(f"✅ Recommended tolerance: {simplify_tolerance}m - Good balance of accuracy and performance.")
+                    st.warning("⚠️ No simplification applied. May fail for complex geometries.")
+                    geojson_to_store = geojson_data
+                    if original_size_mb > 10:
+                        st.error("❌ File exceeds 10MB limit. Simplification is required!")
 
                 # Store the data
-                st.session_state.mg_geojson_data = geojson_data
-                st.session_state.mg_geometries = features
+                st.session_state.mg_geojson_data = geojson_to_store
+                st.session_state.mg_geometries = geojson_to_store.get('features', features)
                 st.session_state.mg_simplify_tolerance = simplify_tolerance
 
                 col1, col2 = st.columns([3, 1])
@@ -233,6 +272,50 @@ def _process_uploaded_file(uploaded_file):
         if isinstance(content, bytes):
             content = content.decode('utf-8')
         return json.loads(content)
+
+
+def _simplify_geojson_locally(geojson_data, tolerance_meters):
+    """
+    Simplify GeoJSON geometries locally using shapely to reduce payload size.
+
+    Args:
+        geojson_data: GeoJSON dict with features
+        tolerance_meters: Simplification tolerance in meters
+
+    Returns:
+        Tuple of (simplified_geojson, new_size_bytes)
+    """
+    import geopandas as gpd
+    from shapely.geometry import shape, mapping
+
+    try:
+        # Convert to GeoDataFrame
+        gdf = gpd.GeoDataFrame.from_features(geojson_data['features'])
+
+        # Set CRS if not set (assume WGS84)
+        if gdf.crs is None:
+            gdf.set_crs(epsg=4326, inplace=True)
+
+        # Convert tolerance from meters to degrees (approximate)
+        # At equator: 1 degree ≈ 111,320 meters
+        # This is approximate but works for simplification purposes
+        tolerance_degrees = tolerance_meters / 111320.0
+
+        # Simplify geometries
+        gdf['geometry'] = gdf['geometry'].simplify(tolerance_degrees, preserve_topology=True)
+
+        # Convert back to GeoJSON
+        simplified_geojson = json.loads(gdf.to_json())
+
+        # Calculate new size
+        new_size = len(json.dumps(simplified_geojson))
+
+        return simplified_geojson, new_size
+
+    except Exception as e:
+        st.warning(f"⚠️ Local simplification failed: {str(e)}. Using original geometries.")
+        # Return original if simplification fails
+        return geojson_data, len(json.dumps(geojson_data))
 
 
 def _process_shapefile_zip(uploaded_file):
@@ -598,7 +681,7 @@ def _render_export_interface(exporter):
         - **Start Year:** {st.session_state.mg_start_year}
         - **End Year:** {st.session_state.mg_end_year}
         - **Aggregation:** {st.session_state.mg_reducer_type.capitalize()}
-        - **Simplification:** {st.session_state.mg_simplify_tolerance}m
+        - **Simplification:** {st.session_state.get('mg_simplify_tolerance', 100)}m
         """)
 
     # Export preference
@@ -633,7 +716,7 @@ def _render_export_interface(exporter):
     ⚠️ **Important Notes:**
     - Processing may take several minutes depending on data volume
     - Each year is processed as a separate task to handle GEE limits
-    - Geometry simplification will be applied to improve performance
+    - Geometry simplification has already been applied to reduce payload size
     - Local download works for smaller exports; larger ones go to Google Drive
     - Monitor progress in the Earth Engine Tasks panel: https://code.earthengine.google.com/tasks
     """)
@@ -662,27 +745,53 @@ def _execute_multi_geometry_export(exporter, export_preference, drive_folder, sc
     start_year = st.session_state.mg_start_year
     end_year = st.session_state.mg_end_year
     reducer_type = st.session_state.mg_reducer_type
-    simplify_tolerance = st.session_state.mg_simplify_tolerance
+    simplify_tolerance = st.session_state.get('mg_simplify_tolerance', 100)
 
     try:
-        # Convert GeoJSON to Earth Engine FeatureCollection with simplification
-        with st.spinner("Converting and simplifying geometries..."):
-            ee_fc = ee.FeatureCollection(geojson_data)
+        # Convert GeoJSON to Earth Engine FeatureCollection
+        with st.spinner("Converting geometries to Earth Engine format..."):
+            # Check payload size before sending
+            payload_size = len(json.dumps(geojson_data))
+            payload_size_mb = payload_size / (1024 * 1024)
 
-            # Apply geometry simplification if tolerance > 0
-            if simplify_tolerance > 0:
-                # Simplify each feature's geometry
-                def simplify_feature(feature):
-                    return feature.setGeometry(
-                        feature.geometry().simplify(maxError=simplify_tolerance)
-                    )
+            if payload_size_mb > 10:
+                st.error(f"""
+                ❌ **Payload Too Large: {payload_size_mb:.2f} MB**
 
-                ee_fc = ee_fc.map(simplify_feature)
-                st.success(f"✅ Geometries simplified with {simplify_tolerance}m tolerance")
+                Earth Engine has a 10MB limit. Please go back to Step 1 and:
+                1. Increase the simplification tolerance (try 2000-5000m)
+                2. Or upload a smaller file with fewer/simpler geometries
 
-            # Verify the feature collection
-            fc_size = ee_fc.size().getInfo()
-            st.success(f"✅ Created Earth Engine FeatureCollection with {fc_size} features")
+                Current file is {payload_size_mb:.2f} MB (limit: 10MB)
+                """)
+                return
+
+            st.info(f"📤 Uploading {payload_size_mb:.2f} MB to Earth Engine...")
+
+            try:
+                ee_fc = ee.FeatureCollection(geojson_data)
+                # Verify the feature collection
+                fc_size = ee_fc.size().getInfo()
+                st.success(f"✅ Created Earth Engine FeatureCollection with {fc_size} features")
+            except Exception as e:
+                error_msg = str(e)
+                if "payload size exceeds" in error_msg.lower() or "10485760" in error_msg:
+                    st.error(f"""
+                    ❌ **Payload Size Error**
+
+                    The GeoJSON file is too large for Earth Engine ({payload_size_mb:.2f} MB).
+
+                    **Solutions:**
+                    1. Go back to Step 1 and increase simplification tolerance (try 2000-10000m)
+                    2. Upload a file with fewer geometries
+                    3. Split your data into smaller batches
+
+                    Current simplification: {simplify_tolerance}m
+                    Try increasing to: {max(simplify_tolerance * 2, 5000)}m
+                    """)
+                else:
+                    st.error(f"❌ Failed to create FeatureCollection: {error_msg}")
+                return
 
         # Process year by year
         all_results = []
