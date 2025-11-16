@@ -31,6 +31,10 @@ def route_to_interface():
         from interface.data_visualizer import render_data_visualizer
         render_data_visualizer()
 
+    elif app_mode == "multi_geometry_export":
+        from interface.multi_geometry_export import render_multi_geometry_export
+        render_multi_geometry_export()
+
     else:
         # Default case - should not happen, but handle gracefully
         st.error(f"❌ Unknown app mode: {app_mode}")
