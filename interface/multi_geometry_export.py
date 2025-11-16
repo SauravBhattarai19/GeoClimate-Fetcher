@@ -597,11 +597,23 @@ def _render_date_selection():
     The system will automatically chunk long ranges for optimal processing.
     """)
 
+    # Calculate sensible defaults within the valid range
+    default_start = datetime(datetime.now().year - 1, 1, 1).date()
+    default_end = datetime.now().date()
+
+    # Clamp defaults to valid dataset range
+    default_start = max(dataset_start, min(default_start, dataset_end))
+    default_end = max(dataset_start, min(default_end, dataset_end))
+
+    # Ensure start is before end
+    if default_start > default_end:
+        default_start = default_end
+
     col1, col2 = st.columns(2)
     with col1:
         user_start_date = st.date_input(
             "Start Date",
-            value=max(dataset_start, datetime(datetime.now().year - 1, 1, 1).date()),
+            value=default_start,
             min_value=dataset_start,
             max_value=dataset_end,
             help="Select start date for your data export"
@@ -609,7 +621,7 @@ def _render_date_selection():
     with col2:
         user_end_date = st.date_input(
             "End Date",
-            value=min(dataset_end, datetime.now().date()),
+            value=default_end,
             min_value=user_start_date,
             max_value=dataset_end,
             help="Select end date for your data export"
