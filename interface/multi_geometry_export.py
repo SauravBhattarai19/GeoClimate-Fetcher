@@ -88,6 +88,10 @@ def _initialize_session_state():
         st.session_state.mg_start_date = None
     if 'mg_end_date' not in st.session_state:
         st.session_state.mg_end_date = None
+    if 'mg_start_year' not in st.session_state:
+        st.session_state.mg_start_year = None
+    if 'mg_end_year' not in st.session_state:
+        st.session_state.mg_end_year = None
     if 'mg_reducer_type' not in st.session_state:
         st.session_state.mg_reducer_type = 'mean'
     if 'mg_geojson_data' not in st.session_state:
@@ -737,15 +741,27 @@ def _execute_multi_geometry_export(exporter, export_preference, drive_folder, sc
 
     st.markdown("### 🔄 Processing Export...")
 
-    # Get selections
+    # Get selections with safety checks
     geojson_data = st.session_state.mg_geojson_data
     identifier_field = st.session_state.mg_identifier_field
-    dataset_id = st.session_state.mg_selected_dataset.get('ee_id')
+    dataset_id = st.session_state.mg_selected_dataset.get('ee_id') if st.session_state.mg_selected_dataset else None
     parameters = st.session_state.mg_selected_bands
     start_year = st.session_state.mg_start_year
     end_year = st.session_state.mg_end_year
     reducer_type = st.session_state.mg_reducer_type
     simplify_tolerance = st.session_state.get('mg_simplify_tolerance', 100)
+
+    # Validate required session state variables
+    if start_year is None or end_year is None:
+        st.error("❌ Date range not properly set. Please go back and select date range.")
+        if st.button("🔄 Reset and Start Over"):
+            _reset_all_state()
+            st.rerun()
+        return
+
+    if not dataset_id:
+        st.error("❌ Dataset not properly selected. Please go back and select a dataset.")
+        return
 
     try:
         # Convert GeoJSON to Earth Engine FeatureCollection
