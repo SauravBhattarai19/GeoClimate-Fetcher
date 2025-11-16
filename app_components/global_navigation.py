@@ -16,6 +16,7 @@ def render_global_navigation(clear_auth_func=None):
     nav_items = [
         ("🏠", "Home", None),
         ("🔍", "Data Explorer", "data_explorer"),
+        ("🗺️", "Multi-Geo", "multi_geometry_export"),
         ("🧠", "Climate Analytics", "climate_analytics"),
         ("💧", "Hydrology", "hydrology"),
         ("🎯", "Product Selector", "product_selector"),
@@ -199,6 +200,7 @@ def get_current_tool_info():
     tool_info = {
         None: {"name": "Home", "icon": "🏠", "description": "Platform Overview"},
         "data_explorer": {"name": "Data Explorer", "icon": "🔍", "description": "Download Earth Engine Datasets"},
+        "multi_geometry_export": {"name": "Multi-Geometry Export", "icon": "🗺️", "description": "Export Data for Multiple Regions"},
         "climate_analytics": {"name": "Climate Analytics", "icon": "🧠", "description": "Calculate Climate Indices"},
         "hydrology": {"name": "Hydrology Analyzer", "icon": "💧", "description": "Precipitation Analysis"},
         "product_selector": {"name": "Product Selector", "icon": "🎯", "description": "Compare Data Sources"},
