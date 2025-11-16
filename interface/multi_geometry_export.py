@@ -715,13 +715,51 @@ def _render_export_interface(exporter):
 
     st.markdown("---")
 
+    # Calculate complexity score for user guidance
+    num_geometries = len(st.session_state.mg_geometries)
+    num_years = st.session_state.mg_end_year - st.session_state.mg_start_year + 1
+    num_bands = len(st.session_state.mg_selected_bands)
+    complexity_score = num_geometries * num_years * num_bands
+
+    # Provide intelligent feedback based on complexity
+    if complexity_score > 1000:
+        st.error(f"""
+        🚨 **Very Large Export Detected** (Complexity: {complexity_score:,})
+        - {num_geometries} geometries × {num_years} years × {num_bands} bands
+        - Local download will be **skipped** - direct Google Drive export recommended
+        - Expect longer processing times (10-30+ minutes per year)
+        - Consider reducing scope: fewer years, fewer bands, or fewer geometries
+        """)
+    elif complexity_score > 500:
+        st.warning(f"""
+        ⚠️ **Large Export** (Complexity: {complexity_score:,})
+        - {num_geometries} geometries × {num_years} years × {num_bands} bands
+        - Local download may fail (will automatically fallback to Google Drive)
+        - Smart export will timeout after 60 seconds per year for local attempts
+        - Total estimated time: {num_years * 2}-{num_years * 5} minutes
+        """)
+    elif complexity_score > 100:
+        st.info(f"""
+        ℹ️ **Medium Export** (Complexity: {complexity_score:,})
+        - {num_geometries} geometries × {num_years} years × {num_bands} bands
+        - Local download should work for most years
+        - Estimated time: {num_years * 1}-{num_years * 3} minutes
+        """)
+    else:
+        st.success(f"""
+        ✅ **Small Export** (Complexity: {complexity_score:,})
+        - {num_geometries} geometries × {num_years} years × {num_bands} bands
+        - Local download expected to succeed
+        - Estimated time: {num_years * 0.5:.0f}-{num_years * 1} minutes
+        """)
+
     # Warning about processing time
     st.warning("""
     ⚠️ **Important Notes:**
     - Processing may take several minutes depending on data volume
     - Each year is processed as a separate task to handle GEE limits
     - Geometry simplification has already been applied to reduce payload size
-    - Local download works for smaller exports; larger ones go to Google Drive
+    - Local download timeout: **60 seconds per year** (falls back to Drive if exceeded)
     - Monitor progress in the Earth Engine Tasks panel: https://code.earthengine.google.com/tasks
     """)
 
@@ -818,15 +856,32 @@ def _execute_multi_geometry_export(exporter, export_preference, drive_folder, sc
 
         total_years = end_year - start_year + 1
 
+        # Calculate complexity to determine export strategy
+        num_geometries = len(st.session_state.mg_geometries)
+        num_bands = len(parameters)
+        complexity_score = num_geometries * total_years * num_bands
+
+        # Determine if we should skip local download entirely
+        skip_local = False
+        if complexity_score > 1000:
+            st.warning(f"🚨 Large dataset detected (complexity: {complexity_score:,}). Skipping local download, going directly to Google Drive.")
+            skip_local = True
+            effective_preference = 'drive'  # Force drive for very large exports
+        else:
+            effective_preference = export_preference
+            if complexity_score > 500:
+                st.info(f"ℹ️ Medium-large dataset (complexity: {complexity_score:,}). Local downloads will timeout after 60 seconds.")
+
         for year_idx, year in enumerate(range(start_year, end_year + 1)):
             status_text.text(f"Processing year {year} ({year_idx + 1}/{total_years})...")
             progress_bar.progress((year_idx) / total_years)
 
-            # Try local export first for each year
+            # Try local export first for each year (with smart timeout)
             year_result = _export_year_data(
                 ee_fc, dataset_id, parameters, year,
                 identifier_field, reducer_type, scale,
-                export_preference, drive_folder, exporter
+                effective_preference, drive_folder, exporter,
+                complexity_score=complexity_score
             )
 
             if year_result:
@@ -881,8 +936,15 @@ def _execute_multi_geometry_export(exporter, export_preference, drive_folder, sc
         st.code(traceback.format_exc())
 
 
-def _export_year_data(ee_fc, dataset_id, parameters, year, identifier_field, reducer_type, scale, export_preference, drive_folder, exporter):
-    """Export data for a single year"""
+def _export_year_data(ee_fc, dataset_id, parameters, year, identifier_field, reducer_type, scale, export_preference, drive_folder, exporter, complexity_score=0):
+    """Export data for a single year with intelligent timeout handling"""
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+
+    # Determine timeout based on complexity (60s default, shorter for very complex)
+    if complexity_score > 500:
+        local_timeout = 60  # 60 seconds for medium-large datasets
+    else:
+        local_timeout = 120  # 2 minutes for smaller datasets
 
     try:
         # Access the dataset
@@ -938,11 +1000,18 @@ def _export_year_data(ee_fc, dataset_id, parameters, year, identifier_field, red
 
         # Try to determine size and decide export method
         if export_preference == 'auto':
-            # Try local first
+            # Try local first with timeout
             try:
-                with st.spinner(f"Attempting local download for year {year}..."):
-                    # Get the data as a list
-                    data_list = feature_collection.getInfo()['features']
+                with st.spinner(f"Attempting local download for year {year} (timeout: {local_timeout}s)..."):
+                    # Use ThreadPoolExecutor for timeout control
+                    with ThreadPoolExecutor(max_workers=1) as executor:
+                        future = executor.submit(feature_collection.getInfo)
+                        try:
+                            # Wait with timeout
+                            result = future.result(timeout=local_timeout)
+                            data_list = result['features']
+                        except FuturesTimeoutError:
+                            raise Exception(f"Local download timed out after {local_timeout} seconds")
 
                     # Convert to DataFrame
                     rows = []
@@ -973,7 +1042,11 @@ def _export_year_data(ee_fc, dataset_id, parameters, year, identifier_field, red
                     }
 
             except Exception as e:
-                st.warning(f"⚠️ Year {year}: Local download failed ({str(e)}). Falling back to Google Drive...")
+                error_msg = str(e)
+                if "timed out" in error_msg.lower() or "timeout" in error_msg.lower():
+                    st.warning(f"⏱️ Year {year}: Local download timed out after {local_timeout}s. Falling back to Google Drive...")
+                else:
+                    st.warning(f"⚠️ Year {year}: Local download failed ({error_msg}). Falling back to Google Drive...")
                 # Fall through to Drive export
 
         # Export to Google Drive
