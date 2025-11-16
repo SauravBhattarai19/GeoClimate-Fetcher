@@ -92,6 +92,8 @@ def _initialize_session_state():
         st.session_state.mg_reducer_type = 'mean'
     if 'mg_geojson_data' not in st.session_state:
         st.session_state.mg_geojson_data = None
+    if 'mg_simplify_tolerance' not in st.session_state:
+        st.session_state.mg_simplify_tolerance = 100  # Default 100 meters
 
 
 def _show_progress_indicator():
@@ -178,9 +180,33 @@ def _render_geometry_upload():
                     if num_geometries > 5:
                         st.info(f"Showing first 5 of {num_geometries} geometries")
 
+                # Geometry Simplification Settings
+                st.markdown("### ⚙️ Geometry Simplification")
+                st.warning("""
+                **Important:** Complex/fine geometries can cause GEE computation timeout.
+                Simplification reduces vertices while preserving shape, significantly improving performance.
+                """)
+
+                simplify_tolerance = st.number_input(
+                    "Simplification Tolerance (meters)",
+                    min_value=0,
+                    max_value=10000,
+                    value=100,
+                    step=10,
+                    help="Higher values = more simplification. Recommended: 100-500m for regional data. 0 = no simplification."
+                )
+
+                if simplify_tolerance == 0:
+                    st.warning("⚠️ No simplification may cause slow processing or timeout for complex geometries.")
+                elif simplify_tolerance > 500:
+                    st.info("ℹ️ High simplification may reduce spatial accuracy but improves performance significantly.")
+                else:
+                    st.success(f"✅ Recommended tolerance: {simplify_tolerance}m - Good balance of accuracy and performance.")
+
                 # Store the data
                 st.session_state.mg_geojson_data = geojson_data
                 st.session_state.mg_geometries = features
+                st.session_state.mg_simplify_tolerance = simplify_tolerance
 
                 col1, col2 = st.columns([3, 1])
                 with col1:
@@ -572,7 +598,7 @@ def _render_export_interface(exporter):
         - **Start Year:** {st.session_state.mg_start_year}
         - **End Year:** {st.session_state.mg_end_year}
         - **Aggregation:** {st.session_state.mg_reducer_type.capitalize()}
-        - **Export Method:** Smart (Local first, Drive fallback)
+        - **Simplification:** {st.session_state.mg_simplify_tolerance}m
         """)
 
     # Export preference
@@ -607,6 +633,7 @@ def _render_export_interface(exporter):
     ⚠️ **Important Notes:**
     - Processing may take several minutes depending on data volume
     - Each year is processed as a separate task to handle GEE limits
+    - Geometry simplification will be applied to improve performance
     - Local download works for smaller exports; larger ones go to Google Drive
     - Monitor progress in the Earth Engine Tasks panel: https://code.earthengine.google.com/tasks
     """)
@@ -635,11 +662,23 @@ def _execute_multi_geometry_export(exporter, export_preference, drive_folder, sc
     start_year = st.session_state.mg_start_year
     end_year = st.session_state.mg_end_year
     reducer_type = st.session_state.mg_reducer_type
+    simplify_tolerance = st.session_state.mg_simplify_tolerance
 
     try:
-        # Convert GeoJSON to Earth Engine FeatureCollection
-        with st.spinner("Converting geometries to Earth Engine format..."):
+        # Convert GeoJSON to Earth Engine FeatureCollection with simplification
+        with st.spinner("Converting and simplifying geometries..."):
             ee_fc = ee.FeatureCollection(geojson_data)
+
+            # Apply geometry simplification if tolerance > 0
+            if simplify_tolerance > 0:
+                # Simplify each feature's geometry
+                def simplify_feature(feature):
+                    return feature.setGeometry(
+                        feature.geometry().simplify(maxError=simplify_tolerance)
+                    )
+
+                ee_fc = ee_fc.map(simplify_feature)
+                st.success(f"✅ Geometries simplified with {simplify_tolerance}m tolerance")
 
             # Verify the feature collection
             fc_size = ee_fc.size().getInfo()
@@ -857,6 +896,7 @@ def _reset_all_mg_selections():
     st.session_state.mg_end_date = None
     st.session_state.mg_reducer_type = 'mean'
     st.session_state.mg_geojson_data = None
+    st.session_state.mg_simplify_tolerance = 100
     if 'mg_start_year' in st.session_state:
         del st.session_state.mg_start_year
     if 'mg_end_year' in st.session_state:
