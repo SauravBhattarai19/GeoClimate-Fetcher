@@ -2148,15 +2148,47 @@ def _show_download_options(results):
 
     st.markdown("---")
 
-    # Spatial data based on export method
-    if export_method == 'auto':
-        _show_smart_download_results(results)
-    elif export_method == 'drive':
-        _show_google_drive_results(results)
-    elif export_method == 'preview':
-        _show_preview_results(results)
-    elif export_method == 'local':
-        _show_local_download_results(results)
+    # Check for TEMPORAL-ONLY mode (spatial export needs to be triggered separately)
+    if results.get('temporal_only', False):
+        st.markdown("### 🗺️ Spatial Data Export")
+        st.info("""
+        **Temporal data has been extracted successfully!**
+
+        Spatial export (GeoTIFF files) requires additional processing.
+        - Click the button below to start spatial export
+        - If local download fails (>50MB limit), exports will automatically switch to Google Drive
+        """)
+
+        # Check if spatial export already completed
+        if st.session_state.get('climate_spatial_export_complete', False):
+            st.success("✅ Spatial export completed!")
+            # Show spatial download results
+            if 'climate_spatial_results' in st.session_state:
+                _display_spatial_export_results(st.session_state.climate_spatial_results)
+
+            if st.button("🔄 Re-run Spatial Export", use_container_width=True,
+                        key="rerun_spatial_export_main"):
+                st.session_state.climate_spatial_export_complete = False
+                if 'climate_spatial_results' in st.session_state:
+                    del st.session_state.climate_spatial_results
+                st.rerun()
+        else:
+            if st.button("🚀 Proceed to Spatial Export", type="primary", use_container_width=True,
+                        help="Download spatial GeoTIFF files for each climate index",
+                        key="proceed_spatial_export_main"):
+                # Execute spatial export with 50MB error learning
+                _execute_smart_spatial_export(results)
+                st.rerun()
+    else:
+        # Spatial data based on export method (for non-temporal-only modes)
+        if export_method == 'auto':
+            _show_smart_download_results(results)
+        elif export_method == 'drive':
+            _show_google_drive_results(results)
+        elif export_method == 'preview':
+            _show_preview_results(results)
+        elif export_method == 'local':
+            _show_local_download_results(results)
 
 
 def _show_smart_download_results(results):
