@@ -412,8 +412,8 @@ def _export_individual_geotiffs(collection, temp_path, geometry, scale, collecti
 
         for i in range(collection_size):
             try:
-                # Show progress for larger collections - replace, don't add
-                if progress_placeholder and i % 5 == 0:
+                # Show progress for larger collections - update per image
+                if progress_placeholder:
                     progress_placeholder.info(f"Exporting GeoTIFF {i+1}/{collection_size}...")
 
                 image = ee.Image(images_list.get(i))
