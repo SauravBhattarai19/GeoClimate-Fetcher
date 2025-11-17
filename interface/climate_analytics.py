@@ -1990,6 +1990,8 @@ def _show_smart_download_results(results):
     spatial_data = results.get('individual_results', {})
     local_files = []
     drive_exports = []
+    failed_exports = []
+    preview_files = []
 
     # Debug information (can be toggled)
     debug_mode = st.checkbox("🔍 Enable detailed debugging", key="debug_mode", value=False)
@@ -2014,7 +2016,9 @@ def _show_smart_download_results(results):
                     'index': index_name,
                     'filename': spatial_result.get('filename', f"{index_name}.tif"),
                     'file_data': spatial_result.get('file_data'),
-                    'size_mb': spatial_result.get('actual_size_mb', 0)
+                    'size_mb': spatial_result.get('actual_size_mb', 0),
+                    'is_fallback': spatial_result.get('fallback', False),
+                    'message': spatial_result.get('message', '')
                 })
                 if debug_mode:
                     st.success(f"✅ {index_name}: Added to local downloads")
@@ -2023,56 +2027,145 @@ def _show_smart_download_results(results):
                     'index': index_name,
                     'folder': spatial_result.get('drive_folder', 'Unknown'),
                     'task_id': spatial_result.get('task_id'),
-                    'size_mb': spatial_result.get('estimated_size_mb', 0)
+                    'size_mb': spatial_result.get('estimated_size_mb', 0),
+                    'url': spatial_result.get('drive_url', 'https://drive.google.com/drive/'),
+                    'total_tasks': spatial_result.get('total_tasks', 0)
                 })
                 if debug_mode:
                     st.success(f"✅ {index_name}: Added to drive exports")
-            else:
+            elif export_method == 'preview':
+                preview_files.append({
+                    'index': index_name,
+                    'filename': spatial_result.get('filename', f"{index_name}_sample.tif"),
+                    'file_data': spatial_result.get('file_data'),
+                    'size_mb': spatial_result.get('file_size_mb', spatial_result.get('actual_size_mb', 0)),
+                    'total_images': spatial_result.get('total_images', 1)
+                })
                 if debug_mode:
-                    st.warning(f"⚠️ {index_name}: Unknown export method '{export_method}'")
+                    st.success(f"✅ {index_name}: Added to preview files")
+            elif export_method in ['failed', 'error']:
+                failed_exports.append({
+                    'index': index_name,
+                    'error': spatial_result.get('error', spatial_result.get('message', 'Unknown error')),
+                    'export_method': export_method
+                })
+                if debug_mode:
+                    st.error(f"❌ {index_name}: Export failed")
+            else:
+                # Handle unknown export methods - treat as potential issue
+                st.warning(f"⚠️ {index_name}: Unrecognized export method '{export_method}'")
+                if debug_mode:
+                    st.json(spatial_result)
+                # Try to recover based on available data
+                if spatial_result.get('file_data'):
+                    local_files.append({
+                        'index': index_name,
+                        'filename': spatial_result.get('filename', f"{index_name}.tif"),
+                        'file_data': spatial_result.get('file_data'),
+                        'size_mb': spatial_result.get('actual_size_mb', len(spatial_result.get('file_data', b'')) / (1024*1024)),
+                        'is_fallback': True,
+                        'message': f"Recovered from unknown method '{export_method}'"
+                    })
+                elif spatial_result.get('drive_folder'):
+                    drive_exports.append({
+                        'index': index_name,
+                        'folder': spatial_result.get('drive_folder'),
+                        'task_id': spatial_result.get('task_id'),
+                        'size_mb': spatial_result.get('estimated_size_mb', 0),
+                        'url': spatial_result.get('drive_url', 'https://drive.google.com/drive/'),
+                        'total_tasks': spatial_result.get('total_tasks', 0)
+                    })
+        elif not index_result.get('success'):
+            failed_exports.append({
+                'index': index_name,
+                'error': index_result.get('error', 'Processing failed'),
+                'export_method': 'failed'
+            })
 
     # Show summary
     total_local = len(local_files)
     total_drive = len(drive_exports)
+    total_preview = len(preview_files)
+    total_failed = len(failed_exports)
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("🤖 Smart Results", f"{total_local + total_drive} indices")
+        st.metric("🤖 Smart Results", f"{total_local + total_drive + total_preview} indices")
     with col2:
         st.metric("💻 Local Downloads", total_local)
     with col3:
         st.metric("☁️ Drive Exports", total_drive)
+    with col4:
+        if total_failed > 0:
+            st.metric("❌ Failed", total_failed)
+        else:
+            st.metric("✅ Success Rate", "100%")
 
     # Show local downloads
     if local_files:
         st.markdown("#### 💻 Ready for Download")
         for file_info in local_files:
-            st.markdown(f"**{file_info['index']}** ({file_info['size_mb']:.1f} MB)")
+            if file_info.get('is_fallback'):
+                st.warning(f"**{file_info['index']}** ({file_info['size_mb']:.1f} MB) - ⚠️ Fallback Data")
+                st.caption(file_info.get('message', 'Time series fallback provided'))
+            else:
+                st.markdown(f"**{file_info['index']}** ({file_info['size_mb']:.1f} MB)")
+
             if file_info['file_data']:
-                # Create download button without page navigation issues
+                # Determine MIME type based on filename
+                mime_type = 'application/zip' if file_info['filename'].endswith('.zip') else 'text/csv'
                 st.download_button(
                     label=f"📥 Download {file_info['index']} Package",
                     data=file_info['file_data'],
                     file_name=file_info['filename'],
-                    mime='application/zip',
+                    mime=mime_type,
                     help=f"Download {file_info['index']} spatial data ({file_info['size_mb']:.1f} MB)",
                     use_container_width=True
                 )
+            else:
+                st.error(f"❌ {file_info['index']}: File data not available")
 
     # Show drive exports
     if drive_exports:
         st.markdown("#### ☁️ Processing in Google Drive")
-        st.info("Large files are being processed in Google Drive. Check the links below for progress.")
+        st.success("✅ Export tasks submitted to Google Earth Engine!")
+        st.info("Files will appear in your Google Drive folders automatically (typically 5-30 minutes)")
 
         for export_info in drive_exports:
-            with st.expander(f"📤 {export_info['index']} ({export_info['size_mb']:.1f} MB)"):
-                st.write(f"**Folder:** {export_info['folder']}")
-                if export_info['task_id']:
-                    st.code(f"Task ID: {export_info['task_id']}")
-                st.markdown("[⚙️ Monitor Task Progress](https://code.earthengine.google.com/tasks)")
-                st.markdown("[📁 Open Google Drive](https://drive.google.com/drive/)")
+            with st.expander(f"📤 {export_info['index']} - {export_info.get('total_tasks', 0)} files", expanded=True):
+                st.write(f"**Folder:** `{export_info['folder']}`")
+                st.write(f"**Total Tasks:** {export_info.get('total_tasks', 0)} submitted")
+                if export_info.get('task_id'):
+                    st.code(f"First Task ID: {export_info['task_id']}")
 
-    if not local_files and not drive_exports:
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.link_button("⚙️ Monitor Tasks", "https://code.earthengine.google.com/tasks", use_container_width=True)
+                with col2:
+                    st.link_button("📁 Open Drive", export_info.get('url', 'https://drive.google.com/drive/'), use_container_width=True)
+
+    # Show preview files
+    if preview_files:
+        st.markdown("#### 📱 Preview Samples")
+        for preview_info in preview_files:
+            st.markdown(f"**{preview_info['index']}** - Sample ({preview_info['size_mb']:.2f} MB)")
+            st.caption(f"1 of {preview_info['total_images']} total images")
+            if preview_info['file_data']:
+                st.download_button(
+                    label=f"📷 Download {preview_info['index']} Sample",
+                    data=preview_info['file_data'],
+                    file_name=preview_info['filename'],
+                    mime="image/tiff",
+                    use_container_width=True
+                )
+
+    # Show failed exports
+    if failed_exports:
+        st.markdown("#### ❌ Failed Exports")
+        for failed_info in failed_exports:
+            st.error(f"**{failed_info['index']}**: {failed_info['error']}")
+
+    if not local_files and not drive_exports and not preview_files:
         st.warning("No spatial data results found for smart download.")
 
         # Enhanced debugging for empty results
@@ -2106,16 +2199,17 @@ def _show_google_drive_results(results):
     total_tasks = 0
 
     for index_name, index_result in spatial_data.items():
-        if index_result.get('success') and index_result.get('spatial_data', {}).get('export_method') == 'google_drive':
+        # Check for 'drive' export_method (not 'google_drive')
+        if index_result.get('success') and index_result.get('spatial_data', {}).get('export_method') == 'drive':
             spatial_result = index_result['spatial_data']
             drive_folders.append({
                 'index': index_name,
-                'folder': spatial_result['drive_folder'],
-                'url': spatial_result['drive_url'],
-                'tasks': spatial_result['total_tasks'],
+                'folder': spatial_result.get('drive_folder', 'Unknown'),
+                'url': spatial_result.get('drive_url', 'https://drive.google.com/drive/'),
+                'tasks': spatial_result.get('total_tasks', 0),
                 'failed': spatial_result.get('failed_tasks', 0)
             })
-            total_tasks += spatial_result['total_tasks']
+            total_tasks += spatial_result.get('total_tasks', 0)
 
     if drive_folders:
         st.success(f"✅ Successfully submitted {total_tasks} export tasks to Google Drive!")
