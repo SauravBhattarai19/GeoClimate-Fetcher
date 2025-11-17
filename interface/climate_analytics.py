@@ -1295,8 +1295,11 @@ def _run_climate_analysis():
                 config['percentile_params'] = percentile_params
                 st.info(f"📊 Using custom percentiles for {len(percentile_params)} indices")
 
+            # TEMPORAL-FIRST APPROACH: Extract temporal data first, spatial later (user-triggered)
+            config['temporal_only'] = True
+
             st.info("🔄 Running server-side climate index calculations...")
-            st.info("⏳ This may take a few minutes for large time periods. Using chunked processing to handle Earth Engine limits.")
+            st.info("⏳ Extracting temporal data for all indices. Spatial export will be available separately.")
 
             # Run the analysis (this will use the real implementation)
             results = run_climate_analysis_with_chunking(config)
@@ -1315,45 +1318,95 @@ def _run_climate_analysis():
                 if 'time_series_data' in results:
                     _display_climate_results(results['time_series_data'])
 
-                # IMPROVED UX: Show analysis options immediately after results
+                # IMPROVED UX: Show temporal CSV download immediately (with stable keys)
                 st.markdown("---")
-                st.markdown("### 📊 Analysis Options")
-                st.markdown("Choose how you want to work with your climate analysis results:")
+                st.markdown("### 📁 Temporal Data Downloads")
+                st.markdown("Download your climate index time series data:")
 
-                col1, col2, col3 = st.columns(3)
+                col1, col2 = st.columns(2)
                 with col1:
-                    if st.button("🗺️ Visualize Spatial Data", use_container_width=True, type="primary",
+                    if 'time_series_csv' in results and results['time_series_csv']:
+                        st.download_button(
+                            label="📊 Download Time Series CSV",
+                            data=results['time_series_csv'],
+                            file_name=f"climate_timeseries_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                            mime="text/csv",
+                            help="Download temporal data for all indices",
+                            use_container_width=True,
+                            key="climate_temporal_csv_download"
+                        )
+
+                with col2:
+                    if 'analysis_report' in results and results['analysis_report']:
+                        st.download_button(
+                            label="📋 Download Analysis Report",
+                            data=results['analysis_report'],
+                            file_name=f"climate_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                            mime="text/plain",
+                            help="Download comprehensive analysis report",
+                            use_container_width=True,
+                            key="climate_analysis_report_download"
+                        )
+
+                # SPATIAL EXPORT SECTION (User-triggered with 50MB error learning)
+                if results.get('temporal_only', False):
+                    st.markdown("---")
+                    st.markdown("### 🗺️ Spatial Data Export")
+                    st.info("""
+                    **Spatial export will process GeoTIFF files for each climate index.**
+                    - If local download fails (>50MB limit), ALL indices will be exported to Google Drive
+                    - This prevents long waiting times for repeated failures
+                    """)
+
+                    # Check if spatial export already completed
+                    if 'climate_spatial_export_complete' not in st.session_state:
+                        st.session_state.climate_spatial_export_complete = False
+
+                    if not st.session_state.climate_spatial_export_complete:
+                        if st.button("🚀 Proceed to Spatial Export", type="primary", use_container_width=True,
+                                    help="Download spatial GeoTIFF files for each climate index",
+                                    key="proceed_spatial_export"):
+                            # Execute spatial export with 50MB error learning
+                            _execute_smart_spatial_export(results)
+                    else:
+                        st.success("✅ Spatial export completed!")
+                        # Show spatial download results
+                        if 'climate_spatial_results' in st.session_state:
+                            _display_spatial_export_results(st.session_state.climate_spatial_results)
+
+                        if st.button("🔄 Re-run Spatial Export", use_container_width=True,
+                                    key="rerun_spatial_export"):
+                            st.session_state.climate_spatial_export_complete = False
+                            if 'climate_spatial_results' in st.session_state:
+                                del st.session_state.climate_spatial_results
+                            st.rerun()
+
+                # Analysis Options
+                st.markdown("---")
+                st.markdown("### 📊 Additional Options")
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("🗺️ Visualize Spatial Data", use_container_width=True,
                                 help="Create interactive maps and spatial visualizations", key="viz_new_results"):
                         # Launch visualization with climate results
                         _launch_climate_visualization(results)
 
                 with col2:
-                    if st.button("📁 Download Files", use_container_width=True,
-                                help="Download data files for offline analysis", key="download_new_results"):
-                        # Scroll to download section
-                        st.markdown('<div id="download-section-new"></div>', unsafe_allow_html=True)
-
-                with col3:
                     if st.button("🔄 Re-run Analysis", use_container_width=True,
                                 help="Start over with different parameters", key="rerun_new_results"):
                         # Clear existing results and re-run with current selections
                         st.session_state.climate_analysis_complete = False
                         st.session_state.climate_results = None
+                        st.session_state.climate_spatial_export_complete = False
+                        if 'climate_spatial_results' in st.session_state:
+                            del st.session_state.climate_spatial_results
 
                         # Clear any visualization states to ensure fresh display
                         for key in list(st.session_state.keys()):
                             if key.startswith('show_') and 'climate' in key:
                                 del st.session_state[key]
                         st.rerun()
-
-                # Download section (appears below analysis options)
-                st.markdown("---")
-                st.markdown('<div id="download-section-new"></div>', unsafe_allow_html=True)
-                st.markdown("### 📁 Download Options")
-                st.markdown("Download your analysis results for offline use or further processing:")
-
-                # Show download options
-                _show_download_options(results)
 
             else:
                 st.error(f"❌ Analysis failed: {results.get('error', 'Unknown error')}")
@@ -1584,6 +1637,114 @@ For detailed data, download the CSV files above.
         st.error(f"❌ Placeholder analysis failed: {str(e)}")
 
 
+def _display_single_index_plot(df, index_name, show_trends=True, show_statistics=True):
+    """Display a single climate index in detailed view with trend analysis"""
+    import plotly.graph_objects as go
+    import numpy as np
+    import pandas as pd
+    from scipy import stats
+
+    st.markdown(f"##### 📊 {index_name} - Detailed View")
+
+    # Convert dates to datetime if needed
+    if 'date' in df.columns:
+        dates = pd.to_datetime(df['date'])
+        values = df['value'].values
+    else:
+        dates = df.index
+        values = df.values
+
+    # Create main plot
+    fig = go.Figure()
+
+    # Add main time series
+    fig.add_trace(
+        go.Scatter(
+            x=dates,
+            y=values,
+            mode='lines+markers',
+            name=f"{index_name}",
+            line=dict(width=3, color='#1f77b4'),
+            marker=dict(size=8),
+            hovertemplate='<b>Date:</b> %{x}<br><b>Value:</b> %{y:.3f}<extra></extra>'
+        )
+    )
+
+    trend_data = None
+    if show_trends and len(values) > 2:
+        trend_data = _calculate_trend_statistics(dates, values, index_name)
+
+        # Add linear trend line
+        fig.add_trace(
+            go.Scatter(
+                x=dates,
+                y=trend_data['linear_trend'],
+                mode='lines',
+                name=f"Linear Trend",
+                line=dict(dash='dash', width=2, color='red'),
+                opacity=0.8
+            )
+        )
+
+        # Add Sen's slope trend line if available
+        if 'sens_slope' in trend_data:
+            sens_trend = trend_data['sens_intercept'] + trend_data['sens_slope'] * np.arange(len(dates))
+            fig.add_trace(
+                go.Scatter(
+                    x=dates,
+                    y=sens_trend,
+                    mode='lines',
+                    name=f"Sen's Slope",
+                    line=dict(dash='dot', width=2, color='green'),
+                    opacity=0.8
+                )
+            )
+
+    fig.update_layout(
+        title=f"{index_name} Time Series Analysis",
+        xaxis_title="Date",
+        yaxis_title=f"{index_name} Value",
+        height=500,
+        hovermode='x unified',
+        showlegend=True,
+        legend=dict(
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=0.01
+        )
+    )
+
+    st.plotly_chart(fig, use_container_width=True, key=f"single_plot_{index_name}")
+
+    # Show statistics panel
+    if show_statistics and trend_data:
+        st.markdown("##### 📊 Statistical Summary")
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.metric("Mean", f"{np.mean(values):.3f}")
+            st.metric("Std Dev", f"{np.std(values):.3f}")
+
+        with col2:
+            st.metric("Linear Slope", f"{trend_data['slope']:.4f}/year")
+            st.metric("R² Value", f"{trend_data['r_squared']:.3f}")
+
+        with col3:
+            p_value = trend_data.get('p_value', 0)
+            significance = "Significant" if p_value < 0.05 else "Not Significant"
+            st.metric("P-Value", f"{p_value:.4f}")
+            st.metric("Trend", significance)
+
+            # Add interpretation
+            if trend_data['slope'] > 0 and p_value < 0.05:
+                st.success("📈 Significant increasing trend")
+            elif trend_data['slope'] < 0 and p_value < 0.05:
+                st.warning("📉 Significant decreasing trend")
+            else:
+                st.info("➡️ No significant trend")
+
+
 def _display_climate_results(time_series_data):
     """Display climate analysis results with enhanced visualizations including trend analysis"""
     import plotly.graph_objects as go
@@ -1598,14 +1759,33 @@ def _display_climate_results(time_series_data):
     # Enhanced visualization options
     col1, col2, col3 = st.columns(3)
     with col1:
-        show_trends = st.checkbox("Show Trend Lines", value=True)
+        show_trends = st.checkbox("Show Trend Lines", value=True, key="climate_show_trends")
     with col2:
-        show_statistics = st.checkbox("Show Statistics Panel", value=True)
+        show_statistics = st.checkbox("Show Statistics Panel", value=True, key="climate_show_stats")
     with col3:
         temporal_res = st.session_state.get('climate_temporal_resolution', 'yearly')
         st.info(f"📅 Resolution: {temporal_res}")
 
     if isinstance(time_series_data, dict):
+        # Add toggle option to switch between indices
+        index_names = list(time_series_data.keys())
+        if len(index_names) > 1:
+            st.markdown("##### 🔄 Index Selection")
+            view_options = ["All Indices (Subplots)"] + index_names
+            selected_view = st.selectbox(
+                "Select index to visualize:",
+                view_options,
+                index=0,
+                key="climate_index_toggle",
+                help="Choose 'All Indices' to see all plots, or select a specific index for detailed view"
+            )
+
+            if selected_view != "All Indices (Subplots)":
+                # Show single index in detail
+                _display_single_index_plot(time_series_data[selected_view], selected_view, show_trends, show_statistics)
+                return
+        else:
+            selected_view = "All Indices (Subplots)"
         # Multiple indices
         n_indices = len(time_series_data)
         fig = make_subplots(
@@ -2231,6 +2411,246 @@ def _show_local_download_results(results):
         st.warning("⚠️ Spatial data not available for local download.")
 
 
+def _execute_smart_spatial_export(results):
+    """
+    Execute spatial export with 50MB error learning.
+    If first index fails with size error, switch ALL remaining to Google Drive.
+    """
+    import ee
+    from geoclimate_fetcher.core.download_utils import process_image_collection_chunked
+    from geoclimate_fetcher.core.dataset_config import get_dataset_config
+    from geoclimate_fetcher.climate_indices import ClimateIndicesCalculator
+
+    st.markdown("### 🗺️ Processing Spatial Exports...")
+
+    if 'spatial_export_config' not in results:
+        st.error("❌ Spatial export configuration not found. Please re-run analysis.")
+        return
+
+    config = results['spatial_export_config']
+    selected_indices = config['selected_indices']
+    geometry = config['geometry']
+    spatial_scale = config['spatial_scale']
+    temporal_resolution = config['temporal_resolution']
+    dataset_id = config['dataset_id']
+    start_date = config['start_date']
+    end_date = config['end_date']
+
+    # Initialize calculator
+    calculator = ClimateIndicesCalculator(geometry, dataset_id)
+
+    # Get dataset configuration
+    dataset_config_manager = get_dataset_config()
+    band_mapping = dataset_config_manager.get_required_bands_for_indices(dataset_id, selected_indices)
+
+    # Load collections
+    st.info("🔄 Loading Earth Engine collections...")
+    collections = {}
+    base_collection = ee.ImageCollection(dataset_id)
+
+    for band_type, ee_band_name in band_mapping.items():
+        collections[band_type] = base_collection.filterDate(start_date, end_date).select([ee_band_name])
+
+    # Smart export with learning
+    spatial_results = {}
+    local_failed = False  # Track if local download has failed (for learning)
+    force_drive = False   # If True, skip local entirely
+
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+
+    for idx, index_name in enumerate(selected_indices):
+        progress = idx / len(selected_indices)
+        progress_bar.progress(progress)
+        status_text.text(f"Processing {index_name} ({idx + 1}/{len(selected_indices)})...")
+
+        try:
+            # Calculate index
+            st.info(f"🔄 Calculating {index_name}...")
+
+            # Get parameters
+            threshold_kwargs = config.get('threshold_params', {}).get(index_name, {})
+            percentile_kwargs = {}
+            if index_name in config.get('percentile_params', {}):
+                percentile_config = config['percentile_params'][index_name]
+                percentile_kwargs = {
+                    'percentile': percentile_config['percentile'],
+                    'base_start': percentile_config['base_start'],
+                    'base_end': percentile_config['base_end']
+                }
+            all_kwargs = {**threshold_kwargs, **percentile_kwargs}
+
+            index_result = calculator.calculate_simple_index(
+                index_name, collections, start_date, end_date,
+                temporal_resolution=temporal_resolution,
+                **all_kwargs
+            )
+
+            # SMART EXPORT LOGIC WITH LEARNING
+            if force_drive or local_failed:
+                # Previous failure → skip local, go directly to Drive
+                st.info(f"⏭️ {index_name}: Skipping local (learned from previous failure) → Google Drive")
+                export_result = _export_to_drive(index_result, index_name, geometry, spatial_scale, temporal_resolution)
+            else:
+                # Try local first
+                st.info(f"💻 {index_name}: Attempting local download...")
+                try:
+                    export_result = process_image_collection_chunked(
+                        collection=index_result,
+                        bands=None,
+                        geometry=geometry,
+                        start_date=start_date,
+                        end_date=end_date,
+                        export_format='GeoTIFF',
+                        scale=spatial_scale,
+                        temporal_resolution=temporal_resolution
+                    )
+
+                    if export_result.get('success') and export_result.get('file_data'):
+                        # Local success!
+                        file_size_mb = len(export_result['file_data']) / (1024 * 1024)
+                        st.success(f"✅ {index_name}: Local download successful ({file_size_mb:.1f} MB)")
+                        export_result['export_method'] = 'local'
+                        export_result['file_size_mb'] = file_size_mb
+                    else:
+                        # Local failed (size exceeded or other error)
+                        raise Exception("Local download failed or exceeded size limit")
+
+                except Exception as local_error:
+                    error_msg = str(local_error)
+
+                    # Check if it's a 50MB size limit error
+                    if "50331648" in error_msg or "must be less than" in error_msg.lower() or "request size" in error_msg.lower():
+                        st.warning(f"⚠️ {index_name}: Local download failed (50MB limit exceeded)")
+                        st.warning(f"📝 **Learning:** Switching ALL remaining indices to Google Drive export")
+                        local_failed = True  # LEARNING: Don't try local for remaining indices
+                    else:
+                        st.warning(f"⚠️ {index_name}: Local download failed ({error_msg})")
+                        local_failed = True
+
+                    # Fallback to Google Drive
+                    st.info(f"☁️ {index_name}: Falling back to Google Drive...")
+                    export_result = _export_to_drive(index_result, index_name, geometry, spatial_scale, temporal_resolution)
+
+            spatial_results[index_name] = export_result
+
+        except Exception as e:
+            st.error(f"❌ {index_name}: Export failed - {str(e)}")
+            spatial_results[index_name] = {
+                'success': False,
+                'export_method': 'error',
+                'error': str(e)
+            }
+
+    progress_bar.progress(1.0)
+    status_text.text("✅ Spatial export completed!")
+
+    # Store results in session state
+    st.session_state.climate_spatial_results = spatial_results
+    st.session_state.climate_spatial_export_complete = True
+
+    # Display results
+    _display_spatial_export_results(spatial_results)
+
+
+def _export_to_drive(index_collection, index_name, geometry, scale, temporal_resolution):
+    """Export an index collection to Google Drive"""
+    import ee
+    from datetime import datetime
+
+    try:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        folder_name = f"Climate_Spatial_{timestamp}"
+
+        # Create composite image (e.g., mean over time period)
+        composite = index_collection.mean()
+
+        task = ee.batch.Export.image.toDrive(
+            image=composite,
+            description=f'{index_name}_{temporal_resolution}_{timestamp}',
+            folder=folder_name,
+            fileNamePrefix=f'{index_name}_{temporal_resolution}',
+            scale=scale,
+            region=geometry,
+            fileFormat='GeoTiff',
+            maxPixels=1e13
+        )
+        task.start()
+
+        st.info(f"☁️ {index_name}: Submitted to Google Drive (Task ID: {task.id})")
+
+        return {
+            'success': True,
+            'export_method': 'drive',
+            'task_id': task.id,
+            'folder': folder_name,
+            'estimated_size_mb': 'Unknown (processing in Drive)'
+        }
+
+    except Exception as e:
+        st.error(f"❌ {index_name}: Drive export failed - {str(e)}")
+        return {
+            'success': False,
+            'export_method': 'error',
+            'error': str(e)
+        }
+
+
+def _display_spatial_export_results(spatial_results):
+    """Display spatial export results with download buttons (stable keys)"""
+    st.markdown("### 📊 Spatial Export Results")
+
+    local_results = {k: v for k, v in spatial_results.items() if v.get('export_method') == 'local'}
+    drive_results = {k: v for k, v in spatial_results.items() if v.get('export_method') == 'drive'}
+    error_results = {k: v for k, v in spatial_results.items() if v.get('export_method') == 'error'}
+
+    # Summary metrics
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("💻 Local Downloads", len(local_results))
+    with col2:
+        st.metric("☁️ Drive Exports", len(drive_results))
+    with col3:
+        st.metric("❌ Errors", len(error_results))
+
+    # Local downloads with stable keys
+    if local_results:
+        st.markdown("#### 💻 Ready for Download")
+        for idx, (index_name, result) in enumerate(local_results.items()):
+            if result.get('file_data'):
+                file_size = result.get('file_size_mb', 0)
+                st.markdown(f"**{index_name}** ({file_size:.1f} MB)")
+
+                # Stable key for download button
+                button_key = f"spatial_download_{index_name.replace(' ', '_').replace('-', '_')}_{idx}"
+                st.download_button(
+                    label=f"📥 Download {index_name} GeoTIFF",
+                    data=result['file_data'],
+                    file_name=result.get('filename', f'{index_name}_spatial.zip'),
+                    mime='application/zip',
+                    use_container_width=True,
+                    key=button_key
+                )
+
+    # Drive exports
+    if drive_results:
+        st.markdown("#### ☁️ Google Drive Exports")
+        st.info("These files are processing in Google Drive. Monitor progress below.")
+
+        for index_name, result in drive_results.items():
+            with st.expander(f"📤 {index_name}", expanded=False):
+                st.write(f"**Folder:** {result.get('folder', 'Unknown')}")
+                st.code(f"Task ID: {result.get('task_id', 'Unknown')}")
+                st.markdown("[⚙️ Monitor Task Progress](https://code.earthengine.google.com/tasks)")
+                st.markdown("[📁 Open Google Drive](https://drive.google.com/drive/)")
+
+    # Errors
+    if error_results:
+        st.markdown("#### ❌ Failed Exports")
+        for index_name, result in error_results.items():
+            st.error(f"{index_name}: {result.get('error', 'Unknown error')}")
+
+
 def _reset_climate_analysis():
     """Reset all climate analysis session state"""
     keys_to_reset = [
@@ -2238,7 +2658,8 @@ def _reset_climate_analysis():
         'climate_dataset_selected', 'climate_date_range_set', 'climate_indices_selected',
         'climate_selected_dataset', 'climate_selected_indices', 'climate_start_date', 'climate_end_date',
         'climate_results', 'climate_summary', 'climate_export_configured', 'climate_analysis_complete',
-        'climate_export_method', 'climate_spatial_scale', 'climate_temporal_resolution'
+        'climate_export_method', 'climate_spatial_scale', 'climate_temporal_resolution',
+        'climate_spatial_export_complete', 'climate_spatial_results', 'climate_index_toggle'
     ]
 
     for key in keys_to_reset:
