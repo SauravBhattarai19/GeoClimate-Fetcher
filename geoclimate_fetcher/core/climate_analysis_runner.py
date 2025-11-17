@@ -28,7 +28,8 @@ def run_climate_analysis_with_chunking(config: Dict[str, Any]) -> Dict[str, Any]
                 Required keys: analysis_type, dataset_id, selected_indices,
                               start_date, end_date, geometry
                 Optional keys: export_method ('drive'/'local'/'preview'),
-                              spatial_scale (meters), temporal_resolution
+                              spatial_scale (meters), temporal_resolution,
+                              temporal_only (bool) - if True, skip spatial processing
 
     Returns:
         Results dictionary with success status and output data
@@ -46,6 +47,7 @@ def run_climate_analysis_with_chunking(config: Dict[str, Any]) -> Dict[str, Any]
         export_method = config.get('export_method', 'local')  # 'drive', 'local', 'preview'
         spatial_scale = config.get('spatial_scale', 1000)  # meters
         temporal_resolution = config.get('temporal_resolution', 'yearly')  # yearly/monthly
+        temporal_only = config.get('temporal_only', False)  # Skip spatial processing if True
 
         dataset_config = get_dataset_config()
 
@@ -102,95 +104,180 @@ def run_climate_analysis_with_chunking(config: Dict[str, Any]) -> Dict[str, Any]
         results = {}
         all_time_series = {}
         all_spatial_data = {}
+        all_index_collections = {}  # Store ImageCollections for later spatial processing
 
         progress_bar = st.progress(0)
         status_text = st.empty()
 
-        for i, index_name in enumerate(selected_indices):
-            status_text.text(f"Calculating {index_name}...")
-            progress = (i + 1) / len(selected_indices)
-            progress_bar.progress(progress)
+        # Calculate adaptive scale based on area size to prevent memory issues
+        try:
+            area_km2 = ee.Geometry(geometry).area().divide(1e6).getInfo()
+            if area_km2 > 500000:  # Very large (>500,000 km²)
+                adaptive_scale = 20000  # 20km resolution
+                st.warning(f"⚠️ Very large study area ({area_km2:,.0f} km²). Using coarse resolution ({adaptive_scale}m) to prevent memory issues.")
+            elif area_km2 > 100000:  # Large (>100,000 km²)
+                adaptive_scale = 10000  # 10km resolution
+                st.info(f"ℹ️ Large study area ({area_km2:,.0f} km²). Using adaptive resolution ({adaptive_scale}m).")
+            elif area_km2 > 10000:  # Medium (>10,000 km²)
+                adaptive_scale = 5000   # 5km resolution
+            else:  # Small (<10,000 km²)
+                adaptive_scale = 1000   # 1km resolution
+        except:
+            adaptive_scale = 5000  # Default fallback
+            area_km2 = 0
 
-            try:
-                # Calculate the climate index
-                st.info(f"🔄 Computing {index_name} using server-side Earth Engine processing...")
+        if temporal_only:
+            st.info(f"📈 Extracting temporal data for {len(selected_indices)} indices...")
 
-                # Get threshold parameters for this index if available
-                threshold_kwargs = {}
-                if 'threshold_params' in config and index_name in config['threshold_params']:
-                    threshold_kwargs = config['threshold_params'][index_name]
-                    st.info(f"🎛️ Using custom parameters for {index_name}: {threshold_kwargs}")
+        # Use expander for detailed logs
+        with st.expander("📋 Detailed Processing Log", expanded=False):
+            for i, index_name in enumerate(selected_indices):
+                status_text.text(f"Processing {index_name} ({i + 1}/{len(selected_indices)})...")
+                progress = (i + 1) / len(selected_indices)
+                progress_bar.progress(progress)
 
-                # Get percentile parameters for this index if available
-                percentile_kwargs = {}
-                if 'percentile_params' in config and index_name in config['percentile_params']:
-                    percentile_config = config['percentile_params'][index_name]
-                    percentile_kwargs = {
-                        'percentile': percentile_config['percentile'],
-                        'base_start': percentile_config['base_start'],
-                        'base_end': percentile_config['base_end']
-                    }
-                    st.info(f"📊 Using custom percentile config for {index_name}: {percentile_config['percentile']}th percentile, base period {percentile_config['base_start']} to {percentile_config['base_end']}")
+                try:
+                    # Calculate the climate index
+                    st.write(f"🔄 Computing {index_name}...")
 
-                # Combine all parameters
-                all_kwargs = {**threshold_kwargs, **percentile_kwargs}
+                    # Get threshold parameters for this index if available
+                    threshold_kwargs = {}
+                    if 'threshold_params' in config and index_name in config['threshold_params']:
+                        threshold_kwargs = config['threshold_params'][index_name]
+                        st.write(f"  🎛️ Custom parameters: {threshold_kwargs}")
 
-                index_result = calculator.calculate_simple_index(
-                    index_name, collections, start_date, end_date,
-                    temporal_resolution=temporal_resolution,
-                    **all_kwargs
-                )
+                    # Get percentile parameters for this index if available
+                    percentile_kwargs = {}
+                    if 'percentile_params' in config and index_name in config['percentile_params']:
+                        percentile_config = config['percentile_params'][index_name]
+                        percentile_kwargs = {
+                            'percentile': percentile_config['percentile'],
+                            'base_start': percentile_config['base_start'],
+                            'base_end': percentile_config['base_end']
+                        }
+                        st.write(f"  📊 Percentile: {percentile_config['percentile']}th, base {percentile_config['base_start'][:4]}-{percentile_config['base_end'][:4]}")
 
-                # Extract time series data using optimized extraction
-                st.info(f"📈 Extracting time series data for {index_name}...")
-                time_series_df = calculator.extract_time_series_optimized(
-                    index_result, scale=5000, max_pixels=1e6
-                )
+                    # Combine all parameters
+                    all_kwargs = {**threshold_kwargs, **percentile_kwargs}
 
-                if not time_series_df.empty:
-                    all_time_series[index_name] = time_series_df
-                    st.success(f"✅ {index_name}: Extracted {len(time_series_df)} data points")
-                else:
-                    st.warning(f"⚠️ {index_name}: No data points extracted")
-
-                # Generate spatial data based on export_method
-                collection_size = index_result.size().getInfo()
-                st.info(f"🗺️ Processing spatial data for {index_name} ({collection_size} images)")
-                st.info(f"🗺️ Export method: {export_method} • Scale: {spatial_scale}m • Resolution: {temporal_resolution}")
-
-                # Branch based on export_method - this is critical for proper export handling
-                if export_method == 'drive':
-                    # Google Drive batch export - handles large files via Earth Engine tasks
-                    st.info(f"☁️ Submitting {index_name} to Google Drive batch export...")
-                    spatial_result = _export_to_google_drive(
-                        index_result, geometry, index_name, spatial_scale
+                    index_result = calculator.calculate_simple_index(
+                        index_name, collections, start_date, end_date,
+                        temporal_resolution=temporal_resolution,
+                        **all_kwargs
                     )
 
-                elif export_method == 'preview':
-                    # Preview mode - single sample image for quick validation
-                    st.info(f"📱 Generating preview sample for {index_name}...")
-                    spatial_result = _generate_preview_sample(
-                        index_result, geometry, index_name, spatial_scale
-                    )
+                    # Store the ImageCollection for later spatial processing
+                    all_index_collections[index_name] = index_result
 
-                elif export_method == 'auto':
-                    # Smart Auto mode: estimate size, try local first, fallback to drive
-                    st.info(f"🤖 Smart Auto: Estimating optimal export method for {index_name}...")
+                    # Extract time series data with ADAPTIVE SCALE and retry logic
+                    st.write(f"  📈 Extracting time series (scale={adaptive_scale}m)...")
 
-                    # Estimate file size based on area and resolution
-                    try:
-                        area_km2 = geometry.area().divide(1e6).getInfo()
-                        pixels_per_image = area_km2 / ((spatial_scale / 1000) ** 2)
-                        # Float32 = 4 bytes per pixel, plus overhead
-                        estimated_size_per_image_mb = (pixels_per_image * 4) / (1024 * 1024)
-                        total_estimated_mb = estimated_size_per_image_mb * collection_size
+                    extraction_success = False
+                    current_scale = adaptive_scale
+                    max_retries = 3
 
-                        st.info(f"📊 Estimated size: {total_estimated_mb:.1f} MB ({collection_size} images × {estimated_size_per_image_mb:.1f} MB each)")
-                        st.info(f"📐 Area: {area_km2:.0f} km² • Pixels/image: {pixels_per_image:.0f}")
+                    for retry in range(max_retries):
+                        try:
+                            time_series_df = calculator.extract_time_series_optimized(
+                                index_result, scale=current_scale, max_pixels=1e6
+                            )
+                            extraction_success = True
+                            break
+                        except Exception as extraction_error:
+                            error_msg = str(extraction_error).lower()
+                            if "memory" in error_msg or "limit exceeded" in error_msg:
+                                # Increase scale to reduce memory usage
+                                current_scale = int(current_scale * 2)
+                                if retry < max_retries - 1:
+                                    st.write(f"  ⚠️ Memory limit hit. Retrying with coarser scale ({current_scale}m)...")
+                                else:
+                                    raise extraction_error
+                            else:
+                                raise extraction_error
 
-                        # Decision threshold: 50MB for local, larger goes to Drive
-                        if total_estimated_mb < 50 and estimated_size_per_image_mb < 100:
-                            st.info(f"✅ Size suitable for local download, attempting...")
+                    if extraction_success and not time_series_df.empty:
+                        all_time_series[index_name] = time_series_df
+                        st.write(f"  ✅ Extracted {len(time_series_df)} data points")
+                    else:
+                        st.write(f"  ⚠️ No data points extracted")
+
+                    # SPATIAL PROCESSING (skip if temporal_only mode)
+                    if temporal_only:
+                        # Skip spatial processing, mark as pending for on-demand export
+                        spatial_result = {
+                            'success': True,
+                            'export_method': 'pending',
+                            'message': f'{index_name} spatial export pending (user-triggered)',
+                            'pending': True,
+                            'collection_available': True
+                        }
+                        st.write(f"  ⏳ Spatial export ready (on-demand)")
+                    else:
+                        # Generate spatial data based on export_method
+                        collection_size = index_result.size().getInfo()
+                        st.write(f"  🗺️ Processing spatial data ({collection_size} images, {export_method} mode)")
+
+                        # Branch based on export_method - critical for proper export handling
+                        if export_method == 'drive':
+                            # Google Drive batch export - handles large files via Earth Engine tasks
+                            st.write(f"    ☁️ Submitting to Google Drive...")
+                            spatial_result = _export_to_google_drive(
+                                index_result, geometry, index_name, spatial_scale
+                            )
+
+                        elif export_method == 'preview':
+                            # Preview mode - single sample image
+                            st.write(f"    📱 Generating preview sample...")
+                            spatial_result = _generate_preview_sample(
+                                index_result, geometry, index_name, spatial_scale
+                            )
+
+                        elif export_method == 'auto':
+                            # Smart Auto mode: estimate size, try local first, fallback to drive
+                            st.write(f"    🤖 Smart Auto: estimating optimal method...")
+
+                            # Estimate file size based on area and resolution
+                            try:
+                                pixels_per_image = area_km2 / ((spatial_scale / 1000) ** 2)
+                                estimated_size_per_image_mb = (pixels_per_image * 4) / (1024 * 1024)
+                                total_estimated_mb = estimated_size_per_image_mb * collection_size
+
+                                st.write(f"    📊 Est. size: {total_estimated_mb:.1f} MB ({collection_size} × {estimated_size_per_image_mb:.1f} MB)")
+
+                                # Decision threshold: < 50MB for local, otherwise Drive
+                                if total_estimated_mb < 50 and estimated_size_per_image_mb < 100:
+                                    st.write(f"    ✅ Size suitable for local download...")
+                                    spatial_result = process_image_collection_chunked(
+                                        collection=index_result,
+                                        bands=None,
+                                        geometry=geometry,
+                                        start_date=start_date,
+                                        end_date=end_date,
+                                        export_format='GeoTIFF',
+                                        scale=spatial_scale,
+                                        temporal_resolution=temporal_resolution
+                                    )
+
+                                    # Check if local export succeeded
+                                    if not spatial_result.get('success') or not spatial_result.get('file_data'):
+                                        st.write(f"    ⚠️ Local failed, falling back to Google Drive...")
+                                        spatial_result = _export_to_google_drive(
+                                            index_result, geometry, index_name, spatial_scale
+                                        )
+                                else:
+                                    st.write(f"    📤 Size too large for local, using Google Drive...")
+                                    spatial_result = _export_to_google_drive(
+                                        index_result, geometry, index_name, spatial_scale
+                                    )
+                            except Exception as size_err:
+                                st.write(f"    ⚠️ Size estimation failed, using Google Drive...")
+                                spatial_result = _export_to_google_drive(
+                                    index_result, geometry, index_name, spatial_scale
+                                )
+
+                        else:  # 'local' or default
+                            # Direct local download
+                            st.write(f"    💻 Direct local download...")
                             spatial_result = process_image_collection_chunked(
                                 collection=index_result,
                                 bands=None,
@@ -202,121 +289,80 @@ def run_climate_analysis_with_chunking(config: Dict[str, Any]) -> Dict[str, Any]
                                 temporal_resolution=temporal_resolution
                             )
 
-                            # Check if local export actually succeeded with data
-                            if not spatial_result.get('success') or not spatial_result.get('file_data'):
-                                st.warning(f"⚠️ Local export failed, falling back to Google Drive...")
-                                spatial_result = _export_to_google_drive(
-                                    index_result, geometry, index_name, spatial_scale
-                                )
+                        # Standardize result structure
+                        if spatial_result.get('success'):
+                            if spatial_result.get('file_data') and 'export_method' not in spatial_result:
+                                spatial_result['export_method'] = 'local'
+                                spatial_result['actual_size_mb'] = len(spatial_result['file_data']) / (1024 * 1024)
+                                spatial_result['filename'] = spatial_result.get('filename', f'{index_name}_spatial.zip')
+                            elif spatial_result.get('drive_folder') and 'export_method' not in spatial_result:
+                                spatial_result['export_method'] = 'drive'
+                                spatial_result['estimated_size_mb'] = spatial_result.get('estimated_size_mb', collection_size * 5)
+
+                            if 'export_method' not in spatial_result:
+                                spatial_result['export_method'] = export_method
+
+                            st.write(f"  ✅ Spatial: {spatial_result.get('export_method', 'unknown')} method")
                         else:
-                            st.info(f"📤 Size too large for local ({total_estimated_mb:.1f} MB), using Google Drive...")
-                            spatial_result = _export_to_google_drive(
-                                index_result, geometry, index_name, spatial_scale
-                            )
-                    except Exception as size_est_error:
-                        st.warning(f"⚠️ Could not estimate size ({str(size_est_error)}), defaulting to Google Drive...")
-                        spatial_result = _export_to_google_drive(
-                            index_result, geometry, index_name, spatial_scale
-                        )
+                            st.write(f"  ⚠️ Spatial failed: {spatial_result.get('message', spatial_result.get('error', 'Unknown'))}")
 
-                else:  # 'local' or default
-                    # Direct local download - works for smaller areas/coarser resolutions
-                    st.info(f"💻 Attempting direct local download for {index_name}...")
-                    spatial_result = process_image_collection_chunked(
-                        collection=index_result,
-                        bands=None,  # Climate index collections already have correct bands
-                        geometry=geometry,
-                        start_date=start_date,
-                        end_date=end_date,
-                        export_format='GeoTIFF',
-                        scale=spatial_scale,
-                        temporal_resolution=temporal_resolution
-                    )
+                            # Create fallback CSV result
+                            if not time_series_df.empty:
+                                csv_data = time_series_df.to_csv(index=False).encode('utf-8')
+                                spatial_result = {
+                                    'success': True,
+                                    'export_method': 'local',
+                                    'file_data': csv_data,
+                                    'filename': f'{index_name}_timeseries.csv',
+                                    'actual_size_mb': len(csv_data) / (1024 * 1024),
+                                    'message': f'Time series CSV for {index_name} (spatial failed)',
+                                    'fallback': True
+                                }
+                                st.write(f"  📊 Fallback: time series CSV provided")
+                            else:
+                                spatial_result = {
+                                    'success': False,
+                                    'export_method': 'failed',
+                                    'error': f'Both spatial and temporal failed for {index_name}'
+                                }
 
-                # Standardize result structure for compatibility
-                if spatial_result.get('success'):
-                    # Ensure export_method is set correctly
-                    if spatial_result.get('file_data') and 'export_method' not in spatial_result:
-                        spatial_result['export_method'] = 'local'
-                        spatial_result['actual_size_mb'] = len(spatial_result['file_data']) / (1024 * 1024)
-                        spatial_result['filename'] = spatial_result.get('filename', f'{index_name}_spatial.zip')
-                    elif spatial_result.get('drive_folder') and 'export_method' not in spatial_result:
-                        spatial_result['export_method'] = 'drive'
-                        spatial_result['estimated_size_mb'] = spatial_result.get('estimated_size_mb', collection_size * 5)
+                    if spatial_result['success']:
+                        all_spatial_data[index_name] = spatial_result
 
-                    # Ensure required fields exist
-                    if 'export_method' not in spatial_result:
-                        spatial_result['export_method'] = export_method
+                    results[index_name] = {
+                        'time_series': time_series_df,
+                        'spatial_data': spatial_result,
+                        'success': True
+                    }
 
-                    st.success(f"✅ {index_name}: Spatial data processed ({spatial_result.get('export_method', 'unknown')} method)")
-                else:
-                    st.warning(f"⚠️ {index_name}: Spatial processing failed - {spatial_result.get('message', spatial_result.get('error', 'Unknown error'))}")
+                except Exception as index_error:
+                    error_msg = str(index_error)
 
-                    # Create fallback: only time series data available
-                    if not time_series_df.empty:
-                        csv_data = time_series_df.to_csv(index=False).encode('utf-8')
-                        spatial_result = {
-                            'success': True,
-                            'export_method': 'local',
-                            'file_data': csv_data,
-                            'filename': f'{index_name}_timeseries.csv',
-                            'actual_size_mb': len(csv_data) / (1024 * 1024),
-                            'message': f'Time series CSV for {index_name} (spatial GeoTIFF export failed)',
-                            'fallback': True,
-                            'original_error': spatial_result.get('message', spatial_result.get('error', 'Unknown'))
-                        }
-                        st.info(f"📊 {index_name}: Providing time series fallback (spatial export failed)")
+                    # Provide specific guidance for percentile-based indices
+                    if index_name in ['TX90p', 'TX10p', 'TN90p', 'TN10p', 'R95p', 'R99p', 'R75p']:
+                        # Get the actual base period that was used
+                        actual_base_period = "1980-2000"  # default
+                        if 'percentile_params' in config and index_name in config['percentile_params']:
+                            percentile_config = config['percentile_params'][index_name]
+                            start_year = percentile_config['base_start'][:4]
+                            end_year = percentile_config['base_end'][:4]
+                            actual_base_period = f"{start_year}-{end_year}"
+
+                        if "base period" in error_msg.lower():
+                            st.write(f"  ❌ Base period data issue ({actual_base_period})")
+                            detailed_error = f"Percentile-based index requires {actual_base_period} baseline data: {error_msg}"
+                        else:
+                            st.write(f"  ❌ Percentile calculation failed: {error_msg}")
+                            detailed_error = f"Percentile calculation error: {error_msg}"
                     else:
-                        spatial_result = {
-                            'success': False,
-                            'export_method': 'failed',
-                            'error': f'Both spatial and time series extraction failed for {index_name}',
-                            'message': spatial_result.get('message', spatial_result.get('error', 'Unknown error'))
-                        }
+                        st.write(f"  ❌ Error: {error_msg}")
+                        detailed_error = error_msg
 
-                if spatial_result['success']:
-                    all_spatial_data[index_name] = spatial_result
-                    if spatial_result.get('fallback'):
-                        st.info(f"📊 {index_name}: {spatial_result.get('message', 'Fallback data processed')}")
-                    else:
-                        st.info(f"🗺️ {index_name}: {spatial_result.get('message', 'Spatial data processed')}")
-
-                results[index_name] = {
-                    'time_series': time_series_df,
-                    'spatial_data': spatial_result,
-                    'success': True
-                }
-
-            except Exception as index_error:
-                error_msg = str(index_error)
-
-                # Provide specific guidance for percentile-based indices
-                if index_name in ['TX90p', 'TX10p', 'TN90p', 'TN10p', 'R95p', 'R99p', 'R75p']:
-                    # Get the actual base period that was used
-                    actual_base_period = "1980-2000"  # default
-                    if 'percentile_params' in config and index_name in config['percentile_params']:
-                        percentile_config = config['percentile_params'][index_name]
-                        start_year = percentile_config['base_start'][:4]
-                        end_year = percentile_config['base_end'][:4]
-                        actual_base_period = f"{start_year}-{end_year}"
-
-                    if "base period" in error_msg.lower():
-                        st.error(f"❌ {index_name}: Base period data issue ({actual_base_period})")
-                        st.info(f"💡 This dataset may not have data covering the required {actual_base_period} base period for percentile calculations.")
-                        detailed_error = f"Percentile-based index requires {actual_base_period} baseline data: {error_msg}"
-                    else:
-                        st.error(f"❌ {index_name}: Percentile calculation failed")
-                        st.error(f"🔍 Full error details: {error_msg}")
-                        detailed_error = f"Percentile calculation error: {error_msg}"
-                else:
-                    st.error(f"❌ Error calculating {index_name}: {error_msg}")
-                    detailed_error = error_msg
-
-                results[index_name] = {
-                    'success': False,
-                    'error': detailed_error
-                }
-                continue
+                    results[index_name] = {
+                        'success': False,
+                        'error': detailed_error
+                    }
+                    continue
 
         progress_bar.progress(1.0)
 
@@ -325,17 +371,15 @@ def run_climate_analysis_with_chunking(config: Dict[str, Any]) -> Dict[str, Any]
         successful_indices = sum(1 for r in results.values() if r['success'])
         failed_indices = total_indices - successful_indices
 
-        # Provide accurate completion message
+        # Provide concise completion message (consolidated)
         if failed_indices == 0:
-            status_text.text("✅ Analysis completed successfully!")
-            st.success(f"🎉 All {total_indices} climate indices calculated successfully!")
+            status_text.text(f"✅ All {total_indices} indices processed successfully!")
         elif successful_indices == 0:
-            status_text.text("❌ Analysis completed with errors!")
-            st.error(f"💥 All {total_indices} climate indices failed to calculate!")
+            status_text.text(f"❌ All {total_indices} indices failed!")
+            st.error(f"All climate indices failed. Check the 'Detailed Processing Log' expander above.")
         else:
-            status_text.text("⚠️ Analysis completed with partial success!")
-            st.warning(f"⚡ {successful_indices}/{total_indices} indices succeeded, {failed_indices} failed.")
-            st.info("💡 Check the error messages above for failed indices. Successful indices can still be downloaded.")
+            status_text.text(f"⚠️ {successful_indices}/{total_indices} indices succeeded")
+            st.warning(f"{successful_indices}/{total_indices} indices succeeded. {failed_indices} failed - check logs above.")
 
         # Generate combined outputs
         combined_results = _generate_combined_outputs(
@@ -348,7 +392,7 @@ def run_climate_analysis_with_chunking(config: Dict[str, Any]) -> Dict[str, Any]
         # Overall success is true if at least one index succeeded
         overall_success = successful_indices > 0
 
-        return {
+        result_dict = {
             'success': overall_success,
             'individual_results': validated_results,
             'time_series_data': all_time_series,
@@ -361,8 +405,29 @@ def run_climate_analysis_with_chunking(config: Dict[str, Any]) -> Dict[str, Any]
                 'failed_indices': failed_indices,
                 'time_period': f"{start_date} to {end_date}",
                 'dataset': dataset_info['name']
-            }
+            },
+            'temporal_only': temporal_only
         }
+
+        # If temporal_only mode, store config for later spatial processing
+        if temporal_only:
+            result_dict['spatial_export_config'] = {
+                'dataset_id': dataset_id,
+                'geometry': geometry,
+                'start_date': start_date,
+                'end_date': end_date,
+                'spatial_scale': spatial_scale,
+                'temporal_resolution': temporal_resolution,
+                'selected_indices': selected_indices,
+                'export_method': export_method,
+                'threshold_params': config.get('threshold_params', {}),
+                'percentile_params': config.get('percentile_params', {})
+            }
+            # Concise final message
+            if successful_indices > 0:
+                st.info(f"📊 Temporal data ready for {successful_indices} indices. Spatial export available below.")
+
+        return result_dict
 
     except Exception as e:
         st.error(f"❌ Analysis failed: {str(e)}")
@@ -1045,7 +1110,7 @@ def _validate_smart_download_structure(results: Dict[str, Any], export_method: s
 
     Args:
         results: Raw analysis results
-        export_method: The export method used ('local', 'drive', 'preview', 'auto')
+        export_method: The export method used ('local', 'drive', 'preview', 'auto', 'pending')
 
     Returns:
         Validated results with proper structure
@@ -1066,33 +1131,30 @@ def _validate_smart_download_structure(results: Dict[str, Any], export_method: s
             if 'export_method' not in spatial_data:
                 # Infer export method from data characteristics
                 if spatial_data.get('file_data'):
-                    # Has file data - it's a local or preview export
-                    if spatial_data.get('total_images', 0) > 1:
-                        spatial_data['export_method'] = 'local'
-                    else:
-                        # Single sample suggests preview
-                        spatial_data['export_method'] = 'preview' if export_method == 'preview' else 'local'
+                    spatial_data['export_method'] = 'local'
                 elif spatial_data.get('drive_folder') or spatial_data.get('task_id'):
                     spatial_data['export_method'] = 'drive'
+                elif spatial_data.get('pending'):
+                    spatial_data['export_method'] = 'pending'
                 else:
-                    # No data available - mark as failed, not 'auto'
+                    # No data available - mark as failed
                     spatial_data['export_method'] = 'failed'
                     spatial_data['error'] = 'No export data generated'
-                    st.warning(f"⚠️ {index_name}: Export completed but no data available (export_method was '{export_method}')")
 
-            # Validate that export_method is a recognized value
-            valid_methods = ['local', 'drive', 'preview', 'failed']
+            # Validate export_method is recognized
+            valid_methods = ['local', 'drive', 'preview', 'pending', 'failed']
             if spatial_data.get('export_method') not in valid_methods:
                 # Force to valid method based on available data
                 if spatial_data.get('file_data'):
                     spatial_data['export_method'] = 'local'
                 elif spatial_data.get('drive_folder'):
                     spatial_data['export_method'] = 'drive'
+                elif spatial_data.get('pending'):
+                    spatial_data['export_method'] = 'pending'
                 else:
                     spatial_data['export_method'] = 'failed'
-                    spatial_data['error'] = f"Invalid export method: {spatial_data.get('export_method')}"
 
-            # Ensure size information is present for local/preview exports
+            # Ensure size information is present for local/preview
             if spatial_data.get('export_method') in ['local', 'preview'] and 'actual_size_mb' not in spatial_data:
                 if spatial_data.get('file_data'):
                     spatial_data['actual_size_mb'] = len(spatial_data['file_data']) / (1024 * 1024)
@@ -1119,12 +1181,14 @@ def _validate_smart_download_structure(results: Dict[str, Any], export_method: s
 
         validated_results[index_name] = index_result
 
-        # Debug: Log validation results
+        # Log validation results (compact)
         if 'spatial_data' in index_result:
             method = index_result['spatial_data'].get('export_method', 'missing')
             if method == 'failed':
-                st.warning(f"⚠️ Validated {index_name}: export_method={method}")
+                st.warning(f"⚠️ {index_name}: export={method}")
+            elif method == 'pending':
+                st.info(f"⏳ {index_name}: export={method}")
             else:
-                st.info(f"✅ Validated {index_name}: export_method={method}")
+                st.info(f"✅ {index_name}: export={method}")
 
     return validated_results
