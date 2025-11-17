@@ -224,7 +224,7 @@ class AuthComponent:
                 if uploaded_file is not None:
                     try:
                         credentials_content = uploaded_file.read().decode('utf-8')
-                        st.success("✅ Credentials file uploaded successfully!")
+                        st.info("📄 Credentials file loaded. Click 'Authenticate' to verify.")
                     except Exception as e:
                         st.error(f"❌ Error reading credentials file: {str(e)}")
                         credentials_content = None
@@ -265,29 +265,68 @@ class AuthComponent:
                     success, message = self.authenticate_gee(
                         project_id, service_account, key_file, credentials_content
                     )
-                    
-                    if success:
-                        st.success(f"✅ {message}")
-                        
-                        # Save credentials if requested
-                        if remember:
-                            credentials = {"project_id": project_id}
-                            if service_account:
-                                credentials["service_account"] = service_account
-                            if key_file:
-                                credentials["key_file"] = key_file
-                            # Note: We don't save credentials_content for security
-                            
-                            if self.save_credentials(credentials):
-                                st.info("💾 Credentials saved for future use")
-                        
-                        st.session_state.auth_complete = True
-                        st.session_state.auth_project_id = project_id
-                        
-                        # Show success message - the main app will handle proceeding to next step
-                        st.success("🎉 Authentication complete! Proceeding to next step...")
-                        
-                        return True  # Return True to indicate successful authentication
-        
+
+                if success:
+                    st.success(f"✅ {message}")
+
+                    # Save credentials if requested
+                    if remember:
+                        credentials = {"project_id": project_id}
+                        if service_account:
+                            credentials["service_account"] = service_account
+                        if key_file:
+                            credentials["key_file"] = key_file
+                        # Note: We don't save credentials_content for security
+
+                        if self.save_credentials(credentials):
+                            st.info("💾 Credentials saved for future use")
+
+                    st.session_state.auth_complete = True
+                    st.session_state.auth_project_id = project_id
+                    st.session_state.project_id = project_id  # For display in nav
+
+                    # Show single success message
+                    st.success("🎉 Authentication complete! Click below to proceed...")
+                    time.sleep(1)
+                    st.rerun()  # Rerun to proceed to main app
+
+                    return True  # Return True to indicate successful authentication
+                else:
+                    # Show clear error message when authentication fails
+                    st.error(f"❌ {message}")
+
+                    # Provide helpful guidance based on error type
+                    if "project" in message.lower():
+                        st.warning("""
+                        **Project ID Issue:**
+                        - Make sure you entered the correct Google Cloud Project ID
+                        - The project must have Earth Engine API enabled
+                        - Format: `your-project-id` (not the project name or number)
+                        """)
+                    elif "credential" in message.lower() or "token" in message.lower():
+                        st.warning("""
+                        **Credentials Issue:**
+                        - Your credentials file may be invalid or expired
+                        - Try re-authenticating: Run `earthengine authenticate` in terminal
+                        - Make sure you uploaded the correct file from `~/.config/earthengine/credentials`
+                        """)
+                    elif "permission" in message.lower() or "access" in message.lower():
+                        st.warning("""
+                        **Permission Issue:**
+                        - Your account may not have access to this project
+                        - Ensure Earth Engine API is enabled in Google Cloud Console
+                        - Your Google account must be registered with Earth Engine
+                        """)
+                    else:
+                        st.warning("""
+                        **Troubleshooting:**
+                        1. Verify your Project ID is correct
+                        2. Check that your credentials file is valid
+                        3. Ensure Earth Engine API is enabled for your project
+                        4. Try re-running `earthengine authenticate` in terminal
+                        """)
+
+                    return False
+
         st.markdown('</div>', unsafe_allow_html=True)  # Close auth-form-container
         return False

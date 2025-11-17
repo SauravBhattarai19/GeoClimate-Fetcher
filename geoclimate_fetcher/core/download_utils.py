@@ -537,6 +537,69 @@ def export_individual_geotiffs_standalone(collection, temp_path, geometry, scale
     import zipfile
     from pathlib import Path
 
+    # Check if collection has climatology metadata
+    try:
+        collection_props = collection.getInfo().get('properties', {})
+        is_climatology_mode = collection_props.get('climatology_mode', False)
+        climatology_type = collection_props.get('climatology_type', 'mean')
+    except:
+        is_climatology_mode = False
+        climatology_type = 'mean'
+
+    # If climatology mode, aggregate to single image before exporting
+    if is_climatology_mode:
+        st.info(f"📊 Climatology mode detected: Aggregating {collection_size} yearly images to single {climatology_type} image...")
+
+        if climatology_type == 'median':
+            climatology_img = collection.median().clip(geometry)
+        elif climatology_type == 'min':
+            climatology_img = collection.min().clip(geometry)
+        elif climatology_type == 'max':
+            climatology_img = collection.max().clip(geometry)
+        else:
+            climatology_img = collection.mean().clip(geometry)
+
+        # Export single climatology image
+        try:
+            clipped_image = climatology_img.clip(geometry)
+
+            # Export using geemap with explicit EPSG:4326 projection
+            geemap.ee_export_image(
+                clipped_image,
+                filename=str(temp_path),
+                scale=scale,
+                region=geometry,
+                file_per_band=False,
+                crs='EPSG:4326'
+            )
+
+            if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
+                with open(temp_path, 'rb') as f:
+                    file_data = f.read()
+                file_size_mb = len(file_data) / (1024 * 1024)
+                os.unlink(temp_path)
+
+                return {
+                    'success': True,
+                    'file_path': temp_path,
+                    'file_data': file_data,
+                    'message': f"Single climatology ({climatology_type}) GeoTIFF file ({file_size_mb:.1f} MB)"
+                }
+            else:
+                return {
+                    'success': False,
+                    'file_path': None,
+                    'file_data': None,
+                    'message': "Failed to export climatology GeoTIFF"
+                }
+        except Exception as e:
+            return {
+                'success': False,
+                'file_path': None,
+                'file_data': None,
+                'message': f"Climatology export failed: {str(e)}"
+            }
+
     # Create temporary directory for individual files
     temp_dir = Path(temp_path).parent / 'geotiff_collection'
     temp_dir.mkdir(exist_ok=True)

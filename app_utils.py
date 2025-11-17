@@ -18,10 +18,27 @@ def go_back_to_step(step_name):
         st.rerun()
     elif step_name == "geometry":
         # Go back to step 1: Reset all selections
+        # Reset both variable names (geometry_selected and geometry_complete) for compatibility
         st.session_state.geometry_selected = False
+        st.session_state.geometry_complete = False
         st.session_state.dataset_selected = False
         st.session_state.bands_selected = False
         st.session_state.dates_selected = False
+
+        # Also reset geometry handler state if it exists
+        if 'geometry_handler' in st.session_state:
+            try:
+                st.session_state.geometry_handler._current_geometry = None
+                st.session_state.geometry_handler._current_geometry_name = None
+            except:
+                pass
+
+        # Clear any download state
+        if 'download_complete' in st.session_state:
+            st.session_state.download_complete = False
+        if 'download_results' in st.session_state:
+            st.session_state.download_results = None
+
         st.rerun()
     elif step_name == "dataset":
         # Go back to step 2: Keep geometry, reset dataset and onwards

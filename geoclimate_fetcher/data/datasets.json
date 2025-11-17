@@ -91,6 +91,81 @@
         "temperature": ["TXx", "TNn", "DTR", "TX90p", "TN10p", "FD", "SU"],
         "precipitation": ["RX1day", "CDD", "PRCPTOT", "R95p", "R10mm", "SDII"]
       }
+    },
+    "ECMWF/ERA5_LAND/DAILY_AGGR": {
+      "name": "ERA5-Land Daily Aggregated",
+      "provider": "Google and Copernicus Climate Data Store",
+      "start_date": "1950-01-02",
+      "end_date": "present",
+      "temporal_resolution": "daily",
+      "pixel_size_m": 11132,
+      "snippet_type": "ImageCollection",
+      "geographic_coverage": "Global",
+      "description": "ERA5-Land daily aggregated reanalysis data with higher spatial resolution than ERA5",
+      "bands": {
+        "temperature_max": {
+          "band_name": "temperature_2m_max",
+          "unit": "°C",
+          "original_unit": "K",
+          "scaling_factor": 1.0,
+          "offset": -273.15,
+          "description": "Daily maximum 2m air temperature"
+        },
+        "temperature_min": {
+          "band_name": "temperature_2m_min",
+          "unit": "°C",
+          "original_unit": "K",
+          "scaling_factor": 1.0,
+          "offset": -273.15,
+          "description": "Daily minimum 2m air temperature"
+        },
+        "precipitation": {
+          "band_name": "total_precipitation_sum",
+          "unit": "mm/day",
+          "original_unit": "m",
+          "scaling_factor": 1000.0,
+          "offset": 0.0,
+          "description": "Daily total precipitation"
+        }
+      },
+      "supports_analysis": ["temperature", "precipitation"],
+      "recommended_indices": {
+        "temperature": ["TXx", "TNn", "DTR", "TX90p", "TN10p", "FD", "SU", "TXn", "TNx"],
+        "precipitation": ["RX1day", "CDD", "PRCPTOT", "R95p", "R99p", "R75p", "R10mm", "R20mm", "SDII"]
+      }
+    },
+    "NASA/GPM_L3/IMERG_V07": {
+      "name": "GPM IMERG V07 (Global Precipitation Measurement)",
+      "provider": "NASA GES DISC at NASA Goddard Space Flight Center",
+      "start_date": "2000-06-01",
+      "end_date": "present",
+      "temporal_resolution": "half-hourly",
+      "pixel_size_m": 11132,
+      "snippet_type": "ImageCollection",
+      "geographic_coverage": "Global",
+      "description": "NASA Global Precipitation Measurement (GPM) IMERG Release 07 - high resolution global precipitation estimates",
+      "sub_daily_aggregation": {
+        "is_sub_daily": true,
+        "images_per_day": 48,
+        "time_interval_hours": 0.5,
+        "aggregation_method": "sum",
+        "rate_to_total_multiplier": 0.5,
+        "notes": "Each image is mm/hr rate for 30-min period. Daily total = sum(rate * 0.5)"
+      },
+      "bands": {
+        "precipitation": {
+          "band_name": "precipitation",
+          "unit": "mm/day",
+          "original_unit": "mm/hr",
+          "scaling_factor": 1.0,
+          "offset": 0.0,
+          "description": "Half-hourly precipitation rate (aggregated to daily total)"
+        }
+      },
+      "supports_analysis": ["precipitation"],
+      "recommended_indices": {
+        "precipitation": ["RX1day", "CDD", "PRCPTOT", "R95p", "R99p", "R75p", "R10mm", "R20mm", "SDII"]
+      }
     }
   },
   "climate_indices": {

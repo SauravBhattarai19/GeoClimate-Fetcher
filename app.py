@@ -821,12 +821,26 @@ if st.session_state.app_mode is None:
             st.session_state.app_mode = "product_selector"
             st.rerun()
 
-    # Third row - centered tool
-    st.markdown("<br>", unsafe_allow_html=True)  # Add some spacing
+    # Third row of tools
+    col5, col6 = st.columns(2)
 
-    col_center = st.columns([1, 2, 1])  # Create centered layout
+    with col5:
+        st.markdown("""
+        <div class="tool-card">
+            <span class="tool-icon">🗺️</span>
+            <div class="tool-title">Multi-Geometry Data Export</div>
+            <div class="tool-description">
+                Export time series data for multiple geometries within a single file (e.g., counties in a state,
+                districts in a country). Perfect for regional analysis with spatial aggregation.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-    with col_center[1]:  # Use middle column for centering
+        if st.button("🚀 Launch Multi-Geometry Export", use_container_width=True, type="primary"):
+            st.session_state.app_mode = "multi_geometry_export"
+            st.rerun()
+
+    with col6:
         st.markdown("""
         <div class="tool-card">
             <span class="tool-icon">📊</span>
