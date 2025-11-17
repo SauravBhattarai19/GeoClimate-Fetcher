@@ -109,164 +109,193 @@ def run_climate_analysis_with_chunking(config: Dict[str, Any]) -> Dict[str, Any]
         progress_bar = st.progress(0)
         status_text = st.empty()
 
+        # Calculate adaptive scale based on area size to prevent memory issues
+        try:
+            area_km2 = ee.Geometry(geometry).area().divide(1e6).getInfo()
+            if area_km2 > 500000:  # Very large (>500,000 km²)
+                adaptive_scale = 20000  # 20km resolution
+                st.warning(f"⚠️ Very large study area ({area_km2:,.0f} km²). Using coarse resolution ({adaptive_scale}m) to prevent memory issues.")
+            elif area_km2 > 100000:  # Large (>100,000 km²)
+                adaptive_scale = 10000  # 10km resolution
+                st.info(f"ℹ️ Large study area ({area_km2:,.0f} km²). Using adaptive resolution ({adaptive_scale}m).")
+            elif area_km2 > 10000:  # Medium (>10,000 km²)
+                adaptive_scale = 5000   # 5km resolution
+            else:  # Small (<10,000 km²)
+                adaptive_scale = 1000   # 1km resolution
+        except:
+            adaptive_scale = 5000  # Default fallback
+            area_km2 = 0
+
         if temporal_only:
-            st.info("📈 Running temporal-only analysis (spatial export will be available separately)")
+            st.info(f"📈 Extracting temporal data for {len(selected_indices)} indices...")
 
-        for i, index_name in enumerate(selected_indices):
-            status_text.text(f"Calculating {index_name}...")
-            progress = (i + 1) / len(selected_indices)
-            progress_bar.progress(progress)
+        # Use expander for detailed logs
+        with st.expander("📋 Detailed Processing Log", expanded=False):
+            for i, index_name in enumerate(selected_indices):
+                status_text.text(f"Processing {index_name} ({i + 1}/{len(selected_indices)})...")
+                progress = (i + 1) / len(selected_indices)
+                progress_bar.progress(progress)
 
-            try:
-                # Calculate the climate index
-                st.info(f"🔄 Computing {index_name} using server-side Earth Engine processing...")
+                try:
+                    # Calculate the climate index
+                    st.write(f"🔄 Computing {index_name}...")
 
-                # Get threshold parameters for this index if available
-                threshold_kwargs = {}
-                if 'threshold_params' in config and index_name in config['threshold_params']:
-                    threshold_kwargs = config['threshold_params'][index_name]
-                    st.info(f"🎛️ Using custom parameters for {index_name}: {threshold_kwargs}")
+                    # Get threshold parameters for this index if available
+                    threshold_kwargs = {}
+                    if 'threshold_params' in config and index_name in config['threshold_params']:
+                        threshold_kwargs = config['threshold_params'][index_name]
+                        st.write(f"  🎛️ Custom parameters: {threshold_kwargs}")
 
-                # Get percentile parameters for this index if available
-                percentile_kwargs = {}
-                if 'percentile_params' in config and index_name in config['percentile_params']:
-                    percentile_config = config['percentile_params'][index_name]
-                    percentile_kwargs = {
-                        'percentile': percentile_config['percentile'],
-                        'base_start': percentile_config['base_start'],
-                        'base_end': percentile_config['base_end']
-                    }
-                    st.info(f"📊 Using custom percentile config for {index_name}: {percentile_config['percentile']}th percentile, base period {percentile_config['base_start']} to {percentile_config['base_end']}")
-
-                # Combine all parameters
-                all_kwargs = {**threshold_kwargs, **percentile_kwargs}
-
-                index_result = calculator.calculate_simple_index(
-                    index_name, collections, start_date, end_date,
-                    temporal_resolution=temporal_resolution,
-                    **all_kwargs
-                )
-
-                # Store the ImageCollection for later spatial processing
-                all_index_collections[index_name] = index_result
-
-                # Extract time series data using optimized extraction
-                st.info(f"📈 Extracting time series data for {index_name}...")
-                time_series_df = calculator.extract_time_series_optimized(
-                    index_result, scale=5000, max_pixels=1e6
-                )
-
-                if not time_series_df.empty:
-                    all_time_series[index_name] = time_series_df
-                    st.success(f"✅ {index_name}: Extracted {len(time_series_df)} data points")
-                else:
-                    st.warning(f"⚠️ {index_name}: No data points extracted")
-
-                # SPATIAL PROCESSING (skip if temporal_only mode)
-                if temporal_only:
-                    # Skip spatial processing, just mark as pending
-                    spatial_result = {
-                        'success': True,
-                        'export_method': 'pending',
-                        'message': f'{index_name} spatial export pending (user-triggered)',
-                        'pending': True
-                    }
-                    st.info(f"⏳ {index_name}: Spatial export ready (will process on demand)")
-                else:
-                    # Generate spatial data using proven process_image_collection_chunked method
-                    collection_size = index_result.size().getInfo()
-                    st.info(f"🗺️ Processing spatial data for {index_name} ({collection_size} images)")
-
-                    # Use process_image_collection_chunked with correct temporal_resolution
-                    # The download_utils.py now properly handles 'yearly' and 'monthly'
-                    st.info(f"🗺️ Exporting {index_name} spatial data ({temporal_resolution} resolution)")
-
-                    spatial_result = process_image_collection_chunked(
-                        collection=index_result,
-                        bands=None,  # Climate index collections already have correct bands
-                        geometry=geometry,
-                        start_date=start_date,
-                        end_date=end_date,
-                        export_format='GeoTIFF',
-                        scale=spatial_scale,
-                        temporal_resolution=temporal_resolution  # Now properly handled in download_utils
-                    )
-
-                    # Convert result format to match expected structure
-                    if spatial_result.get('success'):
-                        # Standardize the result structure for smart download compatibility
-                        if spatial_result.get('file_data'):
-                            # Local download successful
-                            spatial_result['export_method'] = 'local'
-                            spatial_result['actual_size_mb'] = len(spatial_result['file_data']) / (1024 * 1024)
-                            spatial_result['filename'] = spatial_result.get('filename', f'{index_name}_spatial.zip')
-                        elif spatial_result.get('drive_folder'):
-                            # Drive export successful
-                            spatial_result['export_method'] = 'drive'
-                            spatial_result['estimated_size_mb'] = spatial_result.get('estimated_size_mb', collection_size * 5)
-                        else:
-                            # Success but unknown method, assume local
-                            spatial_result['export_method'] = 'local'
-
-                        st.success(f"✅ {index_name}: Spatial data processed ({spatial_result.get('export_method', 'unknown')} method)")
-                    else:
-                        st.warning(f"⚠️ {index_name}: Spatial processing failed, creating time series fallback")
-
-                        # Create fallback CSV result
-                        csv_data = time_series_df.to_csv(index=False).encode('utf-8')
-                        spatial_result = {
-                            'success': True,
-                            'export_method': 'local',
-                            'file_data': csv_data,
-                        'filename': f'{index_name}_timeseries.csv',
-                        'actual_size_mb': len(csv_data) / (1024 * 1024),
-                        'message': f'Time series CSV for {index_name} (spatial processing failed)',
-                        'fallback': True
-                    }
-
-                if spatial_result['success']:
-                    all_spatial_data[index_name] = spatial_result
-                    if spatial_result.get('fallback'):
-                        st.info(f"📊 {index_name}: {spatial_result.get('message', 'Fallback data processed')}")
-                    else:
-                        st.info(f"🗺️ {index_name}: {spatial_result.get('message', 'Spatial data processed')}")
-
-                results[index_name] = {
-                    'time_series': time_series_df,
-                    'spatial_data': spatial_result,
-                    'success': True
-                }
-
-            except Exception as index_error:
-                error_msg = str(index_error)
-
-                # Provide specific guidance for percentile-based indices
-                if index_name in ['TX90p', 'TX10p', 'TN90p', 'TN10p', 'R95p', 'R99p', 'R75p']:
-                    # Get the actual base period that was used
-                    actual_base_period = "1980-2000"  # default
+                    # Get percentile parameters for this index if available
+                    percentile_kwargs = {}
                     if 'percentile_params' in config and index_name in config['percentile_params']:
                         percentile_config = config['percentile_params'][index_name]
-                        start_year = percentile_config['base_start'][:4]
-                        end_year = percentile_config['base_end'][:4]
-                        actual_base_period = f"{start_year}-{end_year}"
+                        percentile_kwargs = {
+                            'percentile': percentile_config['percentile'],
+                            'base_start': percentile_config['base_start'],
+                            'base_end': percentile_config['base_end']
+                        }
+                        st.write(f"  📊 Percentile: {percentile_config['percentile']}th, base {percentile_config['base_start'][:4]}-{percentile_config['base_end'][:4]}")
 
-                    if "base period" in error_msg.lower():
-                        st.error(f"❌ {index_name}: Base period data issue ({actual_base_period})")
-                        st.info(f"💡 This dataset may not have data covering the required {actual_base_period} base period for percentile calculations.")
-                        detailed_error = f"Percentile-based index requires {actual_base_period} baseline data: {error_msg}"
+                    # Combine all parameters
+                    all_kwargs = {**threshold_kwargs, **percentile_kwargs}
+
+                    index_result = calculator.calculate_simple_index(
+                        index_name, collections, start_date, end_date,
+                        temporal_resolution=temporal_resolution,
+                        **all_kwargs
+                    )
+
+                    # Store the ImageCollection for later spatial processing
+                    all_index_collections[index_name] = index_result
+
+                    # Extract time series data with ADAPTIVE SCALE and retry logic
+                    st.write(f"  📈 Extracting time series (scale={adaptive_scale}m)...")
+
+                    extraction_success = False
+                    current_scale = adaptive_scale
+                    max_retries = 3
+
+                    for retry in range(max_retries):
+                        try:
+                            time_series_df = calculator.extract_time_series_optimized(
+                                index_result, scale=current_scale, max_pixels=1e6
+                            )
+                            extraction_success = True
+                            break
+                        except Exception as extraction_error:
+                            error_msg = str(extraction_error).lower()
+                            if "memory" in error_msg or "limit exceeded" in error_msg:
+                                # Increase scale to reduce memory usage
+                                current_scale = int(current_scale * 2)
+                                if retry < max_retries - 1:
+                                    st.write(f"  ⚠️ Memory limit hit. Retrying with coarser scale ({current_scale}m)...")
+                                else:
+                                    raise extraction_error
+                            else:
+                                raise extraction_error
+
+                    if extraction_success and not time_series_df.empty:
+                        all_time_series[index_name] = time_series_df
+                        st.write(f"  ✅ Extracted {len(time_series_df)} data points")
                     else:
-                        st.error(f"❌ {index_name}: Percentile calculation failed")
-                        st.error(f"🔍 Full error details: {error_msg}")
-                        detailed_error = f"Percentile calculation error: {error_msg}"
-                else:
-                    st.error(f"❌ Error calculating {index_name}: {error_msg}")
-                    detailed_error = error_msg
+                        st.write(f"  ⚠️ No data points extracted")
 
-                results[index_name] = {
-                    'success': False,
-                    'error': detailed_error
-                }
-                continue
+                    # SPATIAL PROCESSING (skip if temporal_only mode)
+                    if temporal_only:
+                        # Skip spatial processing, just mark as pending
+                        spatial_result = {
+                            'success': True,
+                            'export_method': 'pending',
+                            'message': f'{index_name} spatial export pending (user-triggered)',
+                            'pending': True
+                        }
+                        st.write(f"  ⏳ Spatial export ready (on-demand)")
+                    else:
+                        # Generate spatial data using proven process_image_collection_chunked method
+                        collection_size = index_result.size().getInfo()
+                        st.write(f"  🗺️ Processing spatial data ({collection_size} images)")
+
+                        spatial_result = process_image_collection_chunked(
+                            collection=index_result,
+                            bands=None,  # Climate index collections already have correct bands
+                            geometry=geometry,
+                            start_date=start_date,
+                            end_date=end_date,
+                            export_format='GeoTIFF',
+                            scale=spatial_scale,
+                            temporal_resolution=temporal_resolution  # Now properly handled in download_utils
+                        )
+
+                        # Convert result format to match expected structure
+                        if spatial_result.get('success'):
+                            # Standardize the result structure for smart download compatibility
+                            if spatial_result.get('file_data'):
+                                # Local download successful
+                                spatial_result['export_method'] = 'local'
+                                spatial_result['actual_size_mb'] = len(spatial_result['file_data']) / (1024 * 1024)
+                                spatial_result['filename'] = spatial_result.get('filename', f'{index_name}_spatial.zip')
+                            elif spatial_result.get('drive_folder'):
+                                # Drive export successful
+                                spatial_result['export_method'] = 'drive'
+                                spatial_result['estimated_size_mb'] = spatial_result.get('estimated_size_mb', collection_size * 5)
+                            else:
+                                # Success but unknown method, assume local
+                                spatial_result['export_method'] = 'local'
+
+                            st.write(f"  ✅ Spatial data processed ({spatial_result.get('export_method', 'unknown')} method)")
+                        else:
+                            st.write(f"  ⚠️ Spatial processing failed, creating time series fallback")
+
+                            # Create fallback CSV result
+                            csv_data = time_series_df.to_csv(index=False).encode('utf-8')
+                            spatial_result = {
+                                'success': True,
+                                'export_method': 'local',
+                                'file_data': csv_data,
+                                'filename': f'{index_name}_timeseries.csv',
+                                'actual_size_mb': len(csv_data) / (1024 * 1024),
+                                'message': f'Time series CSV for {index_name} (spatial processing failed)',
+                                'fallback': True
+                            }
+
+                    if spatial_result['success']:
+                        all_spatial_data[index_name] = spatial_result
+
+                    results[index_name] = {
+                        'time_series': time_series_df,
+                        'spatial_data': spatial_result,
+                        'success': True
+                    }
+
+                except Exception as index_error:
+                    error_msg = str(index_error)
+
+                    # Provide specific guidance for percentile-based indices
+                    if index_name in ['TX90p', 'TX10p', 'TN90p', 'TN10p', 'R95p', 'R99p', 'R75p']:
+                        # Get the actual base period that was used
+                        actual_base_period = "1980-2000"  # default
+                        if 'percentile_params' in config and index_name in config['percentile_params']:
+                            percentile_config = config['percentile_params'][index_name]
+                            start_year = percentile_config['base_start'][:4]
+                            end_year = percentile_config['base_end'][:4]
+                            actual_base_period = f"{start_year}-{end_year}"
+
+                        if "base period" in error_msg.lower():
+                            st.write(f"  ❌ Base period data issue ({actual_base_period})")
+                            detailed_error = f"Percentile-based index requires {actual_base_period} baseline data: {error_msg}"
+                        else:
+                            st.write(f"  ❌ Percentile calculation failed: {error_msg}")
+                            detailed_error = f"Percentile calculation error: {error_msg}"
+                    else:
+                        st.write(f"  ❌ Error: {error_msg}")
+                        detailed_error = error_msg
+
+                    results[index_name] = {
+                        'success': False,
+                        'error': detailed_error
+                    }
+                    continue
 
         progress_bar.progress(1.0)
 
@@ -275,17 +304,15 @@ def run_climate_analysis_with_chunking(config: Dict[str, Any]) -> Dict[str, Any]
         successful_indices = sum(1 for r in results.values() if r['success'])
         failed_indices = total_indices - successful_indices
 
-        # Provide accurate completion message
+        # Provide concise completion message (consolidated)
         if failed_indices == 0:
-            status_text.text("✅ Analysis completed successfully!")
-            st.success(f"🎉 All {total_indices} climate indices calculated successfully!")
+            status_text.text(f"✅ All {total_indices} indices processed successfully!")
         elif successful_indices == 0:
-            status_text.text("❌ Analysis completed with errors!")
-            st.error(f"💥 All {total_indices} climate indices failed to calculate!")
+            status_text.text(f"❌ All {total_indices} indices failed!")
+            st.error(f"All climate indices failed. Check the 'Detailed Processing Log' expander above.")
         else:
-            status_text.text("⚠️ Analysis completed with partial success!")
-            st.warning(f"⚡ {successful_indices}/{total_indices} indices succeeded, {failed_indices} failed.")
-            st.info("💡 Check the error messages above for failed indices. Successful indices can still be downloaded.")
+            status_text.text(f"⚠️ {successful_indices}/{total_indices} indices succeeded")
+            st.warning(f"{successful_indices}/{total_indices} indices succeeded. {failed_indices} failed - check logs above.")
 
         # Generate combined outputs
         combined_results = _generate_combined_outputs(
@@ -329,7 +356,9 @@ def run_climate_analysis_with_chunking(config: Dict[str, Any]) -> Dict[str, Any]
                 'threshold_params': config.get('threshold_params', {}),
                 'percentile_params': config.get('percentile_params', {})
             }
-            st.success("✅ Temporal analysis complete! Click 'Proceed to Spatial Export' to download spatial data.")
+            # Concise final message
+            if successful_indices > 0:
+                st.info(f"📊 Temporal data ready for {successful_indices} indices. Spatial export available below.")
 
         return result_dict
 
