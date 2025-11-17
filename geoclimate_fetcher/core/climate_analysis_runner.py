@@ -203,61 +203,128 @@ def run_climate_analysis_with_chunking(config: Dict[str, Any]) -> Dict[str, Any]
 
                     # SPATIAL PROCESSING (skip if temporal_only mode)
                     if temporal_only:
-                        # Skip spatial processing, just mark as pending
+                        # Skip spatial processing, mark as pending for on-demand export
                         spatial_result = {
                             'success': True,
                             'export_method': 'pending',
                             'message': f'{index_name} spatial export pending (user-triggered)',
-                            'pending': True
+                            'pending': True,
+                            'collection_available': True
                         }
                         st.write(f"  ⏳ Spatial export ready (on-demand)")
                     else:
-                        # Generate spatial data using proven process_image_collection_chunked method
+                        # Generate spatial data based on export_method
                         collection_size = index_result.size().getInfo()
-                        st.write(f"  🗺️ Processing spatial data ({collection_size} images)")
+                        st.write(f"  🗺️ Processing spatial data ({collection_size} images, {export_method} mode)")
 
-                        spatial_result = process_image_collection_chunked(
-                            collection=index_result,
-                            bands=None,  # Climate index collections already have correct bands
-                            geometry=geometry,
-                            start_date=start_date,
-                            end_date=end_date,
-                            export_format='GeoTIFF',
-                            scale=spatial_scale,
-                            temporal_resolution=temporal_resolution  # Now properly handled in download_utils
-                        )
+                        # Branch based on export_method - critical for proper export handling
+                        if export_method == 'drive':
+                            # Google Drive batch export - handles large files via Earth Engine tasks
+                            st.write(f"    ☁️ Submitting to Google Drive...")
+                            spatial_result = _export_to_google_drive(
+                                index_result, geometry, index_name, spatial_scale
+                            )
 
-                        # Convert result format to match expected structure
+                        elif export_method == 'preview':
+                            # Preview mode - single sample image
+                            st.write(f"    📱 Generating preview sample...")
+                            spatial_result = _generate_preview_sample(
+                                index_result, geometry, index_name, spatial_scale
+                            )
+
+                        elif export_method == 'auto':
+                            # Smart Auto mode: estimate size, try local first, fallback to drive
+                            st.write(f"    🤖 Smart Auto: estimating optimal method...")
+
+                            # Estimate file size based on area and resolution
+                            try:
+                                pixels_per_image = area_km2 / ((spatial_scale / 1000) ** 2)
+                                estimated_size_per_image_mb = (pixels_per_image * 4) / (1024 * 1024)
+                                total_estimated_mb = estimated_size_per_image_mb * collection_size
+
+                                st.write(f"    📊 Est. size: {total_estimated_mb:.1f} MB ({collection_size} × {estimated_size_per_image_mb:.1f} MB)")
+
+                                # Decision threshold: < 50MB for local, otherwise Drive
+                                if total_estimated_mb < 50 and estimated_size_per_image_mb < 100:
+                                    st.write(f"    ✅ Size suitable for local download...")
+                                    spatial_result = process_image_collection_chunked(
+                                        collection=index_result,
+                                        bands=None,
+                                        geometry=geometry,
+                                        start_date=start_date,
+                                        end_date=end_date,
+                                        export_format='GeoTIFF',
+                                        scale=spatial_scale,
+                                        temporal_resolution=temporal_resolution
+                                    )
+
+                                    # Check if local export succeeded
+                                    if not spatial_result.get('success') or not spatial_result.get('file_data'):
+                                        st.write(f"    ⚠️ Local failed, falling back to Google Drive...")
+                                        spatial_result = _export_to_google_drive(
+                                            index_result, geometry, index_name, spatial_scale
+                                        )
+                                else:
+                                    st.write(f"    📤 Size too large for local, using Google Drive...")
+                                    spatial_result = _export_to_google_drive(
+                                        index_result, geometry, index_name, spatial_scale
+                                    )
+                            except Exception as size_err:
+                                st.write(f"    ⚠️ Size estimation failed, using Google Drive...")
+                                spatial_result = _export_to_google_drive(
+                                    index_result, geometry, index_name, spatial_scale
+                                )
+
+                        else:  # 'local' or default
+                            # Direct local download
+                            st.write(f"    💻 Direct local download...")
+                            spatial_result = process_image_collection_chunked(
+                                collection=index_result,
+                                bands=None,
+                                geometry=geometry,
+                                start_date=start_date,
+                                end_date=end_date,
+                                export_format='GeoTIFF',
+                                scale=spatial_scale,
+                                temporal_resolution=temporal_resolution
+                            )
+
+                        # Standardize result structure
                         if spatial_result.get('success'):
-                            # Standardize the result structure for smart download compatibility
-                            if spatial_result.get('file_data'):
-                                # Local download successful
+                            if spatial_result.get('file_data') and 'export_method' not in spatial_result:
                                 spatial_result['export_method'] = 'local'
                                 spatial_result['actual_size_mb'] = len(spatial_result['file_data']) / (1024 * 1024)
                                 spatial_result['filename'] = spatial_result.get('filename', f'{index_name}_spatial.zip')
-                            elif spatial_result.get('drive_folder'):
-                                # Drive export successful
+                            elif spatial_result.get('drive_folder') and 'export_method' not in spatial_result:
                                 spatial_result['export_method'] = 'drive'
                                 spatial_result['estimated_size_mb'] = spatial_result.get('estimated_size_mb', collection_size * 5)
-                            else:
-                                # Success but unknown method, assume local
-                                spatial_result['export_method'] = 'local'
 
-                            st.write(f"  ✅ Spatial data processed ({spatial_result.get('export_method', 'unknown')} method)")
+                            if 'export_method' not in spatial_result:
+                                spatial_result['export_method'] = export_method
+
+                            st.write(f"  ✅ Spatial: {spatial_result.get('export_method', 'unknown')} method")
                         else:
-                            st.write(f"  ⚠️ Spatial processing failed, creating time series fallback")
+                            st.write(f"  ⚠️ Spatial failed: {spatial_result.get('message', spatial_result.get('error', 'Unknown'))}")
 
                             # Create fallback CSV result
-                            csv_data = time_series_df.to_csv(index=False).encode('utf-8')
-                            spatial_result = {
-                                'success': True,
-                                'export_method': 'local',
-                                'file_data': csv_data,
-                                'filename': f'{index_name}_timeseries.csv',
-                                'actual_size_mb': len(csv_data) / (1024 * 1024),
-                                'message': f'Time series CSV for {index_name} (spatial processing failed)',
-                                'fallback': True
-                            }
+                            if not time_series_df.empty:
+                                csv_data = time_series_df.to_csv(index=False).encode('utf-8')
+                                spatial_result = {
+                                    'success': True,
+                                    'export_method': 'local',
+                                    'file_data': csv_data,
+                                    'filename': f'{index_name}_timeseries.csv',
+                                    'actual_size_mb': len(csv_data) / (1024 * 1024),
+                                    'message': f'Time series CSV for {index_name} (spatial failed)',
+                                    'fallback': True
+                                }
+                                st.write(f"  📊 Fallback: time series CSV provided")
+                            else:
+                                spatial_result = {
+                                    'success': False,
+                                    'export_method': 'failed',
+                                    'error': f'Both spatial and temporal failed for {index_name}'
+                                }
 
                     if spatial_result['success']:
                         all_spatial_data[index_name] = spatial_result
@@ -895,12 +962,13 @@ def _generate_preview_sample(index_collection: ee.ImageCollection,
 
             return {
                 'success': True,
-                'export_method': 'local',  # Preview samples are treated as local downloads
+                'export_method': 'preview',  # Preview mode - single sample
                 'file_data': sample_data,
                 'filename': sample_filename,
                 'total_images': collection_size,
                 'scale': scale,
-                'actual_size_mb': file_size_mb,
+                'file_size_mb': file_size_mb,
+                'actual_size_mb': file_size_mb,  # For compatibility
                 'message': f"Generated preview sample ({file_size_mb:.2f} MB) - {collection_size} total images available"
             }
         else:
@@ -1042,7 +1110,7 @@ def _validate_smart_download_structure(results: Dict[str, Any], export_method: s
 
     Args:
         results: Raw analysis results
-        export_method: The export method used ('local', 'drive', 'preview', 'auto')
+        export_method: The export method used ('local', 'drive', 'preview', 'auto', 'pending')
 
     Returns:
         Validated results with proper structure
@@ -1059,19 +1127,36 @@ def _validate_smart_download_structure(results: Dict[str, Any], export_method: s
         if 'spatial_data' in index_result:
             spatial_data = index_result['spatial_data']
 
-            # Ensure export_method is present
+            # Ensure export_method is present and valid
             if 'export_method' not in spatial_data:
-                # Infer export method from export_method parameter or data characteristics
-                if 'file_data' in spatial_data:
+                # Infer export method from data characteristics
+                if spatial_data.get('file_data'):
                     spatial_data['export_method'] = 'local'
-                elif 'drive_folder' in spatial_data or 'task_id' in spatial_data:
+                elif spatial_data.get('drive_folder') or spatial_data.get('task_id'):
                     spatial_data['export_method'] = 'drive'
+                elif spatial_data.get('pending'):
+                    spatial_data['export_method'] = 'pending'
                 else:
-                    spatial_data['export_method'] = export_method
+                    # No data available - mark as failed
+                    spatial_data['export_method'] = 'failed'
+                    spatial_data['error'] = 'No export data generated'
 
-            # Ensure size information is present
-            if spatial_data.get('export_method') == 'local' and 'actual_size_mb' not in spatial_data:
-                if 'file_data' in spatial_data:
+            # Validate export_method is recognized
+            valid_methods = ['local', 'drive', 'preview', 'pending', 'failed']
+            if spatial_data.get('export_method') not in valid_methods:
+                # Force to valid method based on available data
+                if spatial_data.get('file_data'):
+                    spatial_data['export_method'] = 'local'
+                elif spatial_data.get('drive_folder'):
+                    spatial_data['export_method'] = 'drive'
+                elif spatial_data.get('pending'):
+                    spatial_data['export_method'] = 'pending'
+                else:
+                    spatial_data['export_method'] = 'failed'
+
+            # Ensure size information is present for local/preview
+            if spatial_data.get('export_method') in ['local', 'preview'] and 'actual_size_mb' not in spatial_data:
+                if spatial_data.get('file_data'):
                     spatial_data['actual_size_mb'] = len(spatial_data['file_data']) / (1024 * 1024)
                 else:
                     spatial_data['actual_size_mb'] = 0
@@ -1080,10 +1165,30 @@ def _validate_smart_download_structure(results: Dict[str, Any], export_method: s
             if spatial_data.get('export_method') == 'local' and 'filename' not in spatial_data:
                 spatial_data['filename'] = f"{index_name}_spatial.zip"
 
+            # Ensure preview has required fields
+            if spatial_data.get('export_method') == 'preview':
+                if 'file_size_mb' not in spatial_data:
+                    spatial_data['file_size_mb'] = spatial_data.get('actual_size_mb', 0)
+                if 'total_images' not in spatial_data:
+                    spatial_data['total_images'] = 1
+
+            # Ensure drive export has required fields
+            if spatial_data.get('export_method') == 'drive':
+                if 'drive_url' not in spatial_data:
+                    spatial_data['drive_url'] = 'https://drive.google.com/drive/'
+                if 'total_tasks' not in spatial_data:
+                    spatial_data['total_tasks'] = 0
+
         validated_results[index_name] = index_result
 
-        # Debug: Log validation results
+        # Log validation results (compact)
         if 'spatial_data' in index_result:
-            st.info(f"✅ Validated {index_name}: export_method={index_result['spatial_data'].get('export_method', 'missing')}")
+            method = index_result['spatial_data'].get('export_method', 'missing')
+            if method == 'failed':
+                st.warning(f"⚠️ {index_name}: export={method}")
+            elif method == 'pending':
+                st.info(f"⏳ {index_name}: export={method}")
+            else:
+                st.info(f"✅ {index_name}: export={method}")
 
     return validated_results
