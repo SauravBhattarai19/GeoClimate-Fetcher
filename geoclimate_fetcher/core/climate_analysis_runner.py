@@ -28,7 +28,8 @@ def run_climate_analysis_with_chunking(config: Dict[str, Any]) -> Dict[str, Any]
                 Required keys: analysis_type, dataset_id, selected_indices,
                               start_date, end_date, geometry
                 Optional keys: export_method ('drive'/'local'/'preview'),
-                              spatial_scale (meters), temporal_resolution
+                              spatial_scale (meters), temporal_resolution,
+                              temporal_only (bool) - if True, skip spatial processing
 
     Returns:
         Results dictionary with success status and output data
@@ -46,6 +47,7 @@ def run_climate_analysis_with_chunking(config: Dict[str, Any]) -> Dict[str, Any]
         export_method = config.get('export_method', 'local')  # 'drive', 'local', 'preview'
         spatial_scale = config.get('spatial_scale', 1000)  # meters
         temporal_resolution = config.get('temporal_resolution', 'yearly')  # yearly/monthly
+        temporal_only = config.get('temporal_only', False)  # Skip spatial processing if True
 
         dataset_config = get_dataset_config()
 
@@ -102,9 +104,13 @@ def run_climate_analysis_with_chunking(config: Dict[str, Any]) -> Dict[str, Any]
         results = {}
         all_time_series = {}
         all_spatial_data = {}
+        all_index_collections = {}  # Store ImageCollections for later spatial processing
 
         progress_bar = st.progress(0)
         status_text = st.empty()
+
+        if temporal_only:
+            st.info("📈 Running temporal-only analysis (spatial export will be available separately)")
 
         for i, index_name in enumerate(selected_indices):
             status_text.text(f"Calculating {index_name}...")
@@ -141,6 +147,9 @@ def run_climate_analysis_with_chunking(config: Dict[str, Any]) -> Dict[str, Any]
                     **all_kwargs
                 )
 
+                # Store the ImageCollection for later spatial processing
+                all_index_collections[index_name] = index_result
+
                 # Extract time series data using optimized extraction
                 st.info(f"📈 Extracting time series data for {index_name}...")
                 time_series_df = calculator.extract_time_series_optimized(
@@ -153,51 +162,62 @@ def run_climate_analysis_with_chunking(config: Dict[str, Any]) -> Dict[str, Any]
                 else:
                     st.warning(f"⚠️ {index_name}: No data points extracted")
 
-                # Generate spatial data using proven process_image_collection_chunked method
-                collection_size = index_result.size().getInfo()
-                st.info(f"🗺️ Processing spatial data for {index_name} ({collection_size} images)")
-
-                # Use process_image_collection_chunked with correct temporal_resolution
-                # The download_utils.py now properly handles 'yearly' and 'monthly'
-                st.info(f"🗺️ Exporting {index_name} spatial data ({temporal_resolution} resolution)")
-
-                spatial_result = process_image_collection_chunked(
-                    collection=index_result,
-                    bands=None,  # Climate index collections already have correct bands
-                    geometry=geometry,
-                    start_date=start_date,
-                    end_date=end_date,
-                    export_format='GeoTIFF',
-                    scale=spatial_scale,
-                    temporal_resolution=temporal_resolution  # Now properly handled in download_utils
-                )
-
-                # Convert result format to match expected structure
-                if spatial_result.get('success'):
-                    # Standardize the result structure for smart download compatibility
-                    if spatial_result.get('file_data'):
-                        # Local download successful
-                        spatial_result['export_method'] = 'local'
-                        spatial_result['actual_size_mb'] = len(spatial_result['file_data']) / (1024 * 1024)
-                        spatial_result['filename'] = spatial_result.get('filename', f'{index_name}_spatial.zip')
-                    elif spatial_result.get('drive_folder'):
-                        # Drive export successful
-                        spatial_result['export_method'] = 'drive'
-                        spatial_result['estimated_size_mb'] = spatial_result.get('estimated_size_mb', collection_size * 5)
-                    else:
-                        # Success but unknown method, assume local
-                        spatial_result['export_method'] = 'local'
-
-                    st.success(f"✅ {index_name}: Spatial data processed ({spatial_result.get('export_method', 'unknown')} method)")
-                else:
-                    st.warning(f"⚠️ {index_name}: Spatial processing failed, creating time series fallback")
-
-                    # Create fallback CSV result
-                    csv_data = time_series_df.to_csv(index=False).encode('utf-8')
+                # SPATIAL PROCESSING (skip if temporal_only mode)
+                if temporal_only:
+                    # Skip spatial processing, just mark as pending
                     spatial_result = {
                         'success': True,
-                        'export_method': 'local',
-                        'file_data': csv_data,
+                        'export_method': 'pending',
+                        'message': f'{index_name} spatial export pending (user-triggered)',
+                        'pending': True
+                    }
+                    st.info(f"⏳ {index_name}: Spatial export ready (will process on demand)")
+                else:
+                    # Generate spatial data using proven process_image_collection_chunked method
+                    collection_size = index_result.size().getInfo()
+                    st.info(f"🗺️ Processing spatial data for {index_name} ({collection_size} images)")
+
+                    # Use process_image_collection_chunked with correct temporal_resolution
+                    # The download_utils.py now properly handles 'yearly' and 'monthly'
+                    st.info(f"🗺️ Exporting {index_name} spatial data ({temporal_resolution} resolution)")
+
+                    spatial_result = process_image_collection_chunked(
+                        collection=index_result,
+                        bands=None,  # Climate index collections already have correct bands
+                        geometry=geometry,
+                        start_date=start_date,
+                        end_date=end_date,
+                        export_format='GeoTIFF',
+                        scale=spatial_scale,
+                        temporal_resolution=temporal_resolution  # Now properly handled in download_utils
+                    )
+
+                    # Convert result format to match expected structure
+                    if spatial_result.get('success'):
+                        # Standardize the result structure for smart download compatibility
+                        if spatial_result.get('file_data'):
+                            # Local download successful
+                            spatial_result['export_method'] = 'local'
+                            spatial_result['actual_size_mb'] = len(spatial_result['file_data']) / (1024 * 1024)
+                            spatial_result['filename'] = spatial_result.get('filename', f'{index_name}_spatial.zip')
+                        elif spatial_result.get('drive_folder'):
+                            # Drive export successful
+                            spatial_result['export_method'] = 'drive'
+                            spatial_result['estimated_size_mb'] = spatial_result.get('estimated_size_mb', collection_size * 5)
+                        else:
+                            # Success but unknown method, assume local
+                            spatial_result['export_method'] = 'local'
+
+                        st.success(f"✅ {index_name}: Spatial data processed ({spatial_result.get('export_method', 'unknown')} method)")
+                    else:
+                        st.warning(f"⚠️ {index_name}: Spatial processing failed, creating time series fallback")
+
+                        # Create fallback CSV result
+                        csv_data = time_series_df.to_csv(index=False).encode('utf-8')
+                        spatial_result = {
+                            'success': True,
+                            'export_method': 'local',
+                            'file_data': csv_data,
                         'filename': f'{index_name}_timeseries.csv',
                         'actual_size_mb': len(csv_data) / (1024 * 1024),
                         'message': f'Time series CSV for {index_name} (spatial processing failed)',
@@ -278,7 +298,7 @@ def run_climate_analysis_with_chunking(config: Dict[str, Any]) -> Dict[str, Any]
         # Overall success is true if at least one index succeeded
         overall_success = successful_indices > 0
 
-        return {
+        result_dict = {
             'success': overall_success,
             'individual_results': validated_results,
             'time_series_data': all_time_series,
@@ -291,8 +311,27 @@ def run_climate_analysis_with_chunking(config: Dict[str, Any]) -> Dict[str, Any]
                 'failed_indices': failed_indices,
                 'time_period': f"{start_date} to {end_date}",
                 'dataset': dataset_info['name']
-            }
+            },
+            'temporal_only': temporal_only
         }
+
+        # If temporal_only mode, store config for later spatial processing
+        if temporal_only:
+            result_dict['spatial_export_config'] = {
+                'dataset_id': dataset_id,
+                'geometry': geometry,
+                'start_date': start_date,
+                'end_date': end_date,
+                'spatial_scale': spatial_scale,
+                'temporal_resolution': temporal_resolution,
+                'selected_indices': selected_indices,
+                'export_method': export_method,
+                'threshold_params': config.get('threshold_params', {}),
+                'percentile_params': config.get('percentile_params', {})
+            }
+            st.success("✅ Temporal analysis complete! Click 'Proceed to Spatial Export' to download spatial data.")
+
+        return result_dict
 
     except Exception as e:
         st.error(f"❌ Analysis failed: {str(e)}")
