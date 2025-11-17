@@ -1457,8 +1457,7 @@ def _run_placeholder_analysis():
                     data=climate_csv,
                     file_name=f"climate_indices_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                     mime="text/csv",
-                    help="Download the climate index time series data",
-                    key="download_climate_timeseries_csv"
+                    help="Download the climate index time series data"
                 )
 
             with col2:
@@ -1469,8 +1468,7 @@ def _run_placeholder_analysis():
                     data=summary_csv,
                     file_name=f"climate_analysis_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                     mime="text/csv",
-                    help="Download analysis configuration and summary statistics",
-                    key="download_climate_summary_csv"
+                    help="Download analysis configuration and summary statistics"
                 )
 
             with col3:
@@ -1511,8 +1509,7 @@ For detailed data, download the CSV files above.
                     data=report_text.encode('utf-8'),
                     file_name=f"climate_analysis_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
                     mime="text/plain",
-                    help="Download a summary report of the analysis",
-                    key="download_climate_report_txt"
+                    help="Download a summary report of the analysis"
                 )
 
             # Enhanced post-download integration
@@ -1955,8 +1952,7 @@ def _show_download_options(results):
                 file_name=f"climate_timeseries_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv",
                 help="Area-averaged yearly climate index values",
-                use_container_width=True,
-                key="download_results_timeseries_csv"
+                use_container_width=True
             )
 
     with col2:
@@ -1967,8 +1963,7 @@ def _show_download_options(results):
                 file_name=f"climate_analysis_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
                 mime="text/plain",
                 help="Comprehensive analysis report with configuration and results",
-                use_container_width=True,
-                key="download_results_analysis_report"
+                use_container_width=True
             )
 
     st.markdown("---")
@@ -2051,19 +2046,17 @@ def _show_smart_download_results(results):
     # Show local downloads
     if local_files:
         st.markdown("#### 💻 Ready for Download")
-        for idx, file_info in enumerate(local_files):
+        for file_info in local_files:
             st.markdown(f"**{file_info['index']}** ({file_info['size_mb']:.1f} MB)")
             if file_info['file_data']:
-                # Create download button with unique key to persist across reruns
-                index_key = file_info['index'].replace(' ', '_').replace('-', '_')
+                # Create download button without page navigation issues
                 st.download_button(
                     label=f"📥 Download {file_info['index']} Package",
                     data=file_info['file_data'],
                     file_name=file_info['filename'],
                     mime='application/zip',
                     help=f"Download {file_info['index']} spatial data ({file_info['size_mb']:.1f} MB)",
-                    use_container_width=True,
-                    key=f"download_spatial_{index_key}_{idx}"
+                    use_container_width=True
                 )
 
     # Show drive exports
@@ -2186,7 +2179,7 @@ def _show_preview_results(results):
             })
 
     if preview_files:
-        for idx, preview in enumerate(preview_files):
+        for preview in preview_files:
             col1, col2 = st.columns([2, 1])
 
             with col1:
@@ -2194,15 +2187,13 @@ def _show_preview_results(results):
                 st.info(f"1 of {preview['total_images']} total images ({preview['size_mb']:.2f} MB)")
 
             with col2:
-                preview_key = preview['index'].replace(' ', '_').replace('-', '_')
                 st.download_button(
                     label=f"📷 Download Sample",
                     data=preview['file_data'],
                     file_name=preview['filename'],
                     mime="image/tiff",
                     help="Sample GeoTIFF file for preview",
-                    use_container_width=True,
-                    key=f"download_preview_{preview_key}_{idx}"
+                    use_container_width=True
                 )
 
         st.info("""
@@ -2234,8 +2225,7 @@ def _show_local_download_results(results):
                 file_name=f"climate_spatial_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
                 mime="application/zip",
                 help="ZIP archive with all GeoTIFF files",
-                use_container_width=True,
-                key="download_all_spatial_zip"
+                use_container_width=True
             )
     else:
         st.warning("⚠️ Spatial data not available for local download.")
@@ -2412,8 +2402,7 @@ def _execute_time_series_download():
         data=csv_data,
         file_name=f"climate_indices_timeseries_{timestamp}.csv",
         mime="text/csv",
-        use_container_width=True,
-        key="download_generated_timeseries_csv"
+        use_container_width=True
     )
 
     # Show preview
