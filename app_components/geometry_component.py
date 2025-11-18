@@ -118,6 +118,28 @@ class GeometryComponent:
         except Exception as e:
             return False, f"Error creating geometry: {str(e)}"
     
+    def _simplify_geometry_safely(self, geometry: ee.Geometry, tolerance: float = 100) -> ee.Geometry:
+        """
+        Safely simplify geometry with error handling.
+
+        Simplifies geometry to reduce vertices for better performance.
+        Falls back to original geometry if simplification fails (e.g., Point geometries).
+
+        Args:
+            geometry: Earth Engine geometry to simplify
+            tolerance: Simplification tolerance in meters (default 100m)
+
+        Returns:
+            Simplified geometry, or original if simplification fails
+        """
+        try:
+            simplified = geometry.simplify(maxError=tolerance)
+            return simplified
+        except Exception:
+            # Simplification failed (e.g., Point geometry, invalid geometry)
+            # Silently return original geometry - this is expected for some geometry types
+            return geometry
+
     def create_geometry_from_geojson(self, geojson_data, simplify_tolerance=500):
         """
         Create Earth Engine geometry from GeoJSON with union and simplification.
@@ -128,7 +150,7 @@ class GeometryComponent:
 
         Args:
             geojson_data: GeoJSON data (dict or string)
-            simplify_tolerance: Simplification tolerance in meters (default 500m)
+            simplify_tolerance: Simplification tolerance in meters (default 500m for multi-feature)
 
         Returns:
             Tuple of (success: bool, message: str)
@@ -148,9 +170,10 @@ class GeometryComponent:
                     return False, "FeatureCollection is empty"
 
                 elif len(features) == 1:
-                    # Single feature - process normally
+                    # Single feature - create and simplify
                     geometry_dict = features[0]["geometry"]
                     geometry = ee.Geometry(geometry_dict)
+                    geometry = self._simplify_geometry_safely(geometry, tolerance=100)
 
                 else:
                     # Multiple features - union and simplify
@@ -178,13 +201,15 @@ class GeometryComponent:
                     st.success(f"✅ Unified {len(features)} features into single geometry (simplified with {simplify_tolerance}m tolerance)")
 
             elif geojson_dict.get("type") == "Feature" and "geometry" in geojson_dict:
-                # Single Feature
+                # Single Feature - create and simplify
                 geometry_dict = geojson_dict["geometry"]
                 geometry = ee.Geometry(geometry_dict)
+                geometry = self._simplify_geometry_safely(geometry, tolerance=100)
 
             else:
-                # Direct geometry
+                # Direct geometry - create and simplify
                 geometry = ee.Geometry(geojson_dict)
+                geometry = self._simplify_geometry_safely(geometry, tolerance=100)
 
             # Store the geometry
             self.geometry_handler._current_geometry = geometry
