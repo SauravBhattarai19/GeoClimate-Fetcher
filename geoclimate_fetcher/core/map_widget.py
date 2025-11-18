@@ -178,17 +178,43 @@ class UnifiedMapWidget:
             st.info("👆 Draw a rectangle or polygon on the map above to select your area of interest.")
             return False, None
     
+    def _simplify_geometry_safely(self, geometry: ee.Geometry, tolerance: float = 100) -> ee.Geometry:
+        """
+        Safely simplify geometry with error handling.
+
+        Simplifies geometry to reduce vertices for better performance.
+        Falls back to original geometry if simplification fails (e.g., Point geometries).
+
+        Args:
+            geometry: Earth Engine geometry to simplify
+            tolerance: Simplification tolerance in meters (default 100m)
+
+        Returns:
+            Simplified geometry, or original if simplification fails
+        """
+        try:
+            simplified = geometry.simplify(maxError=tolerance)
+            return simplified
+        except Exception:
+            # Simplification failed (e.g., Point geometry, invalid geometry)
+            # Silently return original geometry - this is expected for some geometry types
+            return geometry
+
     def create_ee_geometry(self, geometry_dict: Dict[str, Any]) -> ee.Geometry:
         """
-        Create Earth Engine geometry from GeoJSON dict.
-        
+        Create Earth Engine geometry from GeoJSON dict with automatic simplification.
+
+        Automatically simplifies hand-drawn and uploaded geometries to improve
+        Earth Engine processing performance while preserving shape.
+
         Args:
             geometry_dict: GeoJSON geometry dictionary
-            
+
         Returns:
-            Earth Engine Geometry object
+            Simplified Earth Engine Geometry object
         """
-        return ee.Geometry(geometry_dict)
+        geometry = ee.Geometry(geometry_dict)
+        return self._simplify_geometry_safely(geometry, tolerance=100)
     
     def get_geometry_info(self, geometry: ee.Geometry) -> Dict[str, Any]:
         """
