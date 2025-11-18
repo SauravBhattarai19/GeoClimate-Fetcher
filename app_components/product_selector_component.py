@@ -908,16 +908,29 @@ class ProductSelectorComponent:
         else:
             st.error("❌ Analysis failed or no results available")
     
-    def _extract_bounds_from_geometry(self, geometry: dict) -> Optional[Tuple[float, float, float, float]]:
-        """Extract bounding box from geometry"""
+    def _extract_bounds_from_geometry(self, geometry) -> Optional[Tuple[float, float, float, float]]:
+        """Extract bounding box from geometry (supports both ee.Geometry and GeoJSON dict)"""
         try:
-            if geometry["type"] == "Polygon":
-                coords = geometry["coordinates"][0]
+            # Check if it's an Earth Engine geometry object
+            if isinstance(geometry, ee.Geometry):
+                # Use Earth Engine's bounds() method to get bounding box
+                bounds_geom = geometry.bounds()
+                bounds_info = bounds_geom.getInfo()
+                coords = bounds_info['coordinates'][0]
                 lons = [coord[0] for coord in coords]
                 lats = [coord[1] for coord in coords]
                 return min(lons), min(lats), max(lons), max(lats)
+
+            # Handle GeoJSON dict (legacy support)
+            elif isinstance(geometry, dict):
+                if geometry.get("type") == "Polygon":
+                    coords = geometry["coordinates"][0]
+                    lons = [coord[0] for coord in coords]
+                    lats = [coord[1] for coord in coords]
+                    return min(lons), min(lats), max(lons), max(lats)
             # Add support for other geometry types if needed
-        except Exception:
+        except Exception as e:
+            logging.error(f"Error extracting bounds from geometry: {e}")
             pass
         return None
     
