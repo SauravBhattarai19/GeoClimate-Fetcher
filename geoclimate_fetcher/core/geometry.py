@@ -38,19 +38,59 @@ class GeometryHandler:
         """
         return self._current_geometry_name
         
-    def set_geometry_from_geojson(self, geojson_dict: Dict[str, Any], name: str = "custom_aoi") -> ee.Geometry:
+    def set_geometry_from_geojson(self, geojson_dict: Dict[str, Any], name: str = "custom_aoi",
+                                  simplify_tolerance: float = 500) -> ee.Geometry:
         """
-        Set the current geometry from a GeoJSON dictionary.
-        
+        Set the current geometry from a GeoJSON dictionary with union and simplification.
+
+        Handles multiple features by:
+        1. Unioning all features into a single geometry
+        2. Simplifying the boundary to reduce vertices
+
         Args:
             geojson_dict: GeoJSON dictionary
             name: Name for the geometry
-            
+            simplify_tolerance: Simplification tolerance in meters (default 500m)
+
         Returns:
             Earth Engine geometry object
         """
-        # Convert to EE geometry
-        self._current_geometry = ee.Geometry(geojson_dict)
+        # Process FeatureCollections with multiple features
+        if geojson_dict.get("type") == "FeatureCollection" and "features" in geojson_dict:
+            features = geojson_dict["features"]
+
+            if len(features) == 0:
+                raise ValueError("FeatureCollection is empty")
+
+            elif len(features) == 1:
+                # Single feature - process normally
+                geometry = ee.Geometry(features[0]["geometry"])
+
+            else:
+                # Multiple features - union and simplify
+                ee_features = []
+                for feature in features:
+                    if "geometry" in feature:
+                        geom = ee.Geometry(feature["geometry"])
+                        ee_features.append(ee.Feature(geom))
+
+                # Create FeatureCollection and union
+                feature_collection = ee.FeatureCollection(ee_features)
+                unified = feature_collection.union(maxError=1)
+                geometry = unified.geometry()
+
+                # Simplify the outer boundary
+                geometry = geometry.simplify(maxError=simplify_tolerance)
+
+        elif geojson_dict.get("type") == "Feature" and "geometry" in geojson_dict:
+            # Single Feature
+            geometry = ee.Geometry(geojson_dict["geometry"])
+
+        else:
+            # Direct geometry
+            geometry = ee.Geometry(geojson_dict)
+
+        self._current_geometry = geometry
         self._current_geometry_name = name
         return self._current_geometry
         

@@ -317,49 +317,115 @@ class GeometrySelectionWidget:
             self._render_coordinates_method(on_geometry_selected)
         
         return geometry_selected
-    
+
+    def _process_geojson_to_geometry(self, geojson_data: dict, simplify_tolerance: float = 500) -> ee.Geometry:
+        """
+        Process GeoJSON to Earth Engine geometry with union and simplification.
+
+        Handles multiple features by:
+        1. Unioning all features into a single geometry
+        2. Simplifying the boundary to reduce vertices
+
+        Args:
+            geojson_data: GeoJSON dictionary
+            simplify_tolerance: Simplification tolerance in meters (default 500m)
+
+        Returns:
+            Unified and simplified ee.Geometry
+        """
+        try:
+            # Extract features based on GeoJSON type
+            if geojson_data.get("type") == "FeatureCollection":
+                features = geojson_data.get("features", [])
+
+                if len(features) == 0:
+                    raise ValueError("FeatureCollection is empty")
+
+                elif len(features) == 1:
+                    # Single feature - process normally
+                    geometry_dict = features[0]["geometry"]
+                    geometry = self.map_widget.create_ee_geometry(geometry_dict)
+                    st.info(f"ℹ️ Loaded single feature from FeatureCollection")
+
+                else:
+                    # Multiple features - union and simplify
+                    st.info(f"ℹ️ Processing {len(features)} features: unioning and simplifying boundaries...")
+
+                    # Convert all features to EE features
+                    ee_features = []
+                    for feature in features:
+                        if "geometry" in feature:
+                            geom = ee.Geometry(feature["geometry"])
+                            ee_features.append(ee.Feature(geom))
+
+                    # Create FeatureCollection
+                    feature_collection = ee.FeatureCollection(ee_features)
+
+                    # Union all features (dissolve internal boundaries)
+                    # maxError=1 for union to maintain accuracy during merge
+                    unified = feature_collection.union(maxError=1)
+
+                    # Get the unified geometry
+                    geometry = unified.geometry()
+
+                    # Simplify the outer boundary to reduce computational cost
+                    # This smooths the boundary while preserving all internal areas
+                    geometry = geometry.simplify(maxError=simplify_tolerance)
+
+                    st.success(f"✅ Unified {len(features)} features into single geometry (simplified with {simplify_tolerance}m tolerance)")
+
+            elif geojson_data.get("type") == "Feature":
+                # Single Feature
+                geometry_dict = geojson_data["geometry"]
+                geometry = self.map_widget.create_ee_geometry(geometry_dict)
+                st.info(f"ℹ️ Loaded single Feature")
+
+            else:
+                # Direct geometry
+                geometry = self.map_widget.create_ee_geometry(geojson_data)
+                st.info(f"ℹ️ Loaded geometry directly")
+
+            return geometry
+
+        except Exception as e:
+            raise ValueError(f"Failed to process GeoJSON: {str(e)}")
+
     def _render_upload_method(self, on_geometry_selected: Callable = None):
         """Render GeoJSON upload method"""
         st.markdown("### 📁 Upload GeoJSON File")
-        
+
         uploaded_file = st.file_uploader(
             "Choose a GeoJSON file",
             type=["geojson", "json"],
             key=f"{self.session_prefix}file_upload"
         )
-        
+
         if uploaded_file is not None:
             try:
                 geojson_data = json.loads(uploaded_file.getvalue().decode())
-                
+
                 col1, col2 = st.columns(2)
                 with col1:
                     st.markdown("**File Contents:**")
                     st.json(geojson_data, expanded=False)
-                
+
                 with col2:
                     if st.button("Use This File", type="primary", key=f"{self.session_prefix}use_file"):
                         try:
-                            # Extract geometry
-                            if geojson_data.get("type") == "FeatureCollection":
-                                geometry_dict = geojson_data["features"][0]["geometry"]
-                            elif geojson_data.get("type") == "Feature":
-                                geometry_dict = geojson_data["geometry"]
-                            else:
-                                geometry_dict = geojson_data
-                            
-                            geometry = self.map_widget.create_ee_geometry(geometry_dict)
+                            # Extract and process geometry with union + simplify
+                            geometry = self._process_geojson_to_geometry(geojson_data)
+
                             st.session_state[self.geometry_key] = geometry
                             st.session_state[self.complete_key] = True
-                            
+
                             if on_geometry_selected:
                                 on_geometry_selected(geometry)
-                            
+
                             st.success("✅ Geometry created from uploaded file!")
                             st.rerun()
                         except Exception as e:
                             st.error(f"❌ Error processing file: {str(e)}")
-                            
+
             except Exception as e:
                 st.error(f"❌ Error reading file: {str(e)}")
     
