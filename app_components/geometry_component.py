@@ -118,31 +118,79 @@ class GeometryComponent:
         except Exception as e:
             return False, f"Error creating geometry: {str(e)}"
     
-    def create_geometry_from_geojson(self, geojson_data):
-        """Create Earth Engine geometry from GeoJSON"""
+    def create_geometry_from_geojson(self, geojson_data, simplify_tolerance=500):
+        """
+        Create Earth Engine geometry from GeoJSON with union and simplification.
+
+        Handles multiple features by:
+        1. Unioning all features into a single geometry
+        2. Simplifying the boundary to reduce vertices
+
+        Args:
+            geojson_data: GeoJSON data (dict or string)
+            simplify_tolerance: Simplification tolerance in meters (default 500m)
+
+        Returns:
+            Tuple of (success: bool, message: str)
+        """
         try:
             # Handle different GeoJSON formats
             if isinstance(geojson_data, str):
                 geojson_dict = json.loads(geojson_data)
             else:
                 geojson_dict = geojson_data
-            
-            # Extract geometry from different GeoJSON types
+
+            # Extract and process geometry based on type
             if geojson_dict.get("type") == "FeatureCollection" and "features" in geojson_dict:
-                if len(geojson_dict["features"]) > 0:
-                    geometry_dict = geojson_dict["features"][0]["geometry"]
-                else:
+                features = geojson_dict["features"]
+
+                if len(features) == 0:
                     return False, "FeatureCollection is empty"
+
+                elif len(features) == 1:
+                    # Single feature - process normally
+                    geometry_dict = features[0]["geometry"]
+                    geometry = ee.Geometry(geometry_dict)
+
+                else:
+                    # Multiple features - union and simplify
+                    st.info(f"ℹ️ Processing {len(features)} features: unioning and simplifying boundaries...")
+
+                    # Convert all features to EE features
+                    ee_features = []
+                    for feature in features:
+                        if "geometry" in feature:
+                            geom = ee.Geometry(feature["geometry"])
+                            ee_features.append(ee.Feature(geom))
+
+                    # Create FeatureCollection
+                    feature_collection = ee.FeatureCollection(ee_features)
+
+                    # Union all features (dissolve internal boundaries)
+                    unified = feature_collection.union(maxError=1)
+
+                    # Get the unified geometry
+                    geometry = unified.geometry()
+
+                    # Simplify the outer boundary
+                    geometry = geometry.simplify(maxError=simplify_tolerance)
+
+                    st.success(f"✅ Unified {len(features)} features into single geometry (simplified with {simplify_tolerance}m tolerance)")
+
             elif geojson_dict.get("type") == "Feature" and "geometry" in geojson_dict:
+                # Single Feature
                 geometry_dict = geojson_dict["geometry"]
+                geometry = ee.Geometry(geometry_dict)
+
             else:
-                geometry_dict = geojson_dict
-            
-            # Create Earth Engine geometry
-            geometry = ee.Geometry(geometry_dict)
+                # Direct geometry
+                geometry = ee.Geometry(geojson_dict)
+
+            # Store the geometry
             self.geometry_handler._current_geometry = geometry
             self.geometry_handler._current_geometry_name = "uploaded_aoi"
             return True, "Geometry created successfully from GeoJSON"
+
         except Exception as e:
             return False, f"Error processing GeoJSON: {str(e)}"
     
