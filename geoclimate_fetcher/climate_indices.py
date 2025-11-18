@@ -4401,7 +4401,7 @@ class ClimateIndicesCalculator:
                 )
 
                 # Sum precipitation above percentile threshold
-                wet_days = monthly.map(lambda img: img.where(img.gt(percentile_threshold), img, 0))
+                wet_days = monthly.map(lambda img: img.multiply(img.gt(percentile_threshold)))
                 total_precip = wet_days.sum()
 
                 return total_precip.set({
@@ -4436,7 +4436,7 @@ class ClimateIndicesCalculator:
                 )
 
                 # Sum precipitation above percentile threshold
-                wet_days = yearly.map(lambda img: img.where(img.gt(percentile_threshold), img, 0))
+                wet_days = yearly.map(lambda img: img.multiply(img.gt(percentile_threshold)))
                 total_precip = wet_days.sum()
 
                 return total_precip.set({
@@ -4480,7 +4480,7 @@ class ClimateIndicesCalculator:
                 )
 
                 # Sum precipitation above percentile threshold
-                wet_days = yearly.map(lambda img: img.where(img.gt(percentile_threshold), img, 0))
+                wet_days = yearly.map(lambda img: img.multiply(img.gt(percentile_threshold)))
                 total_precip = wet_days.sum()
 
                 return total_precip.set({
@@ -4545,7 +4545,7 @@ class ClimateIndicesCalculator:
                 )
 
                 # Sum precipitation above percentile threshold
-                wet_days = monthly.map(lambda img: img.where(img.gt(percentile_threshold), img, 0))
+                wet_days = monthly.map(lambda img: img.multiply(img.gt(percentile_threshold)))
                 total_precip = wet_days.sum()
 
                 return total_precip.set({
@@ -4580,7 +4580,7 @@ class ClimateIndicesCalculator:
                 )
 
                 # Sum precipitation above percentile threshold
-                wet_days = yearly.map(lambda img: img.where(img.gt(percentile_threshold), img, 0))
+                wet_days = yearly.map(lambda img: img.multiply(img.gt(percentile_threshold)))
                 total_precip = wet_days.sum()
 
                 return total_precip.set({
@@ -4624,7 +4624,7 @@ class ClimateIndicesCalculator:
                 )
 
                 # Sum precipitation above percentile threshold
-                wet_days = yearly.map(lambda img: img.where(img.gt(percentile_threshold), img, 0))
+                wet_days = yearly.map(lambda img: img.multiply(img.gt(percentile_threshold)))
                 total_precip = wet_days.sum()
 
                 return total_precip.set({
@@ -4689,7 +4689,7 @@ class ClimateIndicesCalculator:
                 )
 
                 # Sum precipitation above percentile threshold
-                wet_days = monthly.map(lambda img: img.where(img.gt(percentile_threshold), img, 0))
+                wet_days = monthly.map(lambda img: img.multiply(img.gt(percentile_threshold)))
                 total_precip = wet_days.sum()
 
                 return total_precip.set({
@@ -4724,7 +4724,7 @@ class ClimateIndicesCalculator:
                 )
 
                 # Sum precipitation above percentile threshold
-                wet_days = yearly.map(lambda img: img.where(img.gt(percentile_threshold), img, 0))
+                wet_days = yearly.map(lambda img: img.multiply(img.gt(percentile_threshold)))
                 total_precip = wet_days.sum()
 
                 return total_precip.set({
@@ -4768,7 +4768,7 @@ class ClimateIndicesCalculator:
                 )
 
                 # Sum precipitation above percentile threshold
-                wet_days = yearly.map(lambda img: img.where(img.gt(percentile_threshold), img, 0))
+                wet_days = yearly.map(lambda img: img.multiply(img.gt(percentile_threshold)))
                 total_precip = wet_days.sum()
 
                 return total_precip.set({
