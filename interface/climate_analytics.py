@@ -1326,6 +1326,13 @@ def _run_climate_analysis():
                 if 'time_series_data' in results:
                     _display_climate_results(results['time_series_data'])
 
+                # Display interactive geemap visualization if image collections are available
+                st.markdown("---")
+                if 'image_collections' in results and results['image_collections']:
+                    _display_geemap_visualization(results)
+                else:
+                    st.info("💡 Spatial visualization requires image collection data. This is available when analysis is run with spatial data generation.")
+
                 # IMPROVED UX: Show temporal CSV download immediately (with stable keys)
                 st.markdown("---")
                 st.markdown("### 📁 Temporal Data Downloads")
@@ -1359,9 +1366,18 @@ def _run_climate_analysis():
                 # SPATIAL EXPORT SECTION (User-triggered with 50MB error learning)
                 if results.get('temporal_only', False):
                     st.markdown("---")
-                    st.markdown("### 🗺️ Spatial Data Export")
+                    st.markdown("### 📥 Download GeoTIFF Files (Optional)")
                     st.info("""
-                    **Spatial export will process GeoTIFF files for each climate index.**
+                    **Download spatial GeoTIFF files for offline analysis or GIS software.**
+
+                    ℹ️ Note: Spatial visualization is already displayed above using geemap!
+
+                    This download is only needed if you want to:
+                    - Use data in QGIS, ArcGIS, or other GIS software
+                    - Perform custom spatial analysis
+                    - Archive data for offline use
+
+                    Download process:
                     - If local download fails (>50MB limit), ALL indices will be exported to Google Drive
                     - This prevents long waiting times for repeated failures
                     """)
@@ -1371,8 +1387,8 @@ def _run_climate_analysis():
                         st.session_state.climate_spatial_export_complete = False
 
                     if not st.session_state.climate_spatial_export_complete:
-                        if st.button("🚀 Proceed to Spatial Export", type="primary", use_container_width=True,
-                                    help="Download spatial GeoTIFF files for each climate index",
+                        if st.button("📥 Download GeoTIFF Files", type="primary", use_container_width=True,
+                                    help="Download spatial GeoTIFF files for offline analysis in GIS software",
                                     key="proceed_spatial_export"):
                             # Execute spatial export with 50MB error learning
                             _execute_smart_spatial_export(results)
@@ -1395,9 +1411,9 @@ def _run_climate_analysis():
 
                 col1, col2 = st.columns(2)
                 with col1:
-                    if st.button("🗺️ Visualize Spatial Data", use_container_width=True,
-                                help="Create interactive maps and spatial visualizations", key="viz_new_results"):
-                        # Launch visualization with climate results
+                    if st.button("📥 Download Spatial Data (Advanced)", use_container_width=True,
+                                help="Export spatial data to Data Visualizer tool for advanced analysis", key="viz_new_results"):
+                        # Launch visualization tool with climate results (for advanced visualizations)
                         _launch_climate_visualization(results)
 
                 with col2:
