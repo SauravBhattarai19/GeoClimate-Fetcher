@@ -399,6 +399,8 @@ def run_climate_analysis_with_chunking(config: Dict[str, Any]) -> Dict[str, Any]
             'time_series_csv': combined_results.get('time_series_csv'),
             'spatial_data_zip': combined_results.get('spatial_data_zip'),
             'analysis_report': combined_results.get('analysis_report'),
+            'image_collections': all_index_collections,  # Store ImageCollections for geemap visualization
+            'geometry': geometry,  # Store geometry for map centering
             'summary': {
                 'total_indices': total_indices,
                 'successful_indices': successful_indices,

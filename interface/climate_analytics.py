@@ -9,6 +9,7 @@ import json
 import time
 from pathlib import Path
 from datetime import datetime, timedelta
+import geemap.foliumap as geemap
 
 # Import core components
 from geoclimate_fetcher.core import (
@@ -421,6 +422,13 @@ def _render_climate_results():
         # Display time series if available
         if 'time_series_data' in results:
             _display_climate_results(results['time_series_data'])
+
+        # Display interactive geemap visualization if image collections are available
+        st.markdown("---")
+        if 'image_collections' in results and results['image_collections']:
+            _display_geemap_visualization(results)
+        else:
+            st.info("💡 Spatial visualization requires image collection data. This is available when analysis is run with spatial data generation.")
 
         # IMPROVED UX: Show analysis options immediately after results
         st.markdown("---")
@@ -2113,6 +2121,188 @@ def _display_trend_statistics_panel(trend_stats):
                         else:
                             interpretation = "➡️ No significant trend detected"
                         st.success(interpretation)
+
+
+def _display_geemap_visualization(results):
+    """Display climate indices on an interactive geemap with layer toggles"""
+    st.markdown("### 🗺️ Interactive Spatial Visualization")
+    st.info("💡 Use the layer control to toggle between different time periods and indices. You can take screenshots directly from the map.")
+
+    # Check if we have image collections to display
+    if 'image_collections' not in results or not results['image_collections']:
+        st.warning("⚠️ No spatial data available for visualization. Image collections were not generated.")
+        return
+
+    image_collections = results['image_collections']
+    geometry = results.get('geometry')
+
+    # Get temporal resolution for labeling
+    temporal_resolution = st.session_state.get('climate_temporal_resolution', 'yearly')
+
+    # Create geemap Map
+    Map = geemap.Map()
+
+    # Center map on geometry if available
+    if geometry:
+        try:
+            centroid = geometry.centroid().getInfo()['coordinates']
+            Map.setCenter(centroid[0], centroid[1], 8)
+        except:
+            pass
+
+    # Define color palettes for different index types
+    color_palettes = {
+        # Temperature indices (warm colors)
+        'TXx': ['blue', 'white', 'red'],
+        'TNn': ['blue', 'white', 'red'],
+        'TXn': ['blue', 'white', 'red'],
+        'TNx': ['blue', 'white', 'red'],
+        'TX90p': ['white', 'yellow', 'orange', 'red'],
+        'TX10p': ['blue', 'cyan', 'white'],
+        'TN90p': ['white', 'yellow', 'orange', 'red'],
+        'TN10p': ['blue', 'cyan', 'white'],
+        'DTR': ['purple', 'white', 'orange'],
+        'SU': ['white', 'yellow', 'orange', 'red'],
+        'FD': ['blue', 'cyan', 'white'],
+        'WSDI': ['white', 'yellow', 'orange', 'red'],
+        'CSDI': ['blue', 'cyan', 'white'],
+        'GSL': ['brown', 'yellow', 'green'],
+
+        # Precipitation indices (blue colors)
+        'RX1day': ['white', 'lightblue', 'blue', 'darkblue'],
+        'RX5day': ['white', 'lightblue', 'blue', 'darkblue'],
+        'R10mm': ['white', 'lightblue', 'blue'],
+        'R20mm': ['white', 'cyan', 'blue', 'darkblue'],
+        'CDD': ['green', 'yellow', 'orange', 'red'],
+        'PRCPTOT': ['white', 'lightblue', 'blue', 'darkblue'],
+        'R95p': ['white', 'cyan', 'blue', 'darkblue'],
+        'R99p': ['white', 'cyan', 'blue', 'darkblue'],
+        'R75p': ['white', 'lightblue', 'blue'],
+        'SDII': ['white', 'lightblue', 'blue', 'darkblue']
+    }
+
+    # Selection for which index to visualize
+    index_names = list(image_collections.keys())
+
+    if len(index_names) == 0:
+        st.warning("No climate indices available for visualization.")
+        return
+
+    # User selects which index to visualize
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        selected_index = st.selectbox(
+            "Select Climate Index to Display:",
+            index_names,
+            key="geemap_index_selector"
+        )
+
+    with col2:
+        show_all_layers = st.checkbox(
+            "Show All Time Periods",
+            value=False,
+            help="Toggle to show/hide all temporal layers at once"
+        )
+
+    if selected_index:
+        collection = image_collections[selected_index]
+        palette = color_palettes.get(selected_index, ['blue', 'white', 'red'])
+
+        # Get collection size (number of images/time periods)
+        try:
+            collection_size = collection.size().getInfo()
+            st.info(f"📊 {selected_index} has {collection_size} time periods available")
+        except Exception as e:
+            st.error(f"Error getting collection size: {str(e)}")
+            return
+
+        # Get list of all images with dates
+        try:
+            # Convert ImageCollection to list
+            collection_list = collection.toList(collection.size())
+
+            # Create layers for each time period
+            layers_added = []
+            for i in range(min(collection_size, 100)):  # Limit to 100 layers for performance
+                try:
+                    image = ee.Image(collection_list.get(i))
+
+                    # Get the date from the image
+                    date_millis = image.get('system:time_start').getInfo()
+                    date_obj = datetime.fromtimestamp(date_millis / 1000)
+
+                    # Format date based on temporal resolution
+                    if temporal_resolution == 'monthly':
+                        date_label = date_obj.strftime('%Y-%m')
+                    else:  # yearly
+                        date_label = date_obj.strftime('%Y')
+
+                    # Create layer name
+                    layer_name = f"{selected_index} - {date_label}"
+
+                    # Calculate min/max for visualization
+                    # Use reduce for the specific region if geometry available
+                    if geometry:
+                        stats = image.reduceRegion(
+                            reducer=ee.Reducer.minMax(),
+                            geometry=geometry,
+                            scale=5000,
+                            maxPixels=1e8
+                        ).getInfo()
+
+                        # Get min/max values
+                        band_name = image.bandNames().getInfo()[0]
+                        vmin = stats.get(f'{band_name}_min', 0)
+                        vmax = stats.get(f'{band_name}_max', 100)
+                    else:
+                        # Use default range if no geometry
+                        vmin = 0
+                        vmax = 100
+
+                    # Add layer to map
+                    vis_params = {
+                        'min': vmin,
+                        'max': vmax,
+                        'palette': palette
+                    }
+
+                    Map.addLayer(
+                        image,
+                        vis_params,
+                        layer_name,
+                        shown=(i == collection_size - 1) or show_all_layers  # Show only the last layer by default, or all if checkbox selected
+                    )
+
+                    layers_added.append(layer_name)
+
+                except Exception as layer_error:
+                    st.warning(f"Could not add layer {i}: {str(layer_error)}")
+                    continue
+
+            st.success(f"✅ Added {len(layers_added)} layers to the map. Use the layer control (top right) to toggle visibility.")
+
+            # Add geometry outline if available
+            if geometry:
+                Map.addLayer(geometry, {'color': 'black'}, 'Study Area', True)
+
+            # Display the map
+            Map.to_streamlit(height=600)
+
+            # Show layer information
+            with st.expander("📋 Layer Information", expanded=False):
+                st.markdown(f"**Climate Index:** {selected_index}")
+                st.markdown(f"**Temporal Resolution:** {temporal_resolution}")
+                st.markdown(f"**Number of Layers:** {len(layers_added)}")
+                st.markdown(f"**Color Palette:** {', '.join(palette)}")
+                st.markdown("**Available Layers:**")
+                for layer in layers_added[:10]:  # Show first 10
+                    st.markdown(f"- {layer}")
+                if len(layers_added) > 10:
+                    st.markdown(f"... and {len(layers_added) - 10} more")
+
+        except Exception as e:
+            st.error(f"❌ Error creating visualization: {str(e)}")
+            st.info("This may be due to large data size or computation limits. Try selecting a smaller time range.")
 
 
 def _show_download_options(results):
