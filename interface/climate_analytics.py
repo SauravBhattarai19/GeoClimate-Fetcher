@@ -2280,8 +2280,8 @@ def _display_geemap_visualization(results):
 
             # Create layers for each time period
             layers_added = []
-            overall_min = float('inf')
-            overall_max = float('-inf')
+            all_min_values = []  # Collect all min values for percentile calculation
+            all_max_values = []  # Collect all max values for percentile calculation
 
             for i in range(min(collection_size, 100)):  # Limit to 100 layers for performance
                 try:
@@ -2319,11 +2319,11 @@ def _display_geemap_visualization(results):
                         vmin = 0
                         vmax = 100
 
-                    # Track overall min/max across all layers
-                    overall_min = min(overall_min, vmin)
-                    overall_max = max(overall_max, vmax)
+                    # Collect values for percentile calculation
+                    all_min_values.append(vmin)
+                    all_max_values.append(vmax)
 
-                    # Add layer to map
+                    # Add layer to map (using per-layer min/max for now)
                     vis_params = {
                         'min': vmin,
                         'max': vmax,
@@ -2342,6 +2342,23 @@ def _display_geemap_visualization(results):
                 except Exception as layer_error:
                     st.warning(f"Could not add layer {i}: {str(layer_error)}")
                     continue
+
+            # Calculate percentile-based min/max for colorbar (removes outliers)
+            import numpy as np
+            if all_min_values and all_max_values:
+                # Use 5th percentile of minimums and 95th percentile of maximums
+                # This removes extreme outliers while preserving most data range
+                overall_min = float(np.percentile(all_min_values, 5))
+                overall_max = float(np.percentile(all_max_values, 95))
+
+                # Ensure min < max
+                if overall_min >= overall_max:
+                    overall_min = min(all_min_values)
+                    overall_max = max(all_max_values)
+            else:
+                # Fallback to absolute min/max
+                overall_min = min(all_min_values) if all_min_values else 0
+                overall_max = max(all_max_values) if all_max_values else 100
 
             st.success(f"✅ Added {len(layers_added)} layers to the map. Use the layer control (top right) to toggle visibility.")
 
@@ -2372,7 +2389,7 @@ def _display_geemap_visualization(results):
             col1, col2 = st.columns([2, 1])
             with col1:
                 st.markdown(f"**📍 {selected_index}:** {metadata['description']}")
-                st.markdown(f"**📊 Range:** {overall_min:.2f} to {overall_max:.2f} {metadata['unit']}")
+                st.markdown(f"**📊 Colorbar Range:** {overall_min:.2f} to {overall_max:.2f} {metadata['unit']} (5th-95th percentile)")
             with col2:
                 st.markdown(f"**🎨 Colormap:** Built-in on map →")
                 st.markdown(f"**📅 Layers:** {len(layers_added)} time periods")
@@ -2384,7 +2401,9 @@ def _display_geemap_visualization(results):
                 st.markdown(f"**Unit:** {metadata['unit']}")
                 st.markdown(f"**Temporal Resolution:** {temporal_resolution}")
                 st.markdown(f"**Number of Layers:** {len(layers_added)}")
-                st.markdown(f"**Data Range:** {overall_min:.2f} to {overall_max:.2f} {metadata['unit']}")
+                st.markdown(f"**Colorbar Range (5th-95th percentile):** {overall_min:.2f} to {overall_max:.2f} {metadata['unit']}")
+                st.markdown(f"**Absolute Range (all data):** {min(all_min_values):.2f} to {max(all_max_values):.2f} {metadata['unit']}")
+                st.markdown(f"**Scaling Method:** Percentile-based (removes extreme outliers)")
                 st.markdown(f"**Color Palette:** {', '.join(palette)}")
                 st.markdown("**Available Layers:**")
                 for layer in layers_added[:10]:  # Show first 10
