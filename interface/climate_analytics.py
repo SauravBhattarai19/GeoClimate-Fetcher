@@ -2351,12 +2351,14 @@ def _display_geemap_visualization(results):
 
             # Add colorbar to the map
             try:
+                colorbar_vis_params = {
+                    'min': overall_min,
+                    'max': overall_max,
+                    'palette': palette
+                }
                 Map.add_colorbar(
-                    colors=palette,
-                    vmin=overall_min,
-                    vmax=overall_max,
+                    vis_params=colorbar_vis_params,
                     label=f"{selected_index} ({metadata['unit']})",
-                    categorical=False,
                     position='bottomright'
                 )
             except Exception as colorbar_error:
