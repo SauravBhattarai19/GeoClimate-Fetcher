@@ -864,22 +864,26 @@ def _render_geemap_preview():
             if is_static:
                 # Use StaticRasterFetcher
                 fetcher = StaticRasterFetcher(
-                    dataset_id=selected_dataset['ee_id'],
-                    bands=selected_bands
+                    ee_id=selected_dataset['ee_id'],
+                    bands=selected_bands,
+                    geometry=geometry
                 )
-                image = fetcher.fetch_static_data()
+                image = fetcher.image  # Access the image property
                 collection = None
                 num_images = 1
             else:
                 # Use ImageCollectionFetcher
                 fetcher = ImageCollectionFetcher(
-                    dataset_id=selected_dataset['ee_id'],
-                    start_date=start_date.strftime('%Y-%m-%d'),
-                    end_date=end_date.strftime('%Y-%m-%d'),
+                    ee_id=selected_dataset['ee_id'],
                     bands=selected_bands,
                     geometry=geometry
                 )
-                collection = fetcher.fetch_collection()
+                # Apply date filter
+                fetcher = fetcher.filter_dates(
+                    start_date=start_date,
+                    end_date=end_date
+                )
+                collection = fetcher.collection  # Access the collection property
                 num_images = collection.size().getInfo()
                 image = None
 
