@@ -2181,6 +2181,37 @@ def _display_geemap_visualization(results):
         'SDII': ['white', 'lightblue', 'blue', 'darkblue']
     }
 
+    # Define units and descriptions for each index
+    index_metadata = {
+        # Temperature indices
+        'TXx': {'unit': '°C', 'description': 'Maximum of Daily Max Temperature', 'type': 'temperature'},
+        'TNn': {'unit': '°C', 'description': 'Minimum of Daily Min Temperature', 'type': 'temperature'},
+        'TXn': {'unit': '°C', 'description': 'Minimum of Daily Max Temperature', 'type': 'temperature'},
+        'TNx': {'unit': '°C', 'description': 'Maximum of Daily Min Temperature', 'type': 'temperature'},
+        'TX90p': {'unit': 'days', 'description': 'Warm Days (Tmax > 90th percentile)', 'type': 'temperature'},
+        'TX10p': {'unit': 'days', 'description': 'Cool Days (Tmax < 10th percentile)', 'type': 'temperature'},
+        'TN90p': {'unit': 'days', 'description': 'Warm Nights (Tmin > 90th percentile)', 'type': 'temperature'},
+        'TN10p': {'unit': 'days', 'description': 'Cool Nights (Tmin < 10th percentile)', 'type': 'temperature'},
+        'DTR': {'unit': '°C', 'description': 'Diurnal Temperature Range', 'type': 'temperature'},
+        'SU': {'unit': 'days', 'description': 'Summer Days (Tmax > 25°C)', 'type': 'temperature'},
+        'FD': {'unit': 'days', 'description': 'Frost Days (Tmin < 0°C)', 'type': 'temperature'},
+        'WSDI': {'unit': 'days', 'description': 'Warm Spell Duration Index', 'type': 'temperature'},
+        'CSDI': {'unit': 'days', 'description': 'Cold Spell Duration Index', 'type': 'temperature'},
+        'GSL': {'unit': 'days', 'description': 'Growing Season Length', 'type': 'temperature'},
+
+        # Precipitation indices
+        'RX1day': {'unit': 'mm', 'description': 'Max 1-day Precipitation', 'type': 'precipitation'},
+        'RX5day': {'unit': 'mm', 'description': 'Max 5-day Precipitation', 'type': 'precipitation'},
+        'R10mm': {'unit': 'days', 'description': 'Heavy Precipitation Days (≥10mm)', 'type': 'precipitation'},
+        'R20mm': {'unit': 'days', 'description': 'Very Heavy Precipitation Days (≥20mm)', 'type': 'precipitation'},
+        'CDD': {'unit': 'days', 'description': 'Consecutive Dry Days', 'type': 'precipitation'},
+        'PRCPTOT': {'unit': 'mm', 'description': 'Total Wet-day Precipitation', 'type': 'precipitation'},
+        'R95p': {'unit': 'mm', 'description': 'Very Wet Days (>95th percentile)', 'type': 'precipitation'},
+        'R99p': {'unit': 'mm', 'description': 'Extremely Wet Days (>99th percentile)', 'type': 'precipitation'},
+        'R75p': {'unit': 'mm', 'description': 'Moderately Wet Days (>75th percentile)', 'type': 'precipitation'},
+        'SDII': {'unit': 'mm/day', 'description': 'Simple Daily Intensity Index', 'type': 'precipitation'}
+    }
+
     # Selection for which index to visualize
     index_names = list(image_collections.keys())
 
@@ -2208,6 +2239,16 @@ def _display_geemap_visualization(results):
         collection = image_collections[selected_index]
         palette = color_palettes.get(selected_index, ['blue', 'white', 'red'])
 
+        # Get metadata for selected index
+        metadata = index_metadata.get(selected_index, {
+            'unit': 'value',
+            'description': selected_index,
+            'type': 'unknown'
+        })
+
+        # Display index information prominently
+        st.markdown(f"#### 📍 Selected: **{selected_index}** - {metadata['description']}")
+
         # Get collection size (number of images/time periods)
         try:
             collection_size = collection.size().getInfo()
@@ -2223,6 +2264,9 @@ def _display_geemap_visualization(results):
 
             # Create layers for each time period
             layers_added = []
+            overall_min = float('inf')
+            overall_max = float('-inf')
+
             for i in range(min(collection_size, 100)):  # Limit to 100 layers for performance
                 try:
                     image = ee.Image(collection_list.get(i))
@@ -2259,6 +2303,10 @@ def _display_geemap_visualization(results):
                         vmin = 0
                         vmax = 100
 
+                    # Track overall min/max across all layers
+                    overall_min = min(overall_min, vmin)
+                    overall_max = max(overall_max, vmax)
+
                     # Add layer to map
                     vis_params = {
                         'min': vmin,
@@ -2288,11 +2336,44 @@ def _display_geemap_visualization(results):
             # Display the map
             Map.to_streamlit(height=600)
 
+            # Display colormap legend
+            st.markdown("---")
+            st.markdown("### 🎨 Colormap Legend")
+
+            col1, col2, col3 = st.columns([1, 2, 1])
+
+            with col1:
+                st.metric("Minimum Value", f"{overall_min:.2f} {metadata['unit']}")
+
+            with col2:
+                # Create visual color gradient
+                st.markdown(f"**Color Scale:** {' → '.join(palette)}")
+                st.markdown(f"**Index Type:** {metadata['type'].title()}")
+
+            with col3:
+                st.metric("Maximum Value", f"{overall_max:.2f} {metadata['unit']}")
+
+            # Color interpretation
+            st.markdown("#### 🔍 Color Interpretation:")
+            if metadata['type'] == 'temperature':
+                if 'blue' in palette[0].lower():
+                    st.info(f"🔵 **Blue/Cool colors** = Lower {selected_index} values ({overall_min:.1f} {metadata['unit']})")
+                if 'red' in palette[-1].lower() or 'orange' in palette[-1].lower():
+                    st.info(f"🔴 **Red/Warm colors** = Higher {selected_index} values ({overall_max:.1f} {metadata['unit']})")
+            elif metadata['type'] == 'precipitation':
+                if 'white' in palette[0].lower() or 'green' in palette[0].lower():
+                    st.info(f"⚪ **Light colors** = Lower {selected_index} values ({overall_min:.1f} {metadata['unit']})")
+                if 'blue' in palette[-1].lower() or 'darkblue' in palette[-1].lower():
+                    st.info(f"🔵 **Dark blue colors** = Higher {selected_index} values ({overall_max:.1f} {metadata['unit']})")
+
             # Show layer information
-            with st.expander("📋 Layer Information", expanded=False):
+            with st.expander("📋 Detailed Layer Information", expanded=False):
                 st.markdown(f"**Climate Index:** {selected_index}")
+                st.markdown(f"**Description:** {metadata['description']}")
+                st.markdown(f"**Unit:** {metadata['unit']}")
                 st.markdown(f"**Temporal Resolution:** {temporal_resolution}")
                 st.markdown(f"**Number of Layers:** {len(layers_added)}")
+                st.markdown(f"**Data Range:** {overall_min:.2f} to {overall_max:.2f} {metadata['unit']}")
                 st.markdown(f"**Color Palette:** {', '.join(palette)}")
                 st.markdown("**Available Layers:**")
                 for layer in layers_added[:10]:  # Show first 10
