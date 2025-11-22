@@ -848,7 +848,7 @@ def _render_geemap_preview():
     st.info("💡 Preview your data before downloading. Use layer controls to toggle between time periods.")
 
     # Get all selections from session state
-    geometry = st.session_state.geometry_handler.get_geometry()
+    geometry = st.session_state.geometry_handler.current_geometry
     selected_dataset = st.session_state.selected_dataset
     selected_bands = st.session_state.selected_bands
     start_date = st.session_state.start_date
