@@ -9,6 +9,8 @@ import json
 import time
 import os
 import ee
+import numpy as np
+import geemap.foliumap as geemap
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -174,10 +176,17 @@ def render_geodata_explorer():
     # Step 4: Date Range Selection
     elif not st.session_state.dates_selected:
         _render_date_selection()
-    
-    # Step 5: Download and Export
+
+    # Step 5: Interactive Preview and Optional Download
     else:
-        _render_download_interface()
+        # Always show geemap preview first
+        _render_geemap_preview()
+
+        # Make download optional - wrapped in expander
+        st.markdown("---")
+        with st.expander("📥 **Download Data (Optional)**", expanded=False):
+            st.info("💡 You can download the data for offline analysis or further processing. This is optional if you just want to preview the data.")
+            _render_download_interface()
 
 
 def _render_dataset_selection():
@@ -487,21 +496,595 @@ def _parse_dataset_dates(start_date_str, end_date_str):
         return None, None
 
 
-def _render_download_interface():
-    """Render download and export interface"""
-    from app_utils import go_back_to_step
+# =======================================================================================
+# GEEMAP PREVIEW FUNCTIONS - Adaptive visualization based on temporal resolution
+# =======================================================================================
 
-    st.markdown('<div class="step-header"><h2>💾 Step 5: Download Data</h2></div>', unsafe_allow_html=True)
+# Band visualization configurations - auto-detect appropriate palettes
+BAND_VIS_CONFIGS = {
+    # Temperature bands (Celsius/Kelvin)
+    'temperature': {
+        'keywords': ['temp', 'tmax', 'tmin', 'tmean', 'tavg', 'sst', 'lst', 'air_temperature',
+                     'skin_temperature', 'surface_temperature', 't2m', 'temperature_2m'],
+        'palette': ['blue', 'cyan', 'yellow', 'orange', 'red'],
+        'unit': '°C',
+        'description': 'Temperature'
+    },
+    # Precipitation bands (mm)
+    'precipitation': {
+        'keywords': ['prec', 'prcp', 'rain', 'precipitation', 'tp', 'total_precipitation',
+                     'rainfall', 'precip', 'pr'],
+        'palette': ['white', 'lightblue', 'blue', 'darkblue', 'purple'],
+        'unit': 'mm',
+        'description': 'Precipitation'
+    },
+    # NDVI and vegetation indices
+    'vegetation': {
+        'keywords': ['ndvi', 'evi', 'evi2', 'savi', 'lai', 'fpar', 'vegetation', 'greenness',
+                     'normalized_difference', 'modis_ndvi', 'ndvi_', 'evi_'],
+        'palette': ['brown', 'yellow', 'lightgreen', 'green', 'darkgreen'],
+        'unit': 'index',
+        'description': 'Vegetation Index'
+    },
+    # Soil moisture
+    'soil_moisture': {
+        'keywords': ['soil', 'moisture', 'sm', 'volumetric', 'swvl', 'soil_moisture'],
+        'palette': ['red', 'orange', 'yellow', 'lightblue', 'blue'],
+        'unit': 'm³/m³',
+        'description': 'Soil Moisture'
+    },
+    # Snow cover
+    'snow': {
+        'keywords': ['snow', 'snowfall', 'snow_cover', 'swe', 'snow_depth', 'snw', 'sd'],
+        'palette': ['brown', 'white', 'cyan', 'blue'],
+        'unit': 'mm',
+        'description': 'Snow'
+    },
+    # Solar radiation
+    'radiation': {
+        'keywords': ['rad', 'srad', 'radiation', 'shortwave', 'longwave', 'solar', 'ssrd',
+                     'surface_solar', 'downward'],
+        'palette': ['black', 'purple', 'red', 'orange', 'yellow', 'white'],
+        'unit': 'W/m²',
+        'description': 'Radiation'
+    },
+    # Humidity
+    'humidity': {
+        'keywords': ['humid', 'rh', 'relative_humidity', 'specific_humidity', 'vap', 'vapor'],
+        'palette': ['red', 'yellow', 'green', 'cyan', 'blue'],
+        'unit': '%',
+        'description': 'Humidity'
+    },
+    # Wind speed
+    'wind': {
+        'keywords': ['wind', 'u10', 'v10', 'wind_speed', 'windspeed', 'ws'],
+        'palette': ['white', 'lightblue', 'blue', 'purple', 'red'],
+        'unit': 'm/s',
+        'description': 'Wind Speed'
+    },
+    # Elevation/DEM
+    'elevation': {
+        'keywords': ['elevation', 'dem', 'altitude', 'height', 'srtm', 'aster'],
+        'palette': ['green', 'yellow', 'brown', 'white'],
+        'unit': 'm',
+        'description': 'Elevation'
+    },
+    # Default fallback
+    'default': {
+        'keywords': [],
+        'palette': ['blue', 'cyan', 'yellow', 'orange', 'red'],
+        'unit': 'value',
+        'description': 'Data'
+    }
+}
+
+
+def _get_vis_params_for_band(band_name, image, geometry):
+    """
+    Automatically determine appropriate visualization parameters for a band
+
+    Args:
+        band_name: Name of the band
+        image: Earth Engine image to analyze
+        geometry: Region to calculate statistics
+
+    Returns:
+        Dictionary with palette, unit, description
+    """
+    band_lower = band_name.lower()
+
+    # Find matching configuration
+    config = None
+    for key, cfg in BAND_VIS_CONFIGS.items():
+        if key == 'default':
+            continue
+        if any(keyword in band_lower for keyword in cfg['keywords']):
+            config = cfg
+            break
+
+    # Use default if no match
+    if not config:
+        config = BAND_VIS_CONFIGS['default']
+
+    return {
+        'palette': config['palette'],
+        'unit': config['unit'],
+        'description': config['description']
+    }
+
+
+def _determine_preview_strategy(collection, temporal_resolution, num_images, days_span):
+    """
+    Determine the best preview strategy based on temporal resolution and image count
+
+    Args:
+        collection: Earth Engine ImageCollection
+        temporal_resolution: String like 'Hourly', 'Daily', 'Monthly', 'Yearly', 'Static'
+        num_images: Number of images in collection
+        days_span: Number of days in date range
+
+    Returns:
+        Dictionary with strategy details:
+        {
+            'type': 'aggregate' | 'sample' | 'direct',
+            'method': specific method to use,
+            'max_layers': maximum layers to display,
+            'description': user-facing description
+        }
+    """
+    # Static data - show directly
+    if temporal_resolution == 'Static' or num_images == 1:
+        return {
+            'type': 'direct',
+            'method': 'single_image',
+            'max_layers': 1,
+            'description': 'Displaying static image'
+        }
+
+    # Determine temporal category
+    temporal_lower = temporal_resolution.lower()
+
+    # SUB-DAILY: Hourly, 30-minute, 3-hourly data
+    if any(x in temporal_lower for x in ['hour', 'minute']):
+        if num_images <= 100:
+            return {
+                'type': 'direct',
+                'method': 'all_images',
+                'max_layers': num_images,
+                'description': f'Displaying all {num_images} images with layer toggles'
+            }
+        else:
+            # Offer aggregation options
+            return {
+                'type': 'aggregate',
+                'method': 'to_daily',  # Aggregate sub-daily to daily
+                'max_layers': min(days_span, 100),
+                'description': f'Aggregating {num_images} hourly images to daily composites'
+            }
+
+    # DAILY data
+    elif 'daily' in temporal_lower or 'day' in temporal_lower:
+        if num_images <= 100:
+            return {
+                'type': 'direct',
+                'method': 'all_images',
+                'max_layers': num_images,
+                'description': f'Displaying all {num_images} daily images'
+            }
+        elif num_images <= 400:
+            # Aggregate to weekly
+            return {
+                'type': 'aggregate',
+                'method': 'to_weekly',
+                'max_layers': min(num_images // 7, 100),
+                'description': f'Aggregating to weekly composites ({num_images} daily images)'
+            }
+        else:
+            # Aggregate to monthly
+            return {
+                'type': 'aggregate',
+                'method': 'to_monthly',
+                'max_layers': min(num_images // 30, 100),
+                'description': f'Aggregating to monthly composites ({num_images} daily images)'
+            }
+
+    # MONTHLY data
+    elif 'month' in temporal_lower:
+        if num_images <= 100:
+            return {
+                'type': 'direct',
+                'method': 'all_images',
+                'max_layers': num_images,
+                'description': f'Displaying all {num_images} monthly images'
+            }
+        else:
+            # Cannot aggregate monthly to daily - use sampling
+            return {
+                'type': 'sample',
+                'method': 'evenly_spaced',
+                'max_layers': 100,
+                'description': f'Sampling 100 images from {num_images} monthly images'
+            }
+
+    # YEARLY or other coarse data
+    elif 'year' in temporal_lower:
+        return {
+            'type': 'direct',
+            'method': 'all_images',
+            'max_layers': min(num_images, 100),
+            'description': f'Displaying {min(num_images, 100)} yearly images'
+        }
+
+    # Default: if we have <= 100 images, show all; otherwise sample
+    else:
+        if num_images <= 100:
+            return {
+                'type': 'direct',
+                'method': 'all_images',
+                'max_layers': num_images,
+                'description': f'Displaying all {num_images} images'
+            }
+        else:
+            return {
+                'type': 'sample',
+                'method': 'evenly_spaced',
+                'max_layers': 100,
+                'description': f'Sampling 100 images from {num_images} total'
+            }
+
+
+def _aggregate_to_daily(collection):
+    """Aggregate sub-daily data (hourly, 30-min) to daily means"""
+    def aggregate_day(date):
+        date = ee.Date(date)
+        daily = collection.filterDate(date, date.advance(1, 'day')).mean()
+        return daily.set('system:time_start', date.millis())
+
+    # Get unique dates
+    dates = collection.aggregate_array('system:time_start').map(
+        lambda t: ee.Date(t).format('YYYY-MM-dd')
+    ).distinct()
+
+    return ee.ImageCollection(dates.map(aggregate_day))
+
+
+def _aggregate_to_weekly(collection):
+    """Aggregate daily data to weekly means"""
+    def aggregate_week(date):
+        date = ee.Date(date)
+        weekly = collection.filterDate(date, date.advance(7, 'day')).mean()
+        return weekly.set('system:time_start', date.millis())
+
+    # Get start of each week
+    start_date = ee.Date(collection.first().get('system:time_start'))
+    end_date = ee.Date(collection.sort('system:time_start', False).first().get('system:time_start'))
+
+    days_diff = end_date.difference(start_date, 'day')
+    weeks = ee.List.sequence(0, days_diff, 7)
+
+    weekly_dates = weeks.map(lambda d: start_date.advance(d, 'day'))
+
+    return ee.ImageCollection(weekly_dates.map(aggregate_week))
+
+
+def _aggregate_to_monthly(collection):
+    """Aggregate daily data to monthly means"""
+    def aggregate_month(date):
+        date = ee.Date(date)
+        year = date.get('year')
+        month = date.get('month')
+
+        monthly = collection.filter(
+            ee.Filter.calendarRange(year, year, 'year')
+        ).filter(
+            ee.Filter.calendarRange(month, month, 'month')
+        ).mean()
+
+        return monthly.set({
+            'system:time_start': date.millis(),
+            'year': year,
+            'month': month
+        })
+
+    # Get unique year-month combinations
+    def get_month_string(img):
+        date = ee.Date(img.get('system:time_start'))
+        return date.format('YYYY-MM')
+
+    months = collection.map(lambda img: ee.Feature(None, {'month': get_month_string(img)})) \
+        .distinct('month') \
+        .aggregate_array('month')
+
+    monthly_dates = months.map(lambda m: ee.Date.parse('YYYY-MM', m))
+
+    return ee.ImageCollection(monthly_dates.map(aggregate_month))
+
+
+def _aggregate_to_yearly(collection):
+    """Aggregate monthly data to yearly means"""
+    def aggregate_year(year):
+        year = ee.Number(year)
+        yearly = collection.filter(ee.Filter.calendarRange(year, year, 'year')).mean()
+        return yearly.set({
+            'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+            'year': year
+        })
+
+    # Get unique years
+    years = collection.map(lambda img: ee.Feature(None, {
+        'year': ee.Date(img.get('system:time_start')).get('year')
+    })).distinct('year').aggregate_array('year')
+
+    return ee.ImageCollection(years.map(aggregate_year))
+
+
+def _sample_evenly_spaced(collection, target_count=100):
+    """Sample images evenly across the time range"""
+    total_count = collection.size().getInfo()
+
+    if total_count <= target_count:
+        return collection
+
+    # Calculate sampling interval
+    interval = total_count // target_count
+
+    # Get list of all images
+    img_list = collection.toList(total_count)
+
+    # Sample at intervals
+    indices = ee.List.sequence(0, total_count - 1, interval).slice(0, target_count)
+    sampled = indices.map(lambda i: img_list.get(i))
+
+    return ee.ImageCollection(sampled)
+
+
+def _render_geemap_preview():
+    """
+    Render interactive geemap preview with adaptive strategy
+    Called after date selection, before download interface
+    """
+    st.markdown("---")
+    st.markdown("### 🗺️ Interactive Map Preview")
+    st.info("💡 Preview your data before downloading. Use layer controls to toggle between time periods.")
+
+    # Get all selections from session state
+    geometry = st.session_state.geometry_handler.get_geometry()
+    selected_dataset = st.session_state.selected_dataset
+    selected_bands = st.session_state.selected_bands
+    start_date = st.session_state.start_date
+    end_date = st.session_state.end_date
+    temporal_resolution = selected_dataset.get('temporal_resolution', 'Daily')
+
+    # Check if static or temporal dataset
+    is_static = temporal_resolution == 'Static'
+
+    try:
+        # Fetch the image or image collection
+        with st.spinner("🔄 Loading data from Earth Engine..."):
+            if is_static:
+                # Use StaticRasterFetcher
+                fetcher = StaticRasterFetcher(
+                    dataset_id=selected_dataset['ee_id'],
+                    bands=selected_bands
+                )
+                image = fetcher.fetch_static_data()
+                collection = None
+                num_images = 1
+            else:
+                # Use ImageCollectionFetcher
+                fetcher = ImageCollectionFetcher(
+                    dataset_id=selected_dataset['ee_id'],
+                    start_date=start_date.strftime('%Y-%m-%d'),
+                    end_date=end_date.strftime('%Y-%m-%d'),
+                    bands=selected_bands,
+                    geometry=geometry
+                )
+                collection = fetcher.fetch_collection()
+                num_images = collection.size().getInfo()
+                image = None
+
+        # Calculate days span
+        days_span = (end_date - start_date).days
+
+        # Show data info
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("📊 Temporal Resolution", temporal_resolution)
+        with col2:
+            if is_static:
+                st.metric("🖼️ Images", "1 (Static)")
+            else:
+                st.metric("🖼️ Total Images", num_images)
+        with col3:
+            st.metric("📅 Date Range", f"{days_span} days")
+
+        # Determine preview strategy
+        if is_static:
+            strategy = _determine_preview_strategy(None, 'Static', 1, 0)
+        else:
+            strategy = _determine_preview_strategy(collection, temporal_resolution, num_images, days_span)
+
+        # Show strategy to user
+        st.info(f"📋 **Preview Strategy:** {strategy['description']}")
+
+        # Apply strategy
+        if not is_static:
+            if strategy['type'] == 'aggregate':
+                with st.spinner(f"⚙️ Aggregating data using {strategy['method']}..."):
+                    if strategy['method'] == 'to_daily':
+                        collection = _aggregate_to_daily(collection)
+                    elif strategy['method'] == 'to_weekly':
+                        collection = _aggregate_to_weekly(collection)
+                    elif strategy['method'] == 'to_monthly':
+                        collection = _aggregate_to_monthly(collection)
+                    elif strategy['method'] == 'to_yearly':
+                        collection = _aggregate_to_yearly(collection)
+
+                    # Update image count after aggregation
+                    num_images = collection.size().getInfo()
+                    st.success(f"✅ Aggregated to {num_images} composite images")
+
+            elif strategy['type'] == 'sample':
+                with st.spinner(f"⚙️ Sampling {strategy['max_layers']} images..."):
+                    collection = _sample_evenly_spaced(collection, strategy['max_layers'])
+                    num_images = collection.size().getInfo()
+                    st.success(f"✅ Sampled {num_images} representative images")
+
+        # Create geemap Map
+        Map = geemap.Map()
+
+        # Center map on geometry
+        try:
+            centroid = geometry.centroid().getInfo()['coordinates']
+            Map.setCenter(centroid[0], centroid[1], 8)
+        except:
+            Map.setCenter(0, 0, 2)
+
+        # Add geometry outline
+        Map.addLayer(geometry, {'color': 'red'}, 'Study Area', True, 0.5)
+
+        # Select band to visualize
+        if len(selected_bands) > 1:
+            selected_band = st.selectbox(
+                "Select band to visualize:",
+                selected_bands,
+                help="Choose which band to display on the map"
+            )
+        else:
+            selected_band = selected_bands[0]
+            st.info(f"**Visualizing band:** {selected_band}")
+
+        # Get visualization parameters
+        if is_static:
+            vis_config = _get_vis_params_for_band(selected_band, image, geometry)
+
+            # Calculate stats for static image
+            stats = image.select(selected_band).reduceRegion(
+                reducer=ee.Reducer.percentile([5, 95]),
+                geometry=geometry,
+                scale=1000,
+                maxPixels=1e8
+            ).getInfo()
+
+            vmin = stats.get(f'{selected_band}_p5', 0)
+            vmax = stats.get(f'{selected_band}_p95', 100)
+
+            vis_params = {
+                'bands': [selected_band],
+                'min': vmin,
+                'max': vmax,
+                'palette': vis_config['palette']
+            }
+
+            # Add static layer
+            Map.addLayer(image, vis_params, f"{selected_band}", True)
+
+            # Add colorbar
+            colorbar_vis = {'min': vmin, 'max': vmax, 'palette': vis_config['palette']}
+            Map.add_colorbar(
+                vis_params=colorbar_vis,
+                label=f"{selected_band} ({vis_config['unit']})",
+                position='bottomright'
+            )
+
+            st.markdown(f"**📊 Value Range:** {vmin:.2f} to {vmax:.2f} {vis_config['unit']} (5th-95th percentile)")
+
+        else:
+            # TEMPORAL COLLECTION
+            # Get first image for band config
+            first_image = ee.Image(collection.first())
+            vis_config = _get_vis_params_for_band(selected_band, first_image, geometry)
+
+            # Calculate percentile-based range across ALL images for colorbar
+            with st.spinner("📊 Calculating value range for colorbar..."):
+                all_min_values = []
+                all_max_values = []
+
+                # Sample up to 20 images for statistics (performance optimization)
+                sample_size = min(num_images, 20)
+                sample_collection = _sample_evenly_spaced(collection, sample_size)
+                sample_list = sample_collection.toList(sample_size)
+
+                for i in range(sample_size):
+                    img = ee.Image(sample_list.get(i))
+                    stats = img.select(selected_band).reduceRegion(
+                        reducer=ee.Reducer.minMax(),
+                        geometry=geometry,
+                        scale=5000,
+                        maxPixels=1e8
+                    ).getInfo()
+
+                    vmin = stats.get(f'{selected_band}_min', 0)
+                    vmax = stats.get(f'{selected_band}_max', 100)
+                    all_min_values.append(vmin)
+                    all_max_values.append(vmax)
+
+                # Calculate percentile range
+                overall_min = float(np.percentile(all_min_values, 5))
+                overall_max = float(np.percentile(all_max_values, 95))
+
+            # Add all images as layers
+            show_all = st.checkbox("Show all layers at once", value=False,
+                                   help="Warning: This may make the map slower")
+
+            img_list = collection.toList(num_images)
+
+            with st.spinner(f"🗺️ Adding {num_images} layers to map..."):
+                for i in range(num_images):
+                    img = ee.Image(img_list.get(i))
+
+                    # Get date for layer name
+                    try:
+                        date_millis = img.get('system:time_start').getInfo()
+                        date_obj = datetime.fromtimestamp(date_millis / 1000)
+                        date_str = date_obj.strftime('%Y-%m-%d')
+                    except:
+                        date_str = f"Image {i+1}"
+
+                    # Use consistent vis params
+                    vis_params = {
+                        'bands': [selected_band],
+                        'min': overall_min,
+                        'max': overall_max,
+                        'palette': vis_config['palette']
+                    }
+
+                    # Show only last layer by default (unless show_all is checked)
+                    show_layer = show_all or (i == num_images - 1)
+
+                    Map.addLayer(img, vis_params, f"{selected_band} - {date_str}", show_layer)
+
+            # Add colorbar
+            colorbar_vis = {'min': overall_min, 'max': overall_max, 'palette': vis_config['palette']}
+            Map.add_colorbar(
+                vis_params=colorbar_vis,
+                label=f"{selected_band} ({vis_config['unit']})",
+                position='bottomright'
+            )
+
+            st.markdown(f"**📊 Colorbar Range:** {overall_min:.2f} to {overall_max:.2f} {vis_config['unit']} (5th-95th percentile)")
+
+        # Display the map
+        Map.to_streamlit(height=600)
+
+        st.success("✅ Preview loaded! Use the layer control (top-right) to toggle between dates.")
+
+    except Exception as e:
+        st.error(f"❌ Error creating preview: {str(e)}")
+        st.info("💡 You can still proceed to download the data.")
+        import traceback
+        st.code(traceback.format_exc())
+
+
+def _render_download_interface():
+    """Render download and export interface (now optional, called within expander)"""
+    from app_utils import go_back_to_step
 
     # Check if download is already complete and show persistent results
     if st.session_state.get('download_complete', False) and st.session_state.get('download_results'):
         _render_download_results_interface()
         return
 
-    # Add back button
-    if st.button("← Back to Date Selection"):
-        go_back_to_step("dates")
-    
     # Show summary of selections
     st.markdown("### 📋 Download Summary")
     
