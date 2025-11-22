@@ -868,7 +868,8 @@ def _render_geemap_preview():
                     bands=selected_bands,
                     geometry=geometry
                 )
-                image = fetcher.image  # Access the image property
+                # CRITICAL: Clip to user's selected geometry!
+                image = fetcher.image.clip(geometry)
                 collection = None
                 num_images = 1
             else:
@@ -883,7 +884,8 @@ def _render_geemap_preview():
                     start_date=start_date,
                     end_date=end_date
                 )
-                collection = fetcher.collection  # Access the collection property
+                # CRITICAL: Clip entire collection to user's selected geometry!
+                collection = fetcher.collection.map(lambda img: img.clip(geometry))
                 num_images = collection.size().getInfo()
                 image = None
 
