@@ -2349,41 +2349,34 @@ def _display_geemap_visualization(results):
             if geometry:
                 Map.addLayer(geometry, {'color': 'black'}, 'Study Area', True)
 
+            # Add colorbar to the map
+            try:
+                Map.add_colorbar(
+                    colors=palette,
+                    vmin=overall_min,
+                    vmax=overall_max,
+                    label=f"{selected_index} ({metadata['unit']})",
+                    categorical=False,
+                    position='bottomright'
+                )
+            except Exception as colorbar_error:
+                st.warning(f"Could not add colorbar to map: {str(colorbar_error)}")
+
             # Display the map
             Map.to_streamlit(height=600)
 
-            # Display colormap legend
+            # Compact info below map
             st.markdown("---")
-            st.markdown("### 🎨 Colormap Legend")
-
-            col1, col2, col3 = st.columns([1, 2, 1])
-
+            col1, col2 = st.columns([2, 1])
             with col1:
-                st.metric("Minimum Value", f"{overall_min:.2f} {metadata['unit']}")
-
+                st.markdown(f"**📍 {selected_index}:** {metadata['description']}")
+                st.markdown(f"**📊 Range:** {overall_min:.2f} to {overall_max:.2f} {metadata['unit']}")
             with col2:
-                # Create visual color gradient
-                st.markdown(f"**Color Scale:** {' → '.join(palette)}")
-                st.markdown(f"**Index Type:** {metadata['type'].title()}")
+                st.markdown(f"**🎨 Colormap:** Built-in on map →")
+                st.markdown(f"**📅 Layers:** {len(layers_added)} time periods")
 
-            with col3:
-                st.metric("Maximum Value", f"{overall_max:.2f} {metadata['unit']}")
-
-            # Color interpretation
-            st.markdown("#### 🔍 Color Interpretation:")
-            if metadata['type'] == 'temperature':
-                if 'blue' in palette[0].lower():
-                    st.info(f"🔵 **Blue/Cool colors** = Lower {selected_index} values ({overall_min:.1f} {metadata['unit']})")
-                if 'red' in palette[-1].lower() or 'orange' in palette[-1].lower():
-                    st.info(f"🔴 **Red/Warm colors** = Higher {selected_index} values ({overall_max:.1f} {metadata['unit']})")
-            elif metadata['type'] == 'precipitation':
-                if 'white' in palette[0].lower() or 'green' in palette[0].lower():
-                    st.info(f"⚪ **Light colors** = Lower {selected_index} values ({overall_min:.1f} {metadata['unit']})")
-                if 'blue' in palette[-1].lower() or 'darkblue' in palette[-1].lower():
-                    st.info(f"🔵 **Dark blue colors** = Higher {selected_index} values ({overall_max:.1f} {metadata['unit']})")
-
-            # Show layer information
-            with st.expander("📋 Detailed Layer Information", expanded=False):
+            # Detailed info in expander
+            with st.expander("📋 View Detailed Layer Information", expanded=False):
                 st.markdown(f"**Climate Index:** {selected_index}")
                 st.markdown(f"**Description:** {metadata['description']}")
                 st.markdown(f"**Unit:** {metadata['unit']}")
