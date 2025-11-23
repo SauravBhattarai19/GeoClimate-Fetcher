@@ -19,16 +19,23 @@ This is a web-based interface that provides five integrated tools for climate da
 
 ### 🔍 **GeoData Explorer**
 - Browse and download from [33 Earth Engine datasets](geoclimate_fetcher/data/Datasets.csv)
-- Interactive map for area selection
-- Automatic band detection and metadata extraction
-- Export to GeoTIFF and CSV formats
+- **🆕 Interactive geemap preview** before downloading - visualize data instantly!
+- **🆕 Adaptive temporal aggregation** - handles hourly, daily, monthly, yearly data intelligently
+- **🆕 Smart layer management** - automatic aggregation/sampling for 100+ images
+- Interactive map for area selection with geometry clipping
+- Automatic band detection with smart color palette selection
+- Export to GeoTIFF, NetCDF, and CSV formats
+- Percentile-based visualization (5th-95th) to handle outliers
 
 ### 🧠 **Climate Analytics**
 - Calculate ETCCDI-compliant climate indices
 - **Temperature indices**: TXx, TNn, TXn, TNx, TX90p, TX10p, TN90p, TN10p, SU, FD, DTR, GSL, WSDI, CSDI
 - **Precipitation indices**: RX1day, RX5day, CDD, R10mm, R20mm, SDII, R95p, R99p, R75p, PRCPTOT
+- **🆕 Interactive geemap visualization** with layer toggles for multi-year/multi-month analysis
+- **🆕 Integrated colorbar with units** displayed directly on the map
 - Trend analysis using Mann-Kendall test and Sen's slope
 - Server-side processing with Google Earth Engine
+- Time series plots and statistical summaries
 
 ### 💧 **Hydrology Analyzer**
 - Precipitation data analysis and visualization
@@ -182,8 +189,28 @@ GeoClimate-Fetcher/
 - `scikit-learn>=1.3.0` - Statistical analysis (Product Selector)
 - `folium>=0.14.0` - Interactive maps
 - `streamlit-folium>=0.15.0` - Folium integration for Streamlit
+- `geemap` - 🆕 Interactive Earth Engine maps with layer controls
 
 [View complete requirements](requirements.txt)
+
+## 🗺️ New Geemap Preview Features
+
+### Interactive Visualization
+Both **GeoData Explorer** and **Climate Analytics** now include interactive map previews:
+- **Real-time preview** before downloading data
+- **Layer toggle controls** for multi-temporal data (switch between dates/months/years)
+- **Automatic geometry clipping** - only shows data within your selected area
+- **Smart color palettes** - auto-detects data type (temperature, precipitation, vegetation, etc.)
+- **Percentile-based scaling** - uses 5th-95th percentile to handle outliers
+- **Integrated colorbar** with units displayed directly on the map
+
+### Adaptive Temporal Aggregation
+For datasets with many images, the system automatically:
+- **Hourly/Sub-daily** → Aggregates to daily composites if >100 images
+- **Daily** → Aggregates to weekly or monthly if >100 images
+- **Monthly** → Samples evenly if >100 images (cannot aggregate to finer resolution)
+- **Yearly** → Displays all (usually <100)
+- **Performance limit**: Maximum 100 layers for optimal map performance
 
 ## 📖 Usage Guide
 

@@ -760,8 +760,8 @@ if st.session_state.app_mode is None:
             <span class="tool-icon">🔍</span>
             <div class="tool-title">GeoData Explorer</div>
             <div class="tool-description">
-                Download and visualize Earth Engine datasets. Perfect for researchers needing raw climate data
-                with options for GeoTIFF, NetCDF, and CSV formats. Includes interactive previews.
+                Browse and download from 33+ Earth Engine datasets with interactive geemap preview.
+                Adaptive temporal aggregation handles hourly to yearly data. Export to GeoTIFF, NetCDF, and CSV.
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -776,8 +776,8 @@ if st.session_state.app_mode is None:
             <span class="tool-icon">🧠</span>
             <div class="tool-title">Climate Intelligence Hub</div>
             <div class="tool-description">
-                Calculate climate indices and analyze extreme events. Compute SPI, temperature anomalies,
-                drought indicators, and more directly in the cloud.
+                Calculate 25+ ETCCDI climate indices (TXx, TNn, RX1day, CDD, etc.) with geemap visualization.
+                Includes trend analysis (Mann-Kendall), time series plots, and interactive map previews with layer toggles.
             </div>
         </div>
         """, unsafe_allow_html=True)
