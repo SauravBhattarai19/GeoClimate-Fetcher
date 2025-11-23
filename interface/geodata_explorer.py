@@ -177,16 +177,14 @@ def render_geodata_explorer():
     elif not st.session_state.dates_selected:
         _render_date_selection()
 
-    # Step 5: Interactive Preview and Optional Download
+    # Step 5: Interactive Preview and Download
     else:
-        # Always show geemap preview first
+        # Show geemap preview first
         _render_geemap_preview()
 
-        # Make download optional - wrapped in expander
+        # Show download interface below preview
         st.markdown("---")
-        with st.expander("📥 **Download Data (Optional)**", expanded=False):
-            st.info("💡 You can download the data for offline analysis or further processing. This is optional if you just want to preview the data.")
-            _render_download_interface()
+        _render_download_interface()
 
 
 def _render_dataset_selection():
@@ -1083,7 +1081,7 @@ def _render_geemap_preview():
 
 
 def _render_download_interface():
-    """Render download and export interface (now optional, called within expander)"""
+    """Render download and export interface below the preview"""
     from app_utils import go_back_to_step
 
     # Check if download is already complete and show persistent results
@@ -1091,8 +1089,12 @@ def _render_download_interface():
         _render_download_results_interface()
         return
 
+    # Header
+    st.markdown("### 💾 Download Data")
+    st.info("💡 Download the data for offline analysis or further processing in your preferred format.")
+
     # Show summary of selections
-    st.markdown("### 📋 Download Summary")
+    st.markdown("#### 📋 Download Summary")
     
     col1, col2, col3 = st.columns(3)
     
