@@ -412,8 +412,17 @@ def _render_hydrology_results():
             except:
                 st.info("Selected area")
 
-    # Analysis tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Time Series", "📊 Statistics", "🌧️ Return Periods", "📚 Educational", "💾 Downloads"])
+    # Analysis tabs - ENHANCED with new advanced analyses
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+        "📈 Time Series",
+        "📊 Statistics",
+        "🌧️ Return Periods",
+        "📉 IDF Curves",
+        "📈 Trends (Mann-Kendall)",
+        "🔄 Change Points (Pettitt)",
+        "💧 Flow Duration & Spells",
+        "💾 Downloads"
+    ])
 
     with tab1:
         _render_time_series_analysis()
@@ -425,9 +434,18 @@ def _render_hydrology_results():
         _render_return_period_analysis()
 
     with tab4:
-        _render_educational_content()
+        _render_idf_analysis()
 
     with tab5:
+        _render_mann_kendall_analysis()
+
+    with tab6:
+        _render_pettitt_analysis()
+
+    with tab7:
+        _render_flow_duration_and_spells()
+
+    with tab8:
         _render_hydrology_downloads()
 
 
@@ -1469,12 +1487,466 @@ def _render_hydrology_downloads():
         """)
 
 
+def _render_idf_analysis():
+    """Render enhanced IDF curves analysis"""
+    st.markdown("### 📉 Intensity-Duration-Frequency (IDF) Curves")
+
+    st.info("""
+    **What are IDF curves?**
+    IDF curves show the relationship between rainfall intensity, duration, and return period.
+    They're essential for designing drainage systems, culverts, and flood protection infrastructure.
+    """)
+
+    analyzer = st.session_state.hydro_analyzer
+
+    with st.spinner("🔄 Calculating IDF curves..."):
+        try:
+            # Get dates from session state
+            start_date_str = st.session_state.hydro_start_date.strftime('%Y-%m-%d')
+            end_date_str = st.session_state.hydro_end_date.strftime('%Y-%m-%d')
+
+            # Calculate IDF (will automatically use server-side for sub-daily data)
+            idf_results = analyzer.calculate_intensity_duration_frequency(
+                start_date=start_date_str,
+                end_date=end_date_str,
+                return_periods=[2, 5, 10, 25, 50, 100]
+            )
+
+            if idf_results:
+                # Create and display plot
+                idf_plot = analyzer.create_idf_curves_plot(idf_results)
+                st.plotly_chart(idf_plot, use_container_width=True)
+
+                # Show detailed results table
+                st.markdown("#### 📊 IDF Values Table")
+
+                # Create summary table
+                idf_table_data = []
+                for duration_key, data in idf_results.items():
+                    duration_hrs = data.get('duration_hours', duration_key)
+                    return_periods = data.get('return_periods', [])
+                    intensities = data.get('return_intensities', data.get('return_intensities_mm_per_hour', []))
+
+                    row = {'Duration (hours)': duration_hrs}
+                    for rp, intensity in zip(return_periods, intensities):
+                        row[f'{rp}-year (mm/hr)'] = f"{intensity:.2f}"
+
+                    idf_table_data.append(row)
+
+                idf_df = pd.DataFrame(idf_table_data)
+                st.dataframe(idf_df, use_container_width=True)
+
+                # Educational content
+                with st.expander("📚 Understanding IDF Curves"):
+                    st.markdown("""
+                    **How to Read IDF Curves:**
+                    - **X-axis (Duration)**: Time period over which rainfall occurs (e.g., 1 hour, 3 hours, 24 hours)
+                    - **Y-axis (Intensity)**: Average rainfall rate in mm/hr
+                    - **Each line**: Represents a different return period (e.g., 10-year, 50-year storm)
+
+                    **Example Interpretation:**
+                    - A 50-year, 3-hour storm might have an intensity of 15 mm/hr
+                    - This means: In a 3-hour period, we expect 15 × 3 = 45 mm of rain
+                    - This event has a 2% chance of occurring in any given year (1/50 = 0.02)
+
+                    **Applications:**
+                    - Storm sewer design
+                    - Culvert sizing
+                    - Detention pond design
+                    - Urban drainage planning
+                    """)
+
+            else:
+                st.warning("⚠️ Insufficient data for IDF analysis. Need at least 3 years of data.")
+
+        except Exception as e:
+            st.error(f"❌ Error calculating IDF curves: {str(e)}")
+            st.info("This might occur if the dataset doesn't support sub-daily analysis.")
+
+
+def _render_mann_kendall_analysis():
+    """Render Mann-Kendall trend analysis"""
+    st.markdown("### 📈 Mann-Kendall Trend Analysis")
+
+    st.info("""
+    **What is Mann-Kendall Test?**
+    A non-parametric statistical test for detecting monotonic trends in time series data.
+    More robust than linear regression because it doesn't assume normal distribution.
+    """)
+
+    analyzer = st.session_state.hydro_analyzer
+
+    # Aggregation selection
+    aggregation = st.radio(
+        "Select temporal aggregation:",
+        options=['annual', 'monthly', 'seasonal'],
+        format_func=lambda x: x.capitalize(),
+        horizontal=True,
+        help="Annual: Tests trend in yearly totals | Monthly: Tests trend in monthly data | Seasonal: Tests each season separately"
+    )
+
+    if st.button("🔍 Run Mann-Kendall Test", type="primary"):
+        with st.spinner(f"🔄 Running Mann-Kendall test on {aggregation} data..."):
+            try:
+                mk_results = analyzer.calculate_mann_kendall_trends(aggregation=aggregation)
+
+                if 'error' in mk_results:
+                    st.error(f"❌ {mk_results['error']}")
+                else:
+                    # Display interpretation
+                    st.markdown("#### 📊 Test Results")
+
+                    if aggregation in ['annual', 'monthly']:
+                        # Main results
+                        col1, col2, col3, col4 = st.columns(4)
+
+                        with col1:
+                            trend = mk_results.get('trend', 'N/A')
+                            trend_emoji = "📈" if trend == 'increasing' else "📉" if trend == 'decreasing' else "➡️"
+                            st.metric("Trend", f"{trend_emoji} {trend.capitalize()}")
+
+                        with col2:
+                            p_value = mk_results.get('p_value', 0)
+                            sig = "✅ Significant" if p_value < 0.05 else "⚠️ Not Significant"
+                            st.metric("Significance (α=0.05)", sig)
+
+                        with col3:
+                            slope = mk_results.get('slope', 0)
+                            slope_unit = mk_results.get('slope_unit', 'mm/yr')
+                            st.metric("Sen's Slope", f"{slope:.2f} {slope_unit}")
+
+                        with col4:
+                            tau = mk_results.get('tau', 0)
+                            st.metric("Kendall's Tau", f"{tau:.4f}")
+
+                        # Interpretation
+                        st.success(f"**Interpretation:** {mk_results.get('interpretation', '')}")
+
+                        # Statistical details
+                        with st.expander("📊 Statistical Details"):
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.metric("p-value", f"{mk_results.get('p_value', 0):.6f}")
+                                st.metric("Series Length", mk_results.get('series_length', 0))
+                            with col2:
+                                st.metric("z-score", f"{mk_results.get('z_score', 0):.4f}")
+
+                        # Visualization
+                        mk_plot = analyzer.create_mann_kendall_plot(mk_results)
+                        st.plotly_chart(mk_plot, use_container_width=True)
+
+                    elif aggregation == 'seasonal':
+                        # Seasonal trends
+                        seasonal_trends = mk_results.get('seasonal_trends', {})
+
+                        st.markdown("#### Seasonal Trend Summary")
+                        for season, results in seasonal_trends.items():
+                            trend = results.get('trend', 'N/A')
+                            p_value = results.get('p_value', 1)
+                            slope = results.get('slope', 0)
+                            sig = results.get('significance', 'not significant')
+
+                            trend_emoji = "📈" if trend == 'increasing' else "📉" if trend == 'decreasing' else "➡️"
+                            sig_emoji = "✅" if sig == 'significant' else "⚠️"
+
+                            st.markdown(f"""
+                            **{season}:** {trend_emoji} {trend.capitalize()} {sig_emoji} ({sig})
+                            Sen's Slope: {slope:.2f} mm/year | p-value: {p_value:.4f}
+                            """)
+
+                    # Educational content
+                    with st.expander("📚 Understanding Mann-Kendall Results"):
+                        st.markdown("""
+                        **Key Concepts:**
+
+                        **Trend Direction:**
+                        - **Increasing**: Values tend to increase over time
+                        - **Decreasing**: Values tend to decrease over time
+                        - **No trend**: No consistent monotonic pattern
+
+                        **Statistical Significance (p-value):**
+                        - p < 0.05: Statistically significant (95% confidence)
+                        - p < 0.01: Highly significant (99% confidence)
+                        - p ≥ 0.05: Not statistically significant
+
+                        **Sen's Slope:**
+                        - Median of all pairwise slopes
+                        - Magnitude of the trend (mm/year or mm/month)
+                        - Robust to outliers
+
+                        **Kendall's Tau (τ):**
+                        - Correlation coefficient between -1 and 1
+                        - τ > 0: Positive correlation (increasing trend)
+                        - τ < 0: Negative correlation (decreasing trend)
+                        - |τ| close to 1: Strong monotonic relationship
+                        """)
+
+            except Exception as e:
+                st.error(f"❌ Error: {str(e)}")
+
+
+def _render_pettitt_analysis():
+    """Render Pettitt change point analysis"""
+    st.markdown("### 🔄 Pettitt Change Point Test")
+
+    st.info("""
+    **What is Pettitt Test?**
+    A non-parametric test for detecting a single change point in a time series.
+    Identifies when the statistical properties of precipitation changed significantly.
+    """)
+
+    analyzer = st.session_state.hydro_analyzer
+
+    # Aggregation selection
+    aggregation = st.radio(
+        "Select temporal aggregation:",
+        options=['annual', 'monthly'],
+        format_func=lambda x: x.capitalize(),
+        horizontal=True,
+        key="pettitt_aggregation"
+    )
+
+    if st.button("🔍 Run Pettitt Test", type="primary"):
+        with st.spinner(f"🔄 Running Pettitt test on {aggregation} data..."):
+            try:
+                pettitt_results = analyzer.calculate_pettitt_test(aggregation=aggregation)
+
+                if 'error' in pettitt_results:
+                    st.error(f"❌ {pettitt_results['error']}")
+                else:
+                    # Display interpretation
+                    st.markdown("#### 📊 Change Point Detection Results")
+
+                    is_significant = pettitt_results.get('is_significant', False)
+
+                    if is_significant:
+                        st.success(f"**✅ {pettitt_results.get('interpretation', '')}**")
+                    else:
+                        st.info(f"**ℹ️ {pettitt_results.get('interpretation', '')}**")
+
+                    # Main metrics
+                    col1, col2, col3, col4 = st.columns(4)
+
+                    with col1:
+                        change_date = pettitt_results.get('change_point_date', 'N/A')
+                        st.metric("Change Point", change_date)
+
+                    with col2:
+                        p_value = pettitt_results.get('p_value', 0)
+                        sig = "✅ Significant" if p_value < 0.05 else "⚠️ Not Significant"
+                        st.metric("Significance", sig)
+
+                    with col3:
+                        change_mag = pettitt_results.get('change_magnitude_percent', 0)
+                        direction = "📈" if change_mag > 0 else "📉"
+                        st.metric("Change Magnitude", f"{direction} {abs(change_mag):.1f}%")
+
+                    with col4:
+                        u_stat = pettitt_results.get('U_statistic', 0)
+                        st.metric("U Statistic", f"{u_stat:.1f}")
+
+                    # Before/After comparison
+                    st.markdown("#### 📊 Before vs After Comparison")
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        st.markdown("**Before Change Point:**")
+                        mean_before = pettitt_results.get('mean_before', 0)
+                        std_before = pettitt_results.get('std_before', 0)
+                        st.metric("Mean Precipitation", f"{mean_before:.1f} mm")
+                        st.metric("Std Deviation", f"{std_before:.1f} mm")
+
+                    with col2:
+                        st.markdown("**After Change Point:**")
+                        mean_after = pettitt_results.get('mean_after', 0)
+                        std_after = pettitt_results.get('std_after', 0)
+                        st.metric("Mean Precipitation", f"{mean_after:.1f} mm")
+                        st.metric("Std Deviation", f"{std_after:.1f} mm")
+
+                    # Visualization
+                    pettitt_plot = analyzer.create_pettitt_plot(pettitt_results)
+                    st.plotly_chart(pettitt_plot, use_container_width=True)
+
+                    # Educational content
+                    with st.expander("📚 Understanding Pettitt Test"):
+                        st.markdown("""
+                        **What does a change point mean?**
+
+                        A change point indicates a significant shift in the statistical properties of the time series.
+                        This could be due to:
+                        - Climate change effects
+                        - Land use changes (urbanization, deforestation)
+                        - Changes in measurement methods
+                        - Natural climate variability (regime shifts)
+
+                        **How to interpret:**
+                        - **Significant change (p < 0.05)**: Strong evidence of a shift
+                        - **Positive change**: Precipitation increased after the change point
+                        - **Negative change**: Precipitation decreased after the change point
+
+                        **U Statistic:**
+                        - Measures the magnitude of the change
+                        - Higher values = stronger evidence of change
+                        - Maximum absolute value indicates the most likely change point
+                        """)
+
+            except Exception as e:
+                st.error(f"❌ Error: {str(e)}")
+
+
+def _render_flow_duration_and_spells():
+    """Render Flow Duration Curve and Wet/Dry Spell analysis"""
+    st.markdown("### 💧 Flow Duration & Wet/Dry Spell Analysis")
+
+    analyzer = st.session_state.hydro_analyzer
+
+    # Create two sub-sections
+    analysis_type = st.radio(
+        "Select analysis type:",
+        options=['Flow Duration Curve', 'Wet/Dry Spell Analysis'],
+        horizontal=True
+    )
+
+    if analysis_type == 'Flow Duration Curve':
+        st.info("""
+        **What is a Flow Duration Curve (FDC)?**
+        Shows the percentage of time that precipitation exceeds a given value.
+        Essential for understanding variability and identifying high/low precipitation regimes.
+        """)
+
+        if st.button("📊 Calculate Flow Duration Curve", type="primary"):
+            with st.spinner("🔄 Calculating Flow Duration Curve..."):
+                try:
+                    fdc_results = analyzer.calculate_flow_duration_curve()
+
+                    if 'error' in fdc_results:
+                        st.error(f"❌ {fdc_results['error']}")
+                    else:
+                        # Key percentiles
+                        st.markdown("#### 📊 Key Percentiles")
+                        percentiles = fdc_results.get('percentiles', {})
+
+                        col1, col2, col3, col4 = st.columns(4)
+                        with col1:
+                            st.metric("Q10 (High Flow)", f"{percentiles.get('Q10', 0):.1f} mm")
+                        with col2:
+                            st.metric("Q50 (Median)", f"{percentiles.get('Q50', 0):.1f} mm")
+                        with col3:
+                            st.metric("Q90 (Low Flow)", f"{percentiles.get('Q90', 0):.1f} mm")
+                        with col4:
+                            wet_days = fdc_results.get('num_wet_days', 0)
+                            total_days = fdc_results.get('total_days', 1)
+                            wet_pct = (wet_days / total_days) * 100
+                            st.metric("Wet Days", f"{wet_pct:.1f}%")
+
+                        # Visualization
+                        fdc_plot = analyzer.create_flow_duration_curve_plot(fdc_results)
+                        st.plotly_chart(fdc_plot, use_container_width=True)
+
+                        with st.expander("📚 Understanding Flow Duration Curves"):
+                            st.markdown("""
+                            **How to Read FDC:**
+                            - **X-axis**: Percentage of time a value is exceeded
+                            - **Y-axis**: Precipitation value (mm/day)
+                            - **Steep curve**: High variability
+                            - **Flat curve**: Consistent precipitation
+
+                            **Key Points:**
+                            - **Q10**: Exceeded 10% of time (high precipitation regime)
+                            - **Q50**: Exceeded 50% of time (median value)
+                            - **Q90**: Exceeded 90% of time (low precipitation regime)
+                            """)
+
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
+
+    else:  # Wet/Dry Spell Analysis
+        st.info("""
+        **What is Wet/Dry Spell Analysis?**
+        Analyzes consecutive periods of wet and dry days.
+        Important for drought assessment and agricultural planning.
+        """)
+
+        # Threshold selection
+        wet_threshold = st.slider(
+            "Wet day threshold (mm):",
+            min_value=0.1,
+            max_value=10.0,
+            value=1.0,
+            step=0.1,
+            help="Days with precipitation >= this value are considered 'wet'"
+        )
+
+        if st.button("📊 Analyze Wet/Dry Spells", type="primary"):
+            with st.spinner("🔄 Analyzing wet and dry spells..."):
+                try:
+                    spell_results = analyzer.calculate_wet_dry_spell_analysis(wet_threshold=wet_threshold)
+
+                    if 'error' in spell_results:
+                        st.error(f"❌ {spell_results['error']}")
+                    else:
+                        # Summary metrics
+                        st.markdown("#### 📊 Spell Statistics Summary")
+
+                        col1, col2 = st.columns(2)
+
+                        with col1:
+                            st.markdown("**☀️ Dry Spells**")
+                            dry_stats = spell_results.get('dry_spells', {})
+                            st.metric("Maximum Length", f"{dry_stats.get('max_length', 0)} days")
+                            st.metric("Average Length", f"{dry_stats.get('mean_length', 0):.1f} days")
+                            st.metric("Number of Spells", dry_stats.get('num_spells', 0))
+
+                        with col2:
+                            st.markdown("**🌧️ Wet Spells**")
+                            wet_stats = spell_results.get('wet_spells', {})
+                            st.metric("Maximum Length", f"{wet_stats.get('max_length', 0)} days")
+                            st.metric("Average Length", f"{wet_stats.get('mean_length', 0):.1f} days")
+                            st.metric("Number of Spells", wet_stats.get('num_spells', 0))
+
+                        # Drought risk
+                        st.markdown("#### ⚠️ Drought Risk Assessment")
+                        drought_risk = spell_results.get('drought_risk', {})
+
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            prob_7 = drought_risk.get('probability_dry_spell_gt_7days', 0) * 100
+                            st.metric("Dry Spell > 7 days", f"{prob_7:.1f}%")
+                        with col2:
+                            prob_14 = drought_risk.get('probability_dry_spell_gt_14days', 0) * 100
+                            st.metric("Dry Spell > 14 days", f"{prob_14:.1f}%")
+                        with col3:
+                            prob_30 = drought_risk.get('probability_dry_spell_gt_30days', 0) * 100
+                            st.metric("Dry Spell > 30 days", f"{prob_30:.1f}%")
+
+                        # Visualization
+                        spell_plot = analyzer.create_wet_dry_spell_plot(spell_results)
+                        st.plotly_chart(spell_plot, use_container_width=True)
+
+                        with st.expander("📚 Understanding Spell Analysis"):
+                            st.markdown("""
+                            **Applications:**
+                            - **Agriculture**: Identify drought-prone periods
+                            - **Water Resources**: Assess water availability reliability
+                            - **Irrigation Planning**: Determine irrigation frequency needs
+                            - **Drought Monitoring**: Track dry period severity
+
+                            **Interpreting Results:**
+                            - **Long dry spells**: High drought risk
+                            - **Short wet spells**: Irregular rainfall pattern
+                            - **High probability of 30+ day dry spells**: Significant drought concern
+                            """)
+
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
+
+
 def _reset_hydrology_configuration():
     """Reset hydrology configuration"""
     keys_to_reset = [
         'hydro_geometry', 'hydro_area_km2', 'hydro_dataset_info',
         'hydro_start_date', 'hydro_end_date', 'hydro_precipitation_data',
-        'hydro_run_analysis', 'hydro_show_sample'
+        'hydro_run_analysis', 'hydro_show_sample', 'hydro_analyzer'
     ]
 
     for key in keys_to_reset:
