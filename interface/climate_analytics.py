@@ -2149,6 +2149,27 @@ def _display_geemap_visualization(results):
         st.warning("⚠️ No spatial data available for visualization. Image collections were not generated.")
         return
 
+    # Ensure Earth Engine is initialized with proper project ID
+    if not st.session_state.get('auth_complete', False):
+        st.error("❌ Earth Engine not authenticated. Please authenticate first.")
+        return
+
+    project_id = st.session_state.get('project_id')
+    if not project_id:
+        st.error("❌ No project ID found. Please re-authenticate.")
+        return
+
+    # Verify Earth Engine is initialized
+    try:
+        ee.Number(1).getInfo()
+    except Exception as e:
+        try:
+            ee.Initialize(project=project_id)
+        except Exception as init_error:
+            st.error(f"❌ Earth Engine initialization failed: {str(init_error)}")
+            st.info("💡 Please try re-authenticating with your Earth Engine credentials.")
+            return
+
     image_collections = results['image_collections']
     geometry = results.get('geometry')
 
@@ -2156,7 +2177,12 @@ def _display_geemap_visualization(results):
     temporal_resolution = st.session_state.get('climate_temporal_resolution', 'yearly')
 
     # Create geemap Map
-    Map = geemap.Map()
+    try:
+        Map = geemap.Map()
+    except Exception as e:
+        st.error(f"❌ Error creating geemap: {str(e)}")
+        st.warning("⚠️ This may be a version compatibility issue. Ensure geemap is up to date.")
+        return
 
     # Center map on geometry if available
     if geometry:

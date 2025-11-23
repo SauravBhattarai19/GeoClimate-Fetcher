@@ -845,17 +845,29 @@ def _render_geemap_preview():
     st.markdown("### 🗺️ Interactive Map Preview")
     st.info("💡 Preview your data before downloading. Use layer controls to toggle between time periods.")
 
-    # Ensure Earth Engine is initialized
+    # Ensure Earth Engine is initialized with proper project ID
+    # Check if already authenticated in session state
+    if not st.session_state.get('auth_complete', False):
+        st.error("❌ Earth Engine not authenticated. Please authenticate first.")
+        return
+
+    # Get project ID from session state
+    project_id = st.session_state.get('project_id')
+    if not project_id:
+        st.error("❌ No project ID found. Please re-authenticate.")
+        return
+
+    # Verify Earth Engine is initialized - if not, reinitialize with project ID
     try:
-        if not ee.data._initialized:
-            ee.Initialize()
-    except:
-        # For newer EE versions, just try to initialize
+        # Quick test to see if EE is ready
+        ee.Number(1).getInfo()
+    except Exception as e:
+        # Not initialized or credentials issue - try to reinitialize
         try:
-            ee.Initialize()
+            ee.Initialize(project=project_id)
         except Exception as init_error:
             st.error(f"❌ Earth Engine initialization failed: {str(init_error)}")
-            st.info("💡 Please check your Earth Engine authentication.")
+            st.info("💡 Please try re-authenticating with your Earth Engine credentials.")
             return
 
     # Get all selections from session state
