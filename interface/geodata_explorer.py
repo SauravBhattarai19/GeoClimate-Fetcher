@@ -845,6 +845,19 @@ def _render_geemap_preview():
     st.markdown("### 🗺️ Interactive Map Preview")
     st.info("💡 Preview your data before downloading. Use layer controls to toggle between time periods.")
 
+    # Ensure Earth Engine is initialized
+    try:
+        if not ee.data._initialized:
+            ee.Initialize()
+    except:
+        # For newer EE versions, just try to initialize
+        try:
+            ee.Initialize()
+        except Exception as init_error:
+            st.error(f"❌ Earth Engine initialization failed: {str(init_error)}")
+            st.info("💡 Please check your Earth Engine authentication.")
+            return
+
     # Get all selections from session state
     geometry = st.session_state.geometry_handler.current_geometry
     selected_dataset = st.session_state.selected_dataset
@@ -934,8 +947,17 @@ def _render_geemap_preview():
                     num_images = collection.size().getInfo()
                     st.success(f"✅ Sampled {num_images} representative images")
 
-        # Create geemap Map
-        Map = geemap.Map()
+        # Create geemap Map with error handling
+        try:
+            Map = geemap.Map()
+        except AttributeError as e:
+            # Handle geemap version compatibility issues
+            st.error(f"❌ geemap Map creation failed: {str(e)}")
+            st.warning("⚠️ This may be a version compatibility issue. Try updating geemap: `pip install --upgrade geemap`")
+            return
+        except Exception as e:
+            st.error(f"❌ Error creating map: {str(e)}")
+            return
 
         # Center map on geometry
         try:
