@@ -1130,6 +1130,10 @@ class HydrologyAnalyzer:
             # Seasonal Mann-Kendall (accounts for seasonality)
             mk_result = mk.seasonal_test(monthly_series.values, period=12)
 
+            # Convert timestamps to strings for JSON compatibility
+            dates_list = [d.strftime('%Y-%m-%d') if isinstance(d, pd.Timestamp) else str(d)
+                         for d in monthly_series.index]
+
             results = {
                 'aggregation': 'monthly',
                 'series_length': len(monthly_series),
@@ -1141,7 +1145,7 @@ class HydrologyAnalyzer:
                 'slope_unit': 'mm/month',
                 'significance': 'significant (α=0.05)' if mk_result.p < 0.05 else 'not significant',
                 'interpretation': self._interpret_mann_kendall(mk_result.trend, mk_result.p, mk_result.slope),
-                'dates': monthly_series.index.tolist(),
+                'dates': dates_list,
                 'values': monthly_series.values.tolist()
             }
 
@@ -1256,7 +1260,9 @@ class HydrologyAnalyzer:
         if aggregation == 'annual':
             change_point_date = int(df_agg.iloc[K]['date'].year)
         else:
-            change_point_date = df_agg.iloc[K]['date']
+            # Convert timestamp to string
+            date_val = df_agg.iloc[K]['date']
+            change_point_date = date_val.strftime('%Y-%m-%d') if isinstance(date_val, pd.Timestamp) else str(date_val)
 
         results = {
             'aggregation': aggregation,
@@ -1765,7 +1771,10 @@ class HydrologyAnalyzer:
                 x_values = mk_results.get('years', [])
                 x_title = 'Year'
             else:
-                x_values = mk_results.get('dates', [])
+                # Convert timestamps to strings for plotting
+                x_values_raw = mk_results.get('dates', [])
+                x_values = [pd.to_datetime(d).strftime('%Y-%m') if isinstance(d, (str, pd.Timestamp)) else str(d)
+                           for d in x_values_raw]
                 x_title = 'Date'
 
             y_values = mk_results.get('values', [])
