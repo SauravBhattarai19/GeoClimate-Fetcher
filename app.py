@@ -488,19 +488,98 @@ from geoclimate_fetcher.core import (
     authenticate,
     MetadataCatalog,
     GeometryHandler,
-    GEEExporter, 
+    GEEExporter,
     ImageCollectionFetcher,
     StaticRasterFetcher,
     GeometrySelectionWidget
 )
 
+# Memory optimization: Use singleton pattern for MetadataCatalog
+from geoclimate_fetcher.core.metadata import get_metadata_catalog
+
 # Utility functions moved to app_utils.py to avoid circular imports
 
-# Initialize session state
-if 'app_mode' not in st.session_state:
-    st.session_state.app_mode = None  # None, 'data_explorer', 'climate_analytics', 'hydrology'
-if 'auth_complete' not in st.session_state:
-    st.session_state.auth_complete = False
+# =============================================================================
+# SESSION STATE INITIALIZATION
+# Memory Optimization: Initialize only essential state variables upfront
+# Heavy objects (like GeometryHandler) are created lazily when needed
+# =============================================================================
+
+def _init_essential_session_state():
+    """Initialize only essential session state variables."""
+    # Core app state
+    defaults = {
+        'app_mode': None,  # None, 'data_explorer', 'climate_analytics', 'hydrology'
+        'auth_complete': False,
+        'project_id': None,
+    }
+
+    for key, default_value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = default_value
+
+
+def _init_module_session_state(module_name: str):
+    """
+    Initialize session state for a specific module.
+    This is called lazily when the module is actually accessed.
+    """
+    if module_name == 'data_explorer':
+        defaults = {
+            'geometry_complete': False,
+            'dataset_selected': False,
+            'bands_selected': False,
+            'dates_selected': False,
+            'current_dataset': None,
+            'selected_bands': [],
+            'start_date': None,
+            'end_date': None,
+            'download_path': None,
+            'drawn_features': None,
+        }
+        # Only create GeometryHandler when actually needed
+        if 'geometry_handler' not in st.session_state:
+            st.session_state.geometry_handler = GeometryHandler()
+
+    elif module_name == 'climate_analytics':
+        defaults = {
+            'climate_step': 1,
+            'climate_analysis_type': None,
+            'climate_geometry_complete': False,
+            'climate_dataset_selected': False,
+            'climate_date_range_set': False,
+            'climate_indices_selected': False,
+            'climate_selected_indices': [],
+            'climate_start_date': None,
+            'climate_end_date': None,
+            'climate_analysis_complete': False,
+        }
+        # Only create GeometryHandler when actually needed
+        if 'climate_geometry_handler' not in st.session_state:
+            st.session_state.climate_geometry_handler = GeometryHandler()
+
+    elif module_name == 'hydrology':
+        defaults = {
+            'hydro_geometry_complete': False,
+            'hydro_dataset_selected': False,
+            'hydro_dates_selected': False,
+            'hydro_current_dataset': None,
+            'hydro_precipitation_data': None,
+            'hydro_analysis_results': {},
+        }
+    else:
+        defaults = {}
+
+    for key, default_value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = default_value
+
+
+# Initialize essential state
+_init_essential_session_state()
+
+# Legacy session state initialization for backward compatibility
+# These will be lazily initialized when modules are accessed
 if 'geometry_complete' not in st.session_state:
     st.session_state.geometry_complete = False
 if 'dataset_selected' not in st.session_state:
@@ -517,14 +596,13 @@ if 'start_date' not in st.session_state:
     st.session_state.start_date = None
 if 'end_date' not in st.session_state:
     st.session_state.end_date = None
+# Lazy initialization for GeometryHandler - only create when accessed
 if 'geometry_handler' not in st.session_state:
-    st.session_state.geometry_handler = GeometryHandler()
+    st.session_state.geometry_handler = None  # Will be created on first access
 if 'download_path' not in st.session_state:
     st.session_state.download_path = None
 if 'drawn_features' not in st.session_state:
     st.session_state.drawn_features = None
-if 'project_id' not in st.session_state:
-    st.session_state.project_id = None
 
 # Climate Analytics session state
 if 'climate_step' not in st.session_state:

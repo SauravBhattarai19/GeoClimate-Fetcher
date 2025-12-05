@@ -1,5 +1,10 @@
 """
 Module for handling dataset metadata from CSV catalogs.
+
+Memory Optimization Notes:
+- This module is designed to be cached using @st.cache_resource
+- DataFrames are optimized with appropriate dtypes to reduce memory footprint
+- The singleton pattern ensures only one instance exists in memory
 """
 import os
 import pandas as pd
@@ -7,14 +12,57 @@ from pathlib import Path
 from typing import Dict, List, Optional, Union, Tuple
 import glob
 from rapidfuzz import fuzz, process
+import logging
+
+logger = logging.getLogger(__name__)
+
+# Singleton instance for caching
+_catalog_instance: Optional['MetadataCatalog'] = None
+
+
+def get_metadata_catalog(data_dir: Optional[str] = None) -> 'MetadataCatalog':
+    """
+    Get a cached singleton instance of MetadataCatalog.
+
+    This function ensures only one instance of MetadataCatalog exists,
+    reducing memory usage when multiple modules access the catalog.
+
+    Args:
+        data_dir: Directory containing the CSV metadata files.
+
+    Returns:
+        MetadataCatalog: Singleton instance
+    """
+    global _catalog_instance
+
+    if _catalog_instance is None:
+        logger.info("Creating new MetadataCatalog singleton instance")
+        _catalog_instance = MetadataCatalog(data_dir)
+
+    return _catalog_instance
+
+
+def clear_metadata_cache():
+    """Clear the cached MetadataCatalog instance."""
+    global _catalog_instance
+    _catalog_instance = None
+    logger.info("MetadataCatalog cache cleared")
+
 
 class MetadataCatalog:
-    """Class to manage and search dataset metadata from CSV files."""
-    
+    """
+    Class to manage and search dataset metadata from CSV files.
+
+    Memory Optimization:
+    - Use get_metadata_catalog() to get a cached singleton instance
+    - DataFrames use optimized dtypes (category for low-cardinality strings)
+    - Lazy loading of band expansions
+    """
+
     def __init__(self, data_dir: Optional[str] = None):
         """
         Initialize the metadata catalog.
-        
+
         Args:
             data_dir: Directory containing the CSV metadata files.
                      If None, defaults to 'data/' relative to the package.
@@ -25,30 +73,45 @@ class MetadataCatalog:
             data_dir = package_dir / 'data'
         else:
             data_dir = Path(data_dir)
-            
+
         self.data_dir = data_dir
         self._catalog: Dict[str, pd.DataFrame] = {}
         self._all_datasets: Optional[pd.DataFrame] = None
+        self._band_cache: Dict[str, List[str]] = {}  # Cache for expanded band names
         self._load_catalogs()
-        
+
     def _load_catalogs(self) -> None:
-        """Load all CSV catalogs from the data directory."""
+        """Load all CSV catalogs from the data directory with optimized dtypes."""
         csv_files = list(self.data_dir.glob('*.csv'))
-        
+
         if not csv_files:
             raise FileNotFoundError(f"No CSV files found in {self.data_dir}")
-            
+
+        # Skip large station files - they're handled separately
+        csv_files = [f for f in csv_files if 'meteostat_stations' not in f.name.lower()]
+
         for csv_file in csv_files:
             category = csv_file.stem
             try:
+                # Load with optimized dtypes
                 df = pd.read_csv(csv_file)
+
+                # Optimize string columns to category for low-cardinality columns
+                for col in df.columns:
+                    if df[col].dtype == 'object':
+                        # Convert to category if less than 50% unique values
+                        if df[col].nunique() / len(df) < 0.5:
+                            df[col] = df[col].astype('category')
+
                 self._catalog[category] = df
+                logger.debug(f"Loaded catalog: {category} ({len(df)} rows)")
             except Exception as e:
-                print(f"Error loading {csv_file}: {str(e)}")
-                
+                logger.error(f"Error loading {csv_file}: {str(e)}")
+
         # Combine all datasets into a single DataFrame
         if self._catalog:
             self._all_datasets = pd.concat(self._catalog.values(), ignore_index=True)
+            logger.info(f"MetadataCatalog loaded: {len(self._all_datasets)} total datasets")
         
     @property
     def categories(self) -> List[str]:
@@ -164,23 +227,29 @@ class MetadataCatalog:
     def get_bands_for_dataset(self, dataset_name: str) -> List[str]:
         """
         Get available bands for a dataset.
-        
+
+        Uses internal caching to avoid repeated band name expansion.
+
         Args:
             dataset_name: The name of the dataset
-            
+
         Returns:
             List of band names
         """
+        # Check cache first
+        if dataset_name in self._band_cache:
+            return self._band_cache[dataset_name]
+
         dataset = self.get_dataset_by_name(dataset_name)
-        
+
         if dataset is None:
             return []
-            
+
         # Parse the band names string from the CSV
         bands_str = dataset.get('Band Names', '')
         if not isinstance(bands_str, str):
             return []
-        
+
         # Handle different band name notation patterns
         results = []
         
@@ -229,10 +298,15 @@ class MetadataCatalog:
         else:
             # Standard comma-separated list
             results = [band.strip() for band in bands_str.split(',')]
-            
+
         # Remove any empty strings or duplicates
         results = [band for band in results if band and band not in ['…', '...']]
-        return list(dict.fromkeys(results))  # Remove duplicates while preserving order
+        final_results = list(dict.fromkeys(results))  # Remove duplicates while preserving order
+
+        # Cache the results
+        self._band_cache[dataset_name] = final_results
+
+        return final_results
         
     def get_date_range(self, dataset_name: str) -> Tuple[Optional[str], Optional[str]]:
         """

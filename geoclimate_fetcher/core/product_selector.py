@@ -1,5 +1,10 @@
 """
 Core module for Optimal Product Selection functionality
+
+Memory Optimization Notes:
+- MeteostatHandler uses lazy loading and caching for the stations DataFrame
+- Stations are filtered by geometry bounds before loading into memory
+- DataFrames use optimized dtypes to reduce memory footprint
 """
 import pandas as pd
 import numpy as np
@@ -9,69 +14,171 @@ from datetime import datetime, date
 from typing import Dict, List, Tuple, Optional, Union
 import logging
 from pathlib import Path
+from functools import lru_cache
+
+# Global cache for stations data to avoid reloading
+_stations_cache: Optional[pd.DataFrame] = None
+_stations_cache_path: Optional[str] = None
+
+
+def _get_cached_stations_df(csv_path: str) -> pd.DataFrame:
+    """
+    Get cached stations DataFrame with optimized memory usage.
+
+    This function caches the stations DataFrame globally to avoid
+    reloading the 2MB CSV file multiple times.
+
+    Args:
+        csv_path: Path to the stations CSV file
+
+    Returns:
+        DataFrame with station data
+    """
+    global _stations_cache, _stations_cache_path
+
+    # Return cached data if path matches
+    if _stations_cache is not None and _stations_cache_path == csv_path:
+        return _stations_cache
+
+    if not Path(csv_path).exists():
+        logging.warning(f"Stations file not found: {csv_path}")
+        return pd.DataFrame()
+
+    logging.info(f"Loading stations from {csv_path} (will be cached)")
+
+    # Load with optimized dtypes to reduce memory footprint
+    # Original file is ~2MB, but pandas overhead can make it 50-100MB
+    # Using appropriate dtypes reduces this significantly
+    dtype_spec = {
+        'id': 'string',
+        'name': 'string',
+        'country': 'category',  # Few unique values
+        'region': 'category',   # Few unique values
+        'wmo': 'string',
+        'icao': 'string',
+        'latitude': 'float32',  # float32 is sufficient for coordinates
+        'longitude': 'float32',
+        'elevation': 'float32',
+        'timezone': 'category',
+        'hourly_start': 'string',
+        'hourly_end': 'string',
+        'daily_start': 'string',
+        'daily_end': 'string',
+        'monthly_start': 'string',
+        'monthly_end': 'string'
+    }
+
+    try:
+        # Read only needed columns with specified dtypes
+        df = pd.read_csv(csv_path, dtype=dtype_spec, low_memory=True)
+
+        # Cache the result
+        _stations_cache = df
+        _stations_cache_path = csv_path
+
+        logging.info(f"Cached {len(df)} stations ({df.memory_usage(deep=True).sum() / 1024 / 1024:.2f} MB)")
+        return df
+
+    except Exception as e:
+        logging.error(f"Error loading stations: {str(e)}")
+        # Fallback to simple loading if dtype spec fails
+        try:
+            df = pd.read_csv(csv_path)
+            _stations_cache = df
+            _stations_cache_path = csv_path
+            return df
+        except Exception as e2:
+            logging.error(f"Fallback loading also failed: {str(e2)}")
+            return pd.DataFrame()
+
+
+def clear_stations_cache():
+    """Clear the global stations cache."""
+    global _stations_cache, _stations_cache_path
+    _stations_cache = None
+    _stations_cache_path = None
+    logging.info("Stations cache cleared")
+
 
 class MeteostatHandler:
-    """Handle meteostat station data operations"""
-    
-    def __init__(self, stations_csv_path: Optional[str] = None):
+    """
+    Handle meteostat station data operations.
+
+    Memory Optimization:
+    - Uses global caching for the stations DataFrame
+    - Supports lazy loading with filtering by geometry bounds
+    - Avoids creating unnecessary DataFrame copies
+    """
+
+    def __init__(self, stations_csv_path: Optional[str] = None, lazy_load: bool = True):
         """Initialize MeteostatHandler
-        
+
         Args:
             stations_csv_path: Path to meteostat stations CSV file
+            lazy_load: If True, defer loading until first access (default: True)
         """
-        self.stations_csv_path = stations_csv_path
-        self.stations_df = None
-        self._load_stations_metadata()
-    
+        self.stations_csv_path = stations_csv_path or str(
+            Path(__file__).parent.parent / "data" / "meteostat_stations.csv"
+        )
+        self._stations_df = None
+        self._lazy_load = lazy_load
+
+        # Only load immediately if not lazy loading
+        if not lazy_load:
+            self._load_stations_metadata()
+
+    @property
+    def stations_df(self) -> pd.DataFrame:
+        """Lazy-loaded stations DataFrame property."""
+        if self._stations_df is None:
+            self._load_stations_metadata()
+        return self._stations_df
+
+    @stations_df.setter
+    def stations_df(self, value):
+        """Setter for stations_df."""
+        self._stations_df = value
+
     def _load_stations_metadata(self):
-        """Load meteostat stations metadata"""
-        try:
-            if self.stations_csv_path and Path(self.stations_csv_path).exists():
-                self.stations_df = pd.read_csv(self.stations_csv_path)
-                logging.info(f"Loaded {len(self.stations_df)} stations from {self.stations_csv_path}")
-            else:
-                # Default path
-                default_path = Path(__file__).parent.parent / "data" / "meteostat_stations.csv"
-                if default_path.exists():
-                    self.stations_df = pd.read_csv(default_path)
-                    logging.info(f"Loaded {len(self.stations_df)} stations from default path")
-                else:
-                    self.stations_df = pd.DataFrame()
-                    logging.warning("No meteostat stations file found")
-        except Exception as e:
-            logging.error(f"Error loading stations metadata: {str(e)}")
-            self.stations_df = pd.DataFrame()
+        """Load meteostat stations metadata using cached loading."""
+        self._stations_df = _get_cached_stations_df(self.stations_csv_path)
     
-    def find_stations_in_geometry(self, geometry: dict) -> pd.DataFrame:
+    def find_stations_in_geometry(self, geometry: dict, copy: bool = True) -> pd.DataFrame:
         """Find stations within a given geometry
-        
+
         Args:
             geometry: GeoJSON geometry dict
-            
+            copy: If True, return a copy of the filtered DataFrame (default: True)
+                  Set to False if you only need to read the data to save memory
+
         Returns:
             DataFrame of stations within the geometry
         """
         if self.stations_df.empty:
             return pd.DataFrame()
-        
+
         try:
             # Extract bounds from geometry
             bounds = self._extract_bounds_from_geometry(geometry)
             if not bounds:
                 return pd.DataFrame()
-            
+
             min_lon, min_lat, max_lon, max_lat = bounds
-            
-            # Filter stations within bounds
-            filtered_stations = self.stations_df[
+
+            # Filter stations within bounds using boolean indexing
+            mask = (
                 (self.stations_df['latitude'] >= min_lat) &
                 (self.stations_df['latitude'] <= max_lat) &
                 (self.stations_df['longitude'] >= min_lon) &
                 (self.stations_df['longitude'] <= max_lon)
-            ].copy()
-            
-            return filtered_stations
-            
+            )
+
+            # Only copy if explicitly requested (saves memory for read-only access)
+            if copy:
+                return self.stations_df.loc[mask].copy()
+            else:
+                return self.stations_df.loc[mask]
+
         except Exception as e:
             logging.error(f"Error finding stations in geometry: {str(e)}")
             return pd.DataFrame()

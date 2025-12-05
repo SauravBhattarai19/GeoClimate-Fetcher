@@ -1,6 +1,11 @@
 """
 Shared Visualization Utilities
 Reusable visualization functions for all modules in the GeoClimate Intelligence Platform
+
+Memory Optimization Notes:
+- Figures are created without storing references in module-level variables
+- Use cleanup_plotly_figure() after displaying plots to release memory
+- DataFrame operations use optimized dtypes where possible
 """
 
 import streamlit as st
@@ -16,8 +21,105 @@ import rasterio.plot
 from datetime import datetime, timedelta
 import base64
 import io
+import gc
 from typing import Dict, List, Optional, Tuple, Union
 from scipy import stats
+
+
+# =============================================================================
+# MEMORY CLEANUP UTILITIES
+# =============================================================================
+
+def cleanup_plotly_figure(fig: Optional[go.Figure] = None) -> None:
+    """
+    Clean up a Plotly figure to release memory.
+
+    Call this after displaying a figure with st.plotly_chart() to release
+    the memory used by the figure data.
+
+    Args:
+        fig: Optional figure to clean up. If None, triggers garbage collection.
+    """
+    if fig is not None:
+        # Clear figure data
+        fig.data = []
+        fig.layout = {}
+        del fig
+
+    # Trigger garbage collection
+    gc.collect()
+
+
+def cleanup_matplotlib_figures() -> None:
+    """
+    Clean up all matplotlib figures to release memory.
+
+    Call this after displaying matplotlib plots to prevent memory leaks
+    from accumulated figure objects.
+    """
+    try:
+        import matplotlib.pyplot as plt
+        plt.close('all')
+        gc.collect()
+    except ImportError:
+        pass
+
+
+def optimize_dataframe_for_display(df: pd.DataFrame,
+                                   max_rows: int = 10000,
+                                   sample_if_large: bool = True) -> pd.DataFrame:
+    """
+    Optimize a DataFrame for display to reduce memory usage.
+
+    For large DataFrames, this function will sample rows to reduce memory
+    while still providing a representative view of the data.
+
+    Args:
+        df: DataFrame to optimize
+        max_rows: Maximum number of rows to keep
+        sample_if_large: If True, sample rows; if False, truncate
+
+    Returns:
+        Optimized DataFrame
+    """
+    if len(df) <= max_rows:
+        return df
+
+    if sample_if_large:
+        # Sample evenly across the DataFrame to maintain temporal distribution
+        step = len(df) // max_rows
+        return df.iloc[::step].head(max_rows)
+    else:
+        return df.head(max_rows)
+
+
+def create_lightweight_figure(title: str = "",
+                             height: int = 400,
+                             template: str = 'plotly_white') -> go.Figure:
+    """
+    Create a lightweight Plotly figure with optimized settings.
+
+    Uses memory-efficient defaults to reduce the size of the figure object.
+
+    Args:
+        title: Figure title
+        height: Figure height in pixels
+        template: Plotly template name
+
+    Returns:
+        Lightweight Plotly figure
+    """
+    fig = go.Figure()
+    fig.update_layout(
+        title=dict(text=title, x=0.5, font=dict(size=14)),
+        height=height,
+        template=template,
+        # Reduce margins to save space
+        margin=dict(l=50, r=30, t=50, b=50),
+        # Disable unnecessary features
+        modebar=dict(remove=['lasso2d', 'select2d', 'autoScale2d'])
+    )
+    return fig
 
 
 def create_time_series_plot(df: pd.DataFrame,

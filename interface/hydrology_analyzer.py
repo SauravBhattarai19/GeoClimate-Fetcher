@@ -112,11 +112,17 @@ def render_hydrology_analyzer():
                     st.info(f"{st.session_state.hydro_start_date} to\n{st.session_state.hydro_end_date}\n({years:.1f} years)")
                 with col3:
                     st.markdown("**Study Area:**")
-                    try:
-                        area_km2 = st.session_state.hydro_geometry.area().divide(1000000).getInfo()
+                    # Use cached area value to avoid repeated getInfo() calls
+                    if 'hydro_area_km2' in st.session_state and st.session_state.hydro_area_km2:
+                        area_km2 = st.session_state.hydro_area_km2
                         st.info(f"{area_km2:.2f} km²")
-                    except:
-                        st.info("Selected area")
+                    else:
+                        try:
+                            area_km2 = st.session_state.hydro_geometry.area().divide(1000000).getInfo()
+                            st.session_state.hydro_area_km2 = area_km2  # Cache it
+                            st.info(f"{area_km2:.2f} km²")
+                        except:
+                            st.info("Selected area")
 
 
 def _render_hydrology_geometry_selection():
@@ -125,11 +131,17 @@ def _render_hydrology_geometry_selection():
     if hasattr(st.session_state, 'hydro_geometry') and st.session_state.hydro_geometry is not None:
         geometry_ready = True
         st.success("✅ Area ready for analysis")
-        try:
-            area_km2 = st.session_state.hydro_geometry.area().divide(1000000).getInfo()
+        # Use cached area value to avoid repeated getInfo() calls
+        if 'hydro_area_km2' in st.session_state and st.session_state.hydro_area_km2:
+            area_km2 = st.session_state.hydro_area_km2
             st.metric("Current Area", f"{area_km2:.2f} km²")
-        except:
-            st.info("Geometry ready for analysis")
+        else:
+            try:
+                area_km2 = st.session_state.hydro_geometry.area().divide(1000000).getInfo()
+                st.session_state.hydro_area_km2 = area_km2  # Cache it
+                st.metric("Current Area", f"{area_km2:.2f} km²")
+            except:
+                st.info("Geometry ready for analysis")
 
         # Add reset button
         if st.button("🗑️ Reset Area", key="hydro_reset_geometry"):
