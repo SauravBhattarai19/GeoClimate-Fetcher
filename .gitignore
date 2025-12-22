@@ -86,6 +86,9 @@ dmypy.json
 credentials.json
 private-key.json
 
+# User registration data
+user_data.json
+
 # Data files and outputs
 tests/
 .vs/

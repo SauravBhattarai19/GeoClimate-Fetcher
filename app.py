@@ -56,10 +56,26 @@ except ImportError:
     cookie_manager = FallbackCookieManager()
     COOKIES_AVAILABLE = False
 
+# Get or generate secret key for token generation
+def get_secret_key():
+    """Get secret key from environment or generate a secure random one"""
+    # Try to get from environment variable first
+    secret = os.environ.get('GEOCLIMATE_SECRET_KEY')
+
+    if not secret:
+        # Generate a random secret for this session
+        # This will be different each time the app restarts, which is more secure
+        if 'session_secret' not in st.session_state:
+            import secrets
+            st.session_state.session_secret = secrets.token_hex(32)
+        secret = st.session_state.session_secret
+
+    return secret
+
 # Function to create a secure token
 def create_auth_token(project_id, timestamp):
     """Create a secure authentication token"""
-    secret = "geoclimate-fetcher-secret-key"  # Change this in production
+    secret = get_secret_key()
     token_string = f"{project_id}:{timestamp}:{secret}"
     return hashlib.sha256(token_string.encode()).hexdigest()
 
@@ -881,30 +897,42 @@ if not st.session_state.get('auth_complete', False):
 
     <div class="author-card">
         <h3 class="section-title">👨‍💻 Meet the Developer</h3>
-        <div class="developer-card">
-            <img src="https://github.com/sauravbhattarai19.png" alt="Saurav Bhattarai" class="developer-photo" onerror="this.style.display='none'">
-            <div class="developer-info">
-                <h2 class="developer-name">Saurav Bhattarai</h2>
-                <p class="developer-title">🏗️ Civil Engineer & Geospatial Developer</p>
-                <p class="developer-supervision">Under supervision of Dr. Rocky Talchabhadel & Dr. Nawaraj Pradhan</p>
-                <div class="contact-links">
-                    <a href="mailto:saurav.bhattarai.1999@gmail.com" class="contact-link">
-                        📧 Email
-                    </a>
-                    <a href="https://sauravbhattarai19.github.io/" target="_blank" class="contact-link">
-                        🌐 Website
-                    </a>
-                    <a href="https://github.com/sauravbhattarai19" target="_blank" class="contact-link">
-                        💻 GitHub
-                    </a>
-                    <a href="https://www.linkedin.com/in/saurav-bhattarai-7133a3176/" target="_blank" class="contact-link">
-                        💼 LinkedIn
-                    </a>
-                </div>
-            </div>
-        </div>
     </div>
     """, unsafe_allow_html=True)
+
+    # Developer card with photo using columns
+    col_photo, col_info = st.columns([1, 3])
+
+    with col_photo:
+        try:
+            st.markdown('<div style="text-align: center;">', unsafe_allow_html=True)
+            st.image("pictures/Saurav.png", width=120)
+            st.markdown('</div>', unsafe_allow_html=True)
+        except:
+            st.markdown("**👨‍💻**")
+
+    with col_info:
+        st.markdown("""
+        <div style="padding-left: 20px;">
+            <h2 style="color: #0a4d68; margin: 0 0 0.5rem 0; font-size: 1.8rem; font-weight: 700;">Saurav Bhattarai</h2>
+            <p style="color: #088395; font-size: 1.1rem; font-weight: 500; margin: 0 0 0.8rem 0;">🏗️ Civil Engineer & Geospatial Developer</p>
+            <p style="color: #666; font-size: 0.9rem; font-style: italic; margin: 0 0 1rem 0;">Under supervision of Dr. Rocky Talchabhadel & Dr. Nawaraj Pradhan</p>
+            <div style="display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 1rem;">
+                <a href="mailto:saurav.bhattarai.1999@gmail.com" class="contact-link" style="display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; background: linear-gradient(135deg, #088395, #05bfdb); color: white; text-decoration: none; border-radius: 25px; font-size: 0.9rem; font-weight: 500; box-shadow: 0 4px 10px rgba(8, 131, 149, 0.3);">
+                    📧 Email
+                </a>
+                <a href="https://sauravbhattarai19.github.io/" target="_blank" class="contact-link" style="display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; background: linear-gradient(135deg, #088395, #05bfdb); color: white; text-decoration: none; border-radius: 25px; font-size: 0.9rem; font-weight: 500; box-shadow: 0 4px 10px rgba(8, 131, 149, 0.3);">
+                    🌐 Website
+                </a>
+                <a href="https://github.com/sauravbhattarai19" target="_blank" class="contact-link" style="display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; background: linear-gradient(135deg, #088395, #05bfdb); color: white; text-decoration: none; border-radius: 25px; font-size: 0.9rem; font-weight: 500; box-shadow: 0 4px 10px rgba(8, 131, 149, 0.3);">
+                    💻 GitHub
+                </a>
+                <a href="https://www.linkedin.com/in/saurav-bhattarai-7133a3176/" target="_blank" class="contact-link" style="display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; background: linear-gradient(135deg, #088395, #05bfdb); color: white; text-decoration: none; border-radius: 25px; font-size: 0.9rem; font-weight: 500; box-shadow: 0 4px 10px rgba(8, 131, 149, 0.3);">
+                    💼 LinkedIn
+                </a>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
     st.markdown("""
     <style>
@@ -1013,6 +1041,23 @@ if not st.session_state.get('auth_complete', False):
 # AUTHENTICATED USER FLOW
 # =====================
 # If we reach here, user is authenticated
+
+# Check for admin dashboard access
+if st.query_params.get("admin") == "true":
+    from interface.admin_dashboard import render_admin_dashboard
+    render_admin_dashboard()
+    st.stop()
+
+# Check for user registration (one-time)
+from app_components.user_registration import UserRegistration
+
+user_reg = UserRegistration()
+if not user_reg.is_registered(st.session_state.project_id):
+    # Show registration form for new users
+    if not user_reg.render(st.session_state.project_id):
+        # User is filling the form, stop here
+        st.stop()
+    # Form submitted, will rerun and proceed
 
 # Global Navigation Bar - Available across all tools
 from app_components.global_navigation import render_global_navigation
