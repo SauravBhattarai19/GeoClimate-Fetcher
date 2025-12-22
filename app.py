@@ -622,16 +622,108 @@ if not st.session_state.get('auth_complete', False):
             # Stored auth failed, show login page
             print(f"Stored authentication failed: {str(e)}")
     
-    # Show dedicated login page
+    # Show dedicated login page with fancy hero
     st.markdown("""
-    <div style="text-align: center; padding: 3rem 2rem;
-         background: linear-gradient(135deg, #0a4d68 0%, #088395 50%, #05bfdb 100%);
-         border-radius: 20px; color: white; margin: 0.5rem 0 0.75rem 0;
-         box-shadow: 0 10px 40px rgba(8, 131, 149, 0.3);
-         border: 1px solid rgba(255, 255, 255, 0.1);">
-        <div style="font-size: 3rem; font-weight: bold; margin-bottom: 1rem;">🌍</div>
-        <h1 style="margin: 0 0 1rem 0; font-weight: 600; letter-spacing: 1px;">GeoClimate Intelligence Platform</h1>
-        <p style="font-size: 1.2rem; margin: 0; opacity: 0.95; font-weight: 300;">Please authenticate to access the platform</p>
+    <style>
+    @keyframes float {
+        0% { transform: translateY(0px) rotate(0deg); }
+        50% { transform: translateY(-20px) rotate(5deg); }
+        100% { transform: translateY(0px) rotate(0deg); }
+    }
+
+    @keyframes pulse {
+        0%, 100% { opacity: 0.6; }
+        50% { opacity: 1; }
+    }
+
+    @keyframes slideIn {
+        from { opacity: 0; transform: translateY(30px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    .auth-hero {
+        position: relative;
+        text-align: center;
+        padding: 4rem 2rem;
+        background: linear-gradient(135deg, #0a4d68 0%, #088395 50%, #05bfdb 100%);
+        border-radius: 25px;
+        color: white;
+        margin: 0.5rem 0 2rem 0;
+        box-shadow: 0 20px 60px rgba(8, 131, 149, 0.4);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        overflow: hidden;
+        animation: slideIn 0.8s ease-out;
+    }
+
+    .auth-hero::before {
+        content: '';
+        position: absolute;
+        top: -50%;
+        left: -50%;
+        width: 200%;
+        height: 200%;
+        background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+        animation: pulse 4s ease-in-out infinite;
+    }
+
+    .auth-hero-content {
+        position: relative;
+        z-index: 1;
+    }
+
+    .earth-icon {
+        font-size: 5rem;
+        margin-bottom: 1.5rem;
+        animation: float 6s ease-in-out infinite;
+        display: inline-block;
+        filter: drop-shadow(0 10px 20px rgba(0,0,0,0.3));
+    }
+
+    .auth-title {
+        font-size: 3.5rem;
+        font-weight: 700;
+        margin: 0 0 1rem 0;
+        letter-spacing: 2px;
+        background: linear-gradient(to right, #ffffff, #e0f7ff);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        text-shadow: 0 2px 10px rgba(0,0,0,0.2);
+    }
+
+    .auth-subtitle {
+        font-size: 1.3rem;
+        opacity: 0.95;
+        font-weight: 300;
+        letter-spacing: 1px;
+        margin-bottom: 2rem;
+    }
+
+    .auth-badge {
+        display: inline-block;
+        background: rgba(255, 255, 255, 0.2);
+        padding: 0.5rem 1.5rem;
+        border-radius: 50px;
+        font-size: 0.9rem;
+        font-weight: 500;
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        margin-top: 1rem;
+    }
+
+    @media (max-width: 768px) {
+        .auth-title { font-size: 2.5rem; }
+        .earth-icon { font-size: 4rem; }
+    }
+    </style>
+
+    <div class="auth-hero">
+        <div class="auth-hero-content">
+            <div class="earth-icon">🌍</div>
+            <h1 class="auth-title">GeoClimate Intelligence</h1>
+            <p class="auth-subtitle">Unlock Earth's climate data with advanced analytics</p>
+            <div class="auth-badge">🔐 Secure Authentication Required</div>
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -650,99 +742,267 @@ if not st.session_state.get('auth_complete', False):
     st.markdown("---")
     st.info("🌍 **Authenticate once to access all platform tools:** GEE Data Explorer, Climate Intelligence Hub, Hydrology Analyzer, Product Selector, and Data Visualizer. Your session will be remembered for seamless analysis workflows.")
 
-    # Author Section on Login Page
-    st.markdown("---")
-    st.markdown('<h3>👨‍💻 About the Developer</h3>', unsafe_allow_html=True)
-
-    # Create two columns for photo and info
-    col_photo, col_info = st.columns([1, 3])
-
-    with col_photo:
-        # Display developer photo
-        try:
-            st.image("pictures/Saurav.png", width=120, caption="Saurav Bhattarai")
-        except:
-            # Fallback if image not found
-            st.markdown("**👨‍💻 Saurav Bhattarai**")
-
-    with col_info:
-        st.markdown("""
-        <div class="developer-info" style="padding-left: 20px;">
-            <h4><strong>Saurav Bhattarai</strong></h4>
-            <p><strong>Civil Engineer & Geospatial Developer</strong></p>
-            <p>Under Supervision of Dr. Rocky Talchabhadel and Dr. Nawaraj Pradhan</p>
-            <p>📧 Email: <a href="mailto:saurav.bhattarai.1999@gmail.com">saurav.bhattarai.1999@gmail.com</a></p>
-            <p>🌐 Website: <a href="https://sauravbhattarai19.github.io/" target="_blank">sauravbhattarai19.github.io</a></p>
-            <p>🔗 <a href="https://github.com/sauravbhattarai19" target="_blank">GitHub</a> |
-               <a href="https://www.linkedin.com/in/saurav-bhattarai-7133a3176/" target="_blank">LinkedIn</a></p>
-        </div>
-        """, unsafe_allow_html=True)
-
+    # Enhanced Author Section on Login Page
     st.markdown("""
     <style>
-    .login-acknowledgments {
-        margin-top: 15px;
-        padding: 15px;
-        border-radius: 10px;
-        border: 1px solid rgba(255,255,255,0.2);
+    .author-card {
+        background: linear-gradient(135deg, #ffffff 0%, #f0f9ff 100%);
+        border-radius: 20px;
+        padding: 2.5rem;
+        margin: 2rem 0;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+        border: 1px solid rgba(8, 131, 149, 0.2);
+        transition: all 0.3s ease;
     }
 
-    /* Light mode styles */
-    @media (prefers-color-scheme: light) {
-        .login-acknowledgments {
-            background-color: rgba(255,255,255,0.8);
-            color: #333;
-            border-color: rgba(0,0,0,0.1);
-        }
-
-        .login-acknowledgments a {
-            color: #1f77b4;
-        }
-
-        .login-acknowledgments a:hover {
-            color: #0066cc;
-        }
-    }
-
-    /* Dark mode styles */
     @media (prefers-color-scheme: dark) {
-        .login-acknowledgments {
-            background-color: rgba(255,255,255,0.1);
-            color: #f0f0f0;
-            border-color: rgba(255,255,255,0.2);
-        }
-
-        .login-acknowledgments a {
-            color: #87ceeb;
-        }
-
-        .login-acknowledgments a:hover {
-            color: #add8e6;
+        .author-card {
+            background: linear-gradient(135deg, #1a2332 0%, #243447 100%);
+            border: 1px solid rgba(8, 131, 149, 0.4);
         }
     }
 
-    /* Default fallback for systems without preference */
-    .login-acknowledgments {
-        background-color: rgba(248, 249, 250, 0.9);
-        color: #495057;
+    .author-card:hover {
+        box-shadow: 0 15px 50px rgba(8, 131, 149, 0.2);
+        transform: translateY(-5px);
     }
 
-    .login-acknowledgments a {
-        color: #007bff;
+    .section-title {
+        font-size: 1.8rem;
+        font-weight: 600;
+        color: #088395;
+        margin-bottom: 1.5rem;
+        text-align: center;
+        letter-spacing: 0.5px;
+    }
+
+    .developer-card {
+        display: flex;
+        align-items: center;
+        gap: 2rem;
+        padding: 1.5rem;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 15px;
+        backdrop-filter: blur(10px);
+    }
+
+    @media (prefers-color-scheme: dark) {
+        .developer-card {
+            background: rgba(255, 255, 255, 0.05);
+        }
+    }
+
+    .developer-photo {
+        flex-shrink: 0;
+        width: 120px;
+        height: 120px;
+        border-radius: 50%;
+        object-fit: cover;
+        border: 4px solid #088395;
+        box-shadow: 0 8px 20px rgba(8, 131, 149, 0.3);
+    }
+
+    .developer-info {
+        flex: 1;
+    }
+
+    .developer-name {
+        font-size: 1.8rem;
+        font-weight: 700;
+        color: #0a4d68;
+        margin: 0 0 0.5rem 0;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        .developer-name {
+            color: #05bfdb;
+        }
+    }
+
+    .developer-title {
+        font-size: 1.1rem;
+        color: #088395;
+        font-weight: 500;
+        margin: 0 0 0.8rem 0;
+    }
+
+    .developer-supervision {
+        font-size: 0.9rem;
+        color: #666;
+        font-style: italic;
+        margin: 0 0 1rem 0;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        .developer-supervision {
+            color: #999;
+        }
+    }
+
+    .contact-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1rem;
+        margin-top: 1rem;
+    }
+
+    .contact-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.5rem 1rem;
+        background: linear-gradient(135deg, #088395, #05bfdb);
+        color: white;
+        text-decoration: none;
+        border-radius: 25px;
+        font-size: 0.9rem;
+        font-weight: 500;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 10px rgba(8, 131, 149, 0.3);
+    }
+
+    .contact-link:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(8, 131, 149, 0.4);
+        color: white;
         text-decoration: none;
     }
 
-    .login-acknowledgments a:hover {
-        color: #0056b3;
-        text-decoration: underline;
+    @media (max-width: 768px) {
+        .developer-card {
+            flex-direction: column;
+            text-align: center;
+        }
+        .contact-links {
+            justify-content: center;
+        }
     }
     </style>
 
-    <div class="login-acknowledgments">
-        <h5>🙏 Acknowledgments</h5>
-        <p><small>Built with ❤️ using Google Earth Engine, Streamlit, and Python</small></p>
-        <p><small>Development assistance provided by Claude AI (Anthropic)</small></p>
-        <p><small>📖 <a href="https://github.com/SauravBhattarai19/GeoClimate-Fetcher" target="_blank">Documentation & Source Code</a></small></p>
+    <div class="author-card">
+        <h3 class="section-title">👨‍💻 Meet the Developer</h3>
+        <div class="developer-card">
+            <img src="https://github.com/sauravbhattarai19.png" alt="Saurav Bhattarai" class="developer-photo" onerror="this.style.display='none'">
+            <div class="developer-info">
+                <h2 class="developer-name">Saurav Bhattarai</h2>
+                <p class="developer-title">🏗️ Civil Engineer & Geospatial Developer</p>
+                <p class="developer-supervision">Under supervision of Dr. Rocky Talchabhadel & Dr. Nawaraj Pradhan</p>
+                <div class="contact-links">
+                    <a href="mailto:saurav.bhattarai.1999@gmail.com" class="contact-link">
+                        📧 Email
+                    </a>
+                    <a href="https://sauravbhattarai19.github.io/" target="_blank" class="contact-link">
+                        🌐 Website
+                    </a>
+                    <a href="https://github.com/sauravbhattarai19" target="_blank" class="contact-link">
+                        💻 GitHub
+                    </a>
+                    <a href="https://www.linkedin.com/in/saurav-bhattarai-7133a3176/" target="_blank" class="contact-link">
+                        💼 LinkedIn
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("""
+    <style>
+    .acknowledgments-card {
+        background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+        border-radius: 15px;
+        padding: 2rem;
+        margin-top: 2rem;
+        border: 1px solid rgba(8, 131, 149, 0.2);
+        text-align: center;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        .acknowledgments-card {
+            background: linear-gradient(135deg, #1a2332 0%, #243447 100%);
+            border: 1px solid rgba(8, 131, 149, 0.4);
+        }
+    }
+
+    .ack-title {
+        font-size: 1.5rem;
+        font-weight: 600;
+        color: #088395;
+        margin-bottom: 1rem;
+    }
+
+    .ack-content {
+        font-size: 1rem;
+        color: #555;
+        line-height: 1.8;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        .ack-content {
+            color: #ccc;
+        }
+    }
+
+    .ack-link {
+        display: inline-block;
+        margin-top: 1rem;
+        padding: 0.7rem 1.5rem;
+        background: linear-gradient(135deg, #088395, #05bfdb);
+        color: white;
+        text-decoration: none;
+        border-radius: 25px;
+        font-weight: 500;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 10px rgba(8, 131, 149, 0.3);
+    }
+
+    .ack-link:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(8, 131, 149, 0.4);
+        color: white;
+        text-decoration: none;
+    }
+
+    .tech-badges {
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-top: 1rem;
+    }
+
+    .tech-badge {
+        background: rgba(8, 131, 149, 0.1);
+        color: #088395;
+        padding: 0.4rem 1rem;
+        border-radius: 20px;
+        font-size: 0.85rem;
+        font-weight: 500;
+        border: 1px solid rgba(8, 131, 149, 0.3);
+    }
+
+    @media (prefers-color-scheme: dark) {
+        .tech-badge {
+            background: rgba(8, 131, 149, 0.2);
+            color: #05bfdb;
+        }
+    }
+    </style>
+
+    <div class="acknowledgments-card">
+        <h5 class="ack-title">🙏 Acknowledgments</h5>
+        <p class="ack-content">
+            Built with passion for climate science and Earth observation<br>
+            <small>Development assistance by Claude AI (Anthropic)</small>
+        </p>
+        <div class="tech-badges">
+            <span class="tech-badge">🌍 Google Earth Engine</span>
+            <span class="tech-badge">🎨 Streamlit</span>
+            <span class="tech-badge">🐍 Python</span>
+        </div>
+        <a href="https://github.com/SauravBhattarai19/GeoClimate-Fetcher" target="_blank" class="ack-link">
+            📖 Documentation & Source Code
+        </a>
     </div>
     """, unsafe_allow_html=True)
 
