@@ -178,84 +178,17 @@ st.markdown("""
             background: #262730;
             border-radius: 15px;
             padding: 2rem;
-            margin: 1rem 0;
+            padding-bottom: 1rem;
+            margin: 1rem 0 0.5rem 0;
             box-shadow: 0 5px 15px rgba(0,0,0,0.3);
             border: 2px solid #464852;
-            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-            cursor: pointer;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .tool-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: linear-gradient(135deg, rgba(8, 131, 149, 0.9) 0%, rgba(5, 191, 219, 0.9) 100%);
-            opacity: 0;
-            transition: opacity 0.4s ease;
-            z-index: 1;
-            border-radius: 15px;
-        }
-
-        .tool-card::after {
-            content: '🚀 Launch Tool →';
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%) scale(0.8);
-            color: white;
-            font-size: 1.5rem;
-            font-weight: bold;
-            opacity: 0;
-            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-            z-index: 2;
-            text-align: center;
-            white-space: nowrap;
+            transition: all 0.3s ease;
         }
 
         .tool-card:hover {
-            transform: translateY(-8px) scale(1.02);
-            box-shadow: 0 15px 35px rgba(5, 191, 219, 0.4);
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(5, 191, 219, 0.3);
             border-color: #05bfdb;
-        }
-
-        .tool-card:hover::before {
-            opacity: 1;
-        }
-
-        .tool-card:hover::after {
-            opacity: 1;
-            transform: translate(-50%, -50%) scale(1);
-        }
-
-        .tool-card:active {
-            transform: translateY(-6px) scale(1.01);
-        }
-
-        /* Make buttons overlay the cards */
-        div[data-testid="column"] > div {
-            position: relative;
-        }
-
-        div[data-testid="column"] button[kind="primary"] {
-            position: absolute !important;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            opacity: 0;
-            cursor: pointer;
-            z-index: 10;
-            border: none;
-            background: transparent !important;
-        }
-
-        div[data-testid="column"] button[kind="primary"]:hover {
-            background: transparent !important;
         }
 
         .tool-title {
@@ -352,84 +285,17 @@ st.markdown("""
             background: white;
             border-radius: 15px;
             padding: 2rem;
-            margin: 1rem 0;
+            padding-bottom: 1rem;
+            margin: 1rem 0 0.5rem 0;
             box-shadow: 0 5px 15px rgba(0,0,0,0.08);
             border: 2px solid #e5e7eb;
-            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-            cursor: pointer;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .tool-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: linear-gradient(135deg, rgba(10, 77, 104, 0.95) 0%, rgba(8, 131, 149, 0.95) 50%, rgba(5, 191, 219, 0.95) 100%);
-            opacity: 0;
-            transition: opacity 0.4s ease;
-            z-index: 1;
-            border-radius: 15px;
-        }
-
-        .tool-card::after {
-            content: '🚀 Launch Tool →';
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%) scale(0.8);
-            color: white;
-            font-size: 1.5rem;
-            font-weight: bold;
-            opacity: 0;
-            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-            z-index: 2;
-            text-align: center;
-            white-space: nowrap;
+            transition: all 0.3s ease;
         }
 
         .tool-card:hover {
-            transform: translateY(-8px) scale(1.02);
-            box-shadow: 0 15px 35px rgba(8, 131, 149, 0.3);
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(8, 131, 149, 0.3);
             border-color: #088395;
-        }
-
-        .tool-card:hover::before {
-            opacity: 1;
-        }
-
-        .tool-card:hover::after {
-            opacity: 1;
-            transform: translate(-50%, -50%) scale(1);
-        }
-
-        .tool-card:active {
-            transform: translateY(-6px) scale(1.01);
-        }
-
-        /* Make buttons overlay the cards */
-        div[data-testid="column"] > div {
-            position: relative;
-        }
-
-        div[data-testid="column"] button[kind="primary"] {
-            position: absolute !important;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            opacity: 0;
-            cursor: pointer;
-            z-index: 10;
-            border: none;
-            background: transparent !important;
-        }
-
-        div[data-testid="column"] button[kind="primary"]:hover {
-            background: transparent !important;
         }
 
         .tool-title {
@@ -1251,30 +1117,13 @@ if st.session_state.app_mode is None:
     
     # Tool Selection
     st.markdown("### 🎯 Choose Your Tool")
-    st.markdown('<p style="text-align: center; color: #666; margin-bottom: 2rem;">Hover over any tool to launch</p>', unsafe_allow_html=True)
-
-    # Add JavaScript for clickable cards
-    st.markdown("""
-    <script>
-    document.addEventListener('DOMContentLoaded', function() {
-        const cards = document.querySelectorAll('.tool-card[data-tool]');
-        cards.forEach(card => {
-            card.addEventListener('click', function() {
-                const toolId = this.getAttribute('data-tool');
-                const button = document.querySelector(`button[data-tool="${toolId}"]`);
-                if (button) button.click();
-            });
-        });
-    });
-    </script>
-    """, unsafe_allow_html=True)
 
     # First row of tools
     col1, col2 = st.columns(2)
 
     with col1:
         st.markdown("""
-        <div class="tool-card" data-tool="data_explorer" onclick="this.style.opacity='0.8'">
+        <div class="tool-card">
             <span class="tool-icon">🔍</span>
             <div class="tool-title">GeoData Explorer</div>
             <div class="tool-description">
@@ -1284,13 +1133,13 @@ if st.session_state.app_mode is None:
         </div>
         """, unsafe_allow_html=True)
 
-        if st.button("\u200B", key="btn_data_explorer", use_container_width=True, type="primary"):
+        if st.button("🚀 Launch Data Explorer", key="btn_data_explorer", use_container_width=True, type="primary"):
             st.session_state.app_mode = "data_explorer"
             st.rerun()
 
     with col2:
         st.markdown("""
-        <div class="tool-card" data-tool="climate_analytics" onclick="this.style.opacity='0.8'">
+        <div class="tool-card">
             <span class="tool-icon">🧠</span>
             <div class="tool-title">Climate Intelligence Hub</div>
             <div class="tool-description">
@@ -1300,7 +1149,7 @@ if st.session_state.app_mode is None:
         </div>
         """, unsafe_allow_html=True)
 
-        if st.button("\u200B", key="btn_climate_analytics", use_container_width=True, type="primary"):
+        if st.button("🚀 Launch Climate Analytics", key="btn_climate_analytics", use_container_width=True, type="primary"):
             st.session_state.app_mode = "climate_analytics"
             st.rerun()
 
@@ -1309,7 +1158,7 @@ if st.session_state.app_mode is None:
 
     with col3:
         st.markdown("""
-        <div class="tool-card" data-tool="hydrology" onclick="this.style.opacity='0.8'">
+        <div class="tool-card">
             <span class="tool-icon">💧</span>
             <div class="tool-title">Hydrology Analyzer</div>
             <div class="tool-description">
@@ -1319,13 +1168,13 @@ if st.session_state.app_mode is None:
         </div>
         """, unsafe_allow_html=True)
 
-        if st.button("\u200B", key="btn_hydrology", use_container_width=True, type="primary"):
+        if st.button("🚀 Launch Hydrology Analyzer", key="btn_hydrology", use_container_width=True, type="primary"):
             st.session_state.app_mode = "hydrology"
             st.rerun()
 
     with col4:
         st.markdown("""
-        <div class="tool-card" data-tool="product_selector" onclick="this.style.opacity='0.8'">
+        <div class="tool-card">
             <span class="tool-icon">🎯</span>
             <div class="tool-title">Optimal Product Selector</div>
             <div class="tool-description">
@@ -1335,7 +1184,7 @@ if st.session_state.app_mode is None:
         </div>
         """, unsafe_allow_html=True)
 
-        if st.button("\u200B", key="btn_product_selector", use_container_width=True, type="primary"):
+        if st.button("🚀 Launch Product Selector", key="btn_product_selector", use_container_width=True, type="primary"):
             st.session_state.app_mode = "product_selector"
             st.rerun()
 
@@ -1344,7 +1193,7 @@ if st.session_state.app_mode is None:
 
     with col5:
         st.markdown("""
-        <div class="tool-card" data-tool="multi_geometry" onclick="this.style.opacity='0.8'">
+        <div class="tool-card">
             <span class="tool-icon">🗺️</span>
             <div class="tool-title">Multi-Geometry Data Export</div>
             <div class="tool-description">
@@ -1354,13 +1203,13 @@ if st.session_state.app_mode is None:
         </div>
         """, unsafe_allow_html=True)
 
-        if st.button("\u200B", key="btn_multi_geometry", use_container_width=True, type="primary"):
+        if st.button("🚀 Launch Multi-Geometry Export", key="btn_multi_geometry", use_container_width=True, type="primary"):
             st.session_state.app_mode = "multi_geometry_export"
             st.rerun()
 
     with col6:
         st.markdown("""
-        <div class="tool-card" data-tool="data_visualizer" onclick="this.style.opacity='0.8'">
+        <div class="tool-card">
             <span class="tool-icon">📊</span>
             <div class="tool-title">Universal Data Visualizer</div>
             <div class="tool-description">
@@ -1370,7 +1219,7 @@ if st.session_state.app_mode is None:
         </div>
         """, unsafe_allow_html=True)
 
-        if st.button("\u200B", key="btn_data_visualizer", use_container_width=True, type="primary"):
+        if st.button("🚀 Launch Data Visualizer", key="btn_data_visualizer", use_container_width=True, type="primary"):
             st.session_state.app_mode = "data_visualizer"
             st.rerun()
 
