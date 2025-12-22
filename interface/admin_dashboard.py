@@ -112,7 +112,7 @@ def render_admin_dashboard():
     st.markdown("---")
     st.markdown("### 📋 Detailed Statistics")
 
-    tab1, tab2, tab3 = st.tabs(["Countries", "Use Cases", "Institutions"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Countries", "Use Cases", "Institutions", "Raw User Data"])
 
     with tab1:
         if stats['countries']:
@@ -146,6 +146,10 @@ def render_admin_dashboard():
             st.dataframe(df, use_container_width=True)
         else:
             st.info("No data")
+
+    with tab4:
+        from app_components.raw_data_viewer import render_raw_data_viewer
+        render_raw_data_viewer()
 
     # Export data
     st.markdown("---")
