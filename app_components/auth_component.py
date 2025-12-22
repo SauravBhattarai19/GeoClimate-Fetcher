@@ -47,10 +47,11 @@ class AuthComponent:
         # Don't save - session state handles active session only
         return False
     
-    def authenticate_gee(self, project_id, service_account=None, key_file=None, credentials_content=None):
+    def authenticate_gee(self, project_id, credentials_content=None):
         """Authenticate with Google Earth Engine"""
         try:
-            auth = authenticate(project_id, service_account, key_file, credentials_content)
+            # credentials_content is None for local method (uses default auth)
+            auth = authenticate(project_id, credentials_content=credentials_content)
             if auth.is_initialized():
                 return True, "Authentication successful!"
             else:
@@ -135,14 +136,14 @@ class AuthComponent:
         
         st.markdown("""
         To use this application, you need to authenticate with Google Earth Engine.
-        Choose the authentication method that works best for your deployment environment.
+        Choose the authentication method based on how you're using the app.
         """)
-        
+
         # Authentication method selection
         auth_method = st.radio(
             "Choose Authentication Method:",
-            ["Credentials File Upload", "Service Account (Recommended for Web Apps)", "Default (Local Only)"],
-            help="Service account authentication is the most reliable method for deployed web applications"
+            ["Upload Credentials (For Website Use)", "Local Method (For Forked/Cloned Repository)"],
+            help="Upload credentials if using the website. Use local method if you've forked/cloned the repository."
         )
         
         # Main authentication form
@@ -158,29 +159,9 @@ class AuthComponent:
             )
             
             # Different inputs based on auth method
-            service_account = None
-            key_file = None
             credentials_content = None
-            
-            if auth_method == "Service Account (Recommended for Web Apps)":
-                st.markdown("### 🔧 Service Account Authentication")
-                st.info("💡 Service account authentication is ideal for deployed web applications")
-                
-                service_account = st.text_input(
-                    "Service Account Email *",
-                    value=saved_credentials.get("service_account", ""),
-                    help="Email of the service account (e.g., my-service@project.iam.gserviceaccount.com)",
-                    placeholder="service-account@project.iam.gserviceaccount.com"
-                )
-                
-                key_file = st.text_input(
-                    "Key File Path *",
-                    value=saved_credentials.get("key_file", ""),
-                    help="Path to service account JSON key file",
-                    placeholder="/path/to/key.json"
-                )
-                
-            elif auth_method == "Credentials File Upload":
+
+            if auth_method == "Upload Credentials (For Website Use)":
                 st.markdown("### 📁 Upload Earth Engine Credentials")
 
                 # Quick help box at top
@@ -261,15 +242,83 @@ class AuthComponent:
                     except Exception as e:
                         st.error(f"❌ Error reading credentials file: {str(e)}")
                         credentials_content = None
-                
-            else:  # Default method
-                st.markdown("### ⚠️ Default Authentication")
+
+            else:  # Local Method
+                st.markdown("### 💻 Local Method (For Forked/Cloned Repository)")
+
+                st.info("""
+                ✅ **Use this method if you:**
+                - Forked or cloned this repository to your local machine
+                - Are running `streamlit run app.py` locally
+                - Have already authenticated with Google Earth Engine on your computer
+                """)
+
+                with st.expander("📋 Complete Setup Steps for Local Development"):
+                    st.markdown("""
+                    ### 🚀 One-Time Setup (Do this once on your computer)
+
+                    **Step 1: Fork/Clone the Repository**
+                    ```bash
+                    # Fork on GitHub, then clone your fork:
+                    git clone https://github.com/YOUR-USERNAME/GeoClimate-Fetcher.git
+                    cd GeoClimate-Fetcher
+                    ```
+
+                    **Step 2: Install Dependencies**
+                    ```bash
+                    # Create virtual environment (recommended)
+                    python -m venv venv
+                    source venv/bin/activate  # On Windows: venv\\Scripts\\activate
+
+                    # Install requirements
+                    pip install -r requirements.txt
+                    ```
+
+                    **Step 3: Authenticate with Google Earth Engine**
+                    ```bash
+                    # This saves credentials to ~/.config/earthengine/
+                    earthengine authenticate
+                    ```
+                    - A browser window will open
+                    - Log in with your Google account (must be registered with GEE)
+                    - Credentials are saved locally on your computer
+
+                    **Step 4: Run the Application**
+                    ```bash
+                    streamlit run app.py
+                    ```
+                    - Opens at http://localhost:8501
+                    - Enter your GEE Project ID below
+                    - That's it! No credential upload needed.
+
+                    ---
+
+                    ### 📌 Important Notes:
+                    - ✅ Credentials stored locally in `~/.config/earthengine/`
+                    - ✅ Works perfectly for local development
+                    - ✅ No file upload needed - credentials are already on your machine
+                    - ❌ This method **does NOT work** on hosted Streamlit Cloud
+                    - ❌ For website use, choose "Upload Credentials" method instead
+
+                    ### 🔧 Troubleshooting:
+                    **"earthengine: command not found"**
+                    ```bash
+                    pip install earthengine-api
+                    ```
+
+                    **"Authentication failed"**
+                    - Make sure you've run `earthengine authenticate`
+                    - Check that your Google account is registered with GEE
+                    - Try re-authenticating: `earthengine authenticate --force`
+                    """)
+
                 st.warning("""
-                **This method only works if you have previously authenticated locally using:**
-                ```bash
-                earthengine authenticate
-                ```
-                This won't work in deployed web applications.
+                ⚠️ **Important:** This method requires:
+                - You've run `earthengine authenticate` on your computer
+                - You're running the app locally (not on a website)
+                - Credentials file exists at `~/.config/earthengine/credentials`
+
+                **If using the hosted website, choose "Upload Credentials" method instead.**
                 """)
             
             # Info about session persistence
@@ -283,19 +332,15 @@ class AuthComponent:
                 if not project_id:
                     st.error("❌ Project ID is required!")
                     return False
-                
-                if auth_method == "Service Account (Recommended for Web Apps)" and (not service_account or not key_file):
-                    st.error("❌ Both service account email and key file path are required!")
-                    return False
-                
-                if auth_method == "Credentials File Upload" and not credentials_content:
+
+                if auth_method == "Upload Credentials (For Website Use)" and not credentials_content:
                     st.error("❌ Please upload a credentials file!")
                     return False
                 
                 # Attempt authentication
                 with st.spinner("🔄 Authenticating with Google Earth Engine..."):
                     success, message = self.authenticate_gee(
-                        project_id, service_account, key_file, credentials_content
+                        project_id, credentials_content=credentials_content
                     )
 
                 if success:
