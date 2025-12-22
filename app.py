@@ -897,30 +897,42 @@ if not st.session_state.get('auth_complete', False):
 
     <div class="author-card">
         <h3 class="section-title">👨‍💻 Meet the Developer</h3>
-        <div class="developer-card">
-            <img src="https://github.com/sauravbhattarai19.png" alt="Saurav Bhattarai" class="developer-photo" onerror="this.style.display='none'">
-            <div class="developer-info">
-                <h2 class="developer-name">Saurav Bhattarai</h2>
-                <p class="developer-title">🏗️ Civil Engineer & Geospatial Developer</p>
-                <p class="developer-supervision">Under supervision of Dr. Rocky Talchabhadel & Dr. Nawaraj Pradhan</p>
-                <div class="contact-links">
-                    <a href="mailto:saurav.bhattarai.1999@gmail.com" class="contact-link">
-                        📧 Email
-                    </a>
-                    <a href="https://sauravbhattarai19.github.io/" target="_blank" class="contact-link">
-                        🌐 Website
-                    </a>
-                    <a href="https://github.com/sauravbhattarai19" target="_blank" class="contact-link">
-                        💻 GitHub
-                    </a>
-                    <a href="https://www.linkedin.com/in/saurav-bhattarai-7133a3176/" target="_blank" class="contact-link">
-                        💼 LinkedIn
-                    </a>
-                </div>
-            </div>
-        </div>
     </div>
     """, unsafe_allow_html=True)
+
+    # Developer card with photo using columns
+    col_photo, col_info = st.columns([1, 3])
+
+    with col_photo:
+        try:
+            st.markdown('<div style="text-align: center;">', unsafe_allow_html=True)
+            st.image("pictures/Saurav.png", width=120)
+            st.markdown('</div>', unsafe_allow_html=True)
+        except:
+            st.markdown("**👨‍💻**")
+
+    with col_info:
+        st.markdown("""
+        <div style="padding-left: 20px;">
+            <h2 style="color: #0a4d68; margin: 0 0 0.5rem 0; font-size: 1.8rem; font-weight: 700;">Saurav Bhattarai</h2>
+            <p style="color: #088395; font-size: 1.1rem; font-weight: 500; margin: 0 0 0.8rem 0;">🏗️ Civil Engineer & Geospatial Developer</p>
+            <p style="color: #666; font-size: 0.9rem; font-style: italic; margin: 0 0 1rem 0;">Under supervision of Dr. Rocky Talchabhadel & Dr. Nawaraj Pradhan</p>
+            <div style="display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 1rem;">
+                <a href="mailto:saurav.bhattarai.1999@gmail.com" class="contact-link" style="display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; background: linear-gradient(135deg, #088395, #05bfdb); color: white; text-decoration: none; border-radius: 25px; font-size: 0.9rem; font-weight: 500; box-shadow: 0 4px 10px rgba(8, 131, 149, 0.3);">
+                    📧 Email
+                </a>
+                <a href="https://sauravbhattarai19.github.io/" target="_blank" class="contact-link" style="display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; background: linear-gradient(135deg, #088395, #05bfdb); color: white; text-decoration: none; border-radius: 25px; font-size: 0.9rem; font-weight: 500; box-shadow: 0 4px 10px rgba(8, 131, 149, 0.3);">
+                    🌐 Website
+                </a>
+                <a href="https://github.com/sauravbhattarai19" target="_blank" class="contact-link" style="display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; background: linear-gradient(135deg, #088395, #05bfdb); color: white; text-decoration: none; border-radius: 25px; font-size: 0.9rem; font-weight: 500; box-shadow: 0 4px 10px rgba(8, 131, 149, 0.3);">
+                    💻 GitHub
+                </a>
+                <a href="https://www.linkedin.com/in/saurav-bhattarai-7133a3176/" target="_blank" class="contact-link" style="display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; background: linear-gradient(135deg, #088395, #05bfdb); color: white; text-decoration: none; border-radius: 25px; font-size: 0.9rem; font-weight: 500; box-shadow: 0 4px 10px rgba(8, 131, 149, 0.3);">
+                    💼 LinkedIn
+                </a>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
     st.markdown("""
     <style>
