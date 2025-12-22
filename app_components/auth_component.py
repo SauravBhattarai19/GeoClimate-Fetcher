@@ -260,7 +260,7 @@ class AuthComponent:
                     **Step 1: Fork/Clone the Repository**
                     ```bash
                     # Fork on GitHub, then clone your fork:
-                    git clone https://github.com/YOUR-USERNAME/GeoClimate-Fetcher.git
+                    git clone https://github.com/SauravBhattarai19/GeoClimate-Fetcher.git
                     cd GeoClimate-Fetcher
                     ```
 
