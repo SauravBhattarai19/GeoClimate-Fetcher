@@ -25,44 +25,26 @@ class AuthComponent:
     """Authentication component for Google Earth Engine"""
     
     def __init__(self):
-        # Import cookie manager for per-browser persistence
-        try:
-            import extra_streamlit_components as stx
-            self.cookie_manager = stx.CookieManager()
-        except ImportError:
-            # Fallback if cookies not available
-            self.cookie_manager = None
+        # REMOVED cookie-based persistence to prevent multi-user contamination
+        # Browser cookies in Streamlit can be unreliable in multi-tenant environments
+        pass
 
     def load_saved_credentials(self):
         """
-        Load previously saved credentials from browser cookies
-        This is PER-BROWSER, not server-side, so it's safe for multi-user apps
+        Load previously saved credentials
+        REMOVED: Cookie-based loading causes multi-user contamination issues
+        Each user must enter their project ID fresh (security best practice)
         """
-        if self.cookie_manager:
-            try:
-                project_id = self.cookie_manager.get(cookie="gee_project_id_prefill")
-                if project_id:
-                    return {"project_id": project_id}
-            except Exception:
-                pass
+        # Return empty - no pre-filling to prevent security issues
         return {}
 
     def save_credentials(self, credentials):
         """
-        Save credentials to browser cookies for convenience
-        Only stores project_id, NOT the actual credentials (secure)
+        Save credentials
+        REMOVED: No persistence to prevent multi-user contamination
+        Session-based caching only (safe within single browser session)
         """
-        if self.cookie_manager and credentials.get("project_id"):
-            try:
-                from datetime import datetime, timedelta
-                self.cookie_manager.set(
-                    "gee_project_id_prefill",
-                    credentials["project_id"],
-                    expires_at=datetime.now() + timedelta(days=365)  # 1 year
-                )
-                return True
-            except Exception:
-                pass
+        # Don't save - session state handles active session only
         return False
     
     def authenticate_gee(self, project_id, service_account=None, key_file=None, credentials_content=None):
@@ -290,8 +272,8 @@ class AuthComponent:
                 This won't work in deployed web applications.
                 """)
             
-            # Info about session persistence (handled by cookies in app.py)
-            st.info("ℹ️ Your session will be remembered in your browser for 30 days via secure cookies.")
+            # Info about session persistence
+            st.info("ℹ️ Your session stays active while this browser tab is open. Close the tab to end your session.")
             
             # Submit button
             submitted = st.form_submit_button("🚀 Authenticate", type="primary")
@@ -319,21 +301,20 @@ class AuthComponent:
                 if success:
                     st.success(f"✅ {message}")
 
-                    # Set session state for this user session
+                    # Set session state for this user session ONLY
+                    # Session state is isolated per browser connection (secure)
                     st.session_state.auth_complete = True
                     st.session_state.auth_project_id = project_id
                     st.session_state.project_id = project_id  # For display in nav
 
-                    # Cache credentials in session state for this browser session
+                    # Cache credentials in session state for THIS browser session only
+                    # This is safe - session state is NOT shared across users
                     if credentials_content:
                         st.session_state.gee_credentials_content = credentials_content
 
-                    # Save project_id to browser cookies for next visit (1 year)
-                    self.save_credentials({"project_id": project_id})
-
                     # Show single success message
-                    st.success("🎉 Authentication complete! Project ID will be remembered.")
-                    st.info("ℹ️ Your session stays active while your browser tab is open. You'll need to re-upload credentials if you close the browser or the session expires.")
+                    st.success("🎉 Authentication complete!")
+                    st.info("ℹ️ Your session stays active while this browser tab is open. You'll need to re-authenticate if you close the tab or session expires.")
                     time.sleep(2)
                     st.rerun()  # Rerun to proceed to main app
 
