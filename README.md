@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://python.org)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.25%2B-FF4B4B.svg)](https://streamlit.io)
 [![Google Earth Engine](https://img.shields.io/badge/Google%20Earth%20Engine-Enabled-4285F4.svg)](https://earthengine.google.com)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-Non--Commercial-orange.svg)](LICENSE)
 
 A Streamlit web application for downloading and analyzing climate data from Google Earth Engine. Developed as a research tool for climate data analysis and educational purposes.
 
@@ -299,7 +299,7 @@ If you use this platform in your research, please cite:
 
 ## 📋 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is **not for commercial use**. It is intended for educational and research purposes only. For commercial licensing inquiries, please contact the author.
 
 ## 🔗 Resources
 
