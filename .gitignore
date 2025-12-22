@@ -85,6 +85,7 @@ dmypy.json
 # Earth Engine credentials
 credentials.json
 private-key.json
+.geoclimate-fetcher/
 
 # User registration data
 user_data.json

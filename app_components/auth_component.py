@@ -25,28 +25,28 @@ class AuthComponent:
     """Authentication component for Google Earth Engine"""
     
     def __init__(self):
-        self.credentials_file = os.path.expanduser("~/.geoclimate-fetcher/credentials.json")
-    
+        # REMOVED server-side credential storage to prevent cross-user contamination
+        # Credentials should NEVER be saved on server in multi-user web apps
+        pass
+
     def load_saved_credentials(self):
-        """Load previously saved credentials"""
-        if os.path.exists(self.credentials_file):
-            try:
-                with open(self.credentials_file, 'r') as f:
-                    return json.load(f)
-            except Exception:
-                pass
+        """
+        Load previously saved credentials
+        DEPRECATED: Returns empty dict to prevent security issues
+        Credential persistence is now handled via browser cookies in app.py
+        """
+        # Always return empty - no server-side credential storage
         return {}
-    
+
     def save_credentials(self, credentials):
-        """Save credentials for future use"""
-        try:
-            os.makedirs(os.path.dirname(self.credentials_file), exist_ok=True)
-            with open(self.credentials_file, 'w') as f:
-                json.dump(credentials, f)
-            return True
-        except Exception as e:
-            st.warning(f"Could not save credentials: {str(e)}")
-            return False
+        """
+        Save credentials for future use
+        DEPRECATED: Does nothing to prevent security issues
+        Credential persistence is now handled via browser cookies in app.py
+        """
+        # Don't save anything server-side - this would be shared across all users!
+        # The main app.py handles cookie-based persistence per-user
+        return False
     
     def authenticate_gee(self, project_id, service_account=None, key_file=None, credentials_content=None):
         """Authenticate with Google Earth Engine"""
@@ -239,9 +239,8 @@ class AuthComponent:
                 This won't work in deployed web applications.
                 """)
             
-            # Options
-            with st.expander("💾 Save Settings"):
-                remember = st.checkbox("Remember credentials for future use", value=True)
+            # Info about session persistence (handled by cookies in app.py)
+            st.info("ℹ️ Your session will be remembered in your browser for 30 days via secure cookies.")
             
             # Submit button
             submitted = st.form_submit_button("🚀 Authenticate", type="primary")
@@ -269,21 +268,13 @@ class AuthComponent:
                 if success:
                     st.success(f"✅ {message}")
 
-                    # Save credentials if requested
-                    if remember:
-                        credentials = {"project_id": project_id}
-                        if service_account:
-                            credentials["service_account"] = service_account
-                        if key_file:
-                            credentials["key_file"] = key_file
-                        # Note: We don't save credentials_content for security
-
-                        if self.save_credentials(credentials):
-                            st.info("💾 Credentials saved for future use")
-
+                    # Set session state for this user session
                     st.session_state.auth_complete = True
                     st.session_state.auth_project_id = project_id
                     st.session_state.project_id = project_id  # For display in nav
+
+                    # Note: Cookie-based persistence is handled in app.py (per-browser)
+                    # No server-side credential storage to prevent cross-user issues
 
                     # Show single success message
                     st.success("🎉 Authentication complete! Click below to proceed...")
