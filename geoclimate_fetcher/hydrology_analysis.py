@@ -389,7 +389,7 @@ class HydrologyAnalyzer:
 
         return annual_maxima
 
-    def _validate_data_for_yearly_analysis(self) -> tuple[bool, str]:
+    def _validate_data_for_yearly_analysis(self) -> Tuple[bool, str]:
         """
         Validate precipitation data for yearly analysis
 
