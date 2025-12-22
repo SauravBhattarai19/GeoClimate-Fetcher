@@ -1284,7 +1284,7 @@ if st.session_state.app_mode is None:
         </div>
         """, unsafe_allow_html=True)
 
-        if st.button("launch_data_explorer", key="btn_data_explorer", use_container_width=True, label_visibility="collapsed", type="primary"):
+        if st.button("\u200B", key="btn_data_explorer", use_container_width=True, type="primary"):
             st.session_state.app_mode = "data_explorer"
             st.rerun()
 
@@ -1300,7 +1300,7 @@ if st.session_state.app_mode is None:
         </div>
         """, unsafe_allow_html=True)
 
-        if st.button("launch_climate_analytics", key="btn_climate_analytics", use_container_width=True, label_visibility="collapsed", type="primary"):
+        if st.button("\u200B", key="btn_climate_analytics", use_container_width=True, type="primary"):
             st.session_state.app_mode = "climate_analytics"
             st.rerun()
 
@@ -1319,7 +1319,7 @@ if st.session_state.app_mode is None:
         </div>
         """, unsafe_allow_html=True)
 
-        if st.button("launch_hydrology", key="btn_hydrology", use_container_width=True, label_visibility="collapsed", type="primary"):
+        if st.button("\u200B", key="btn_hydrology", use_container_width=True, type="primary"):
             st.session_state.app_mode = "hydrology"
             st.rerun()
 
@@ -1335,7 +1335,7 @@ if st.session_state.app_mode is None:
         </div>
         """, unsafe_allow_html=True)
 
-        if st.button("launch_product_selector", key="btn_product_selector", use_container_width=True, label_visibility="collapsed", type="primary"):
+        if st.button("\u200B", key="btn_product_selector", use_container_width=True, type="primary"):
             st.session_state.app_mode = "product_selector"
             st.rerun()
 
@@ -1354,7 +1354,7 @@ if st.session_state.app_mode is None:
         </div>
         """, unsafe_allow_html=True)
 
-        if st.button("launch_multi_geometry", key="btn_multi_geometry", use_container_width=True, label_visibility="collapsed", type="primary"):
+        if st.button("\u200B", key="btn_multi_geometry", use_container_width=True, type="primary"):
             st.session_state.app_mode = "multi_geometry_export"
             st.rerun()
 
@@ -1370,7 +1370,7 @@ if st.session_state.app_mode is None:
         </div>
         """, unsafe_allow_html=True)
 
-        if st.button("launch_data_visualizer", key="btn_data_visualizer", use_container_width=True, label_visibility="collapsed", type="primary"):
+        if st.button("\u200B", key="btn_data_visualizer", use_container_width=True, type="primary"):
             st.session_state.app_mode = "data_visualizer"
             st.rerun()
 
