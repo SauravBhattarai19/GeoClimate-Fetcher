@@ -25,27 +25,44 @@ class AuthComponent:
     """Authentication component for Google Earth Engine"""
     
     def __init__(self):
-        # REMOVED server-side credential storage to prevent cross-user contamination
-        # Credentials should NEVER be saved on server in multi-user web apps
-        pass
+        # Import cookie manager for per-browser persistence
+        try:
+            import extra_streamlit_components as stx
+            self.cookie_manager = stx.CookieManager()
+        except ImportError:
+            # Fallback if cookies not available
+            self.cookie_manager = None
 
     def load_saved_credentials(self):
         """
-        Load previously saved credentials
-        DEPRECATED: Returns empty dict to prevent security issues
-        Credential persistence is now handled via browser cookies in app.py
+        Load previously saved credentials from browser cookies
+        This is PER-BROWSER, not server-side, so it's safe for multi-user apps
         """
-        # Always return empty - no server-side credential storage
+        if self.cookie_manager:
+            try:
+                project_id = self.cookie_manager.get(cookie="gee_project_id_prefill")
+                if project_id:
+                    return {"project_id": project_id}
+            except Exception:
+                pass
         return {}
 
     def save_credentials(self, credentials):
         """
-        Save credentials for future use
-        DEPRECATED: Does nothing to prevent security issues
-        Credential persistence is now handled via browser cookies in app.py
+        Save credentials to browser cookies for convenience
+        Only stores project_id, NOT the actual credentials (secure)
         """
-        # Don't save anything server-side - this would be shared across all users!
-        # The main app.py handles cookie-based persistence per-user
+        if self.cookie_manager and credentials.get("project_id"):
+            try:
+                from datetime import datetime, timedelta
+                self.cookie_manager.set(
+                    "gee_project_id_prefill",
+                    credentials["project_id"],
+                    expires_at=datetime.now() + timedelta(days=365)  # 1 year
+                )
+                return True
+            except Exception:
+                pass
         return False
     
     def authenticate_gee(self, project_id, service_account=None, key_file=None, credentials_content=None):
@@ -102,16 +119,33 @@ class AuthComponent:
         # Check if already authenticated
         if st.session_state.get('auth_complete', False):
             st.success("✅ Already authenticated with Google Earth Engine!")
-            
+
             col1, col2 = st.columns([3, 1])
             with col1:
-                st.info("🚀 Authentication complete! You can now proceed to the next step.")
+                project_id_display = st.session_state.get('project_id', 'Unknown')
+                st.info(f"🚀 Authenticated as: **{project_id_display}**\n\nYour session is active!")
             with col2:
                 if st.button("Re-authenticate", help="Click to authenticate with different credentials"):
                     st.session_state.auth_complete = False
+                    if 'gee_credentials_content' in st.session_state:
+                        del st.session_state.gee_credentials_content
                     st.rerun()
-            
+
             return True  # This will allow the main app to proceed to next step
+
+        # Try to auto-authenticate if credentials are cached in session
+        if st.session_state.get('gee_credentials_content') and st.session_state.get('project_id'):
+            with st.spinner("🔄 Auto-authenticating from cached credentials..."):
+                success, message = self.authenticate_gee(
+                    st.session_state.project_id,
+                    credentials_content=st.session_state.gee_credentials_content
+                )
+                if success:
+                    st.session_state.auth_complete = True
+                    st.success("✅ Auto-authenticated successfully!")
+                    time.sleep(1)
+                    st.rerun()
+                    return True
         
         
         # Load saved credentials
@@ -167,15 +201,32 @@ class AuthComponent:
             elif auth_method == "Credentials File Upload":
                 st.markdown("### 📁 Upload Earth Engine Credentials")
 
-                # Upload button first
+                # Quick help box at top
+                import platform
+                system = platform.system()
+                if system == "Windows":
+                    creds_path = f"C:\\Users\\{os.environ.get('USERNAME', '[USERNAME]')}\\.config\\earthengine\\credentials"
+                elif system == "Darwin":  # macOS
+                    creds_path = f"/Users/{os.environ.get('USER', '[USER]')}/.config/earthengine/credentials"
+                else:  # Linux
+                    creds_path = f"/home/{os.environ.get('USER', '[USER]')}/.config/earthengine/credentials"
+
+                st.info(f"""
+                📂 **Quick Access:** Your credentials file is located at:
+                `{creds_path}`
+
+                **Tip:** Copy this path, paste in your file explorer, and upload the `credentials` file below!
+                """)
+
+                # Upload button
                 uploaded_file = st.file_uploader(
                     "Upload Earth Engine Credentials File",
                     type=None,  # Accept any file type since credentials file has no extension
-                    help="Upload the file named 'credentials' (no extension) from ~/.config/earthengine/ folder"
+                    help="Upload the file named 'credentials' (no extension) from the path shown above"
                 )
 
                 # Compact instructions in expander
-                with st.expander("📋 How to Get Your Credentials File"):
+                with st.expander("📋 First Time? How to Get Your Credentials File"):
                     st.markdown("""
                     **📋 Prerequisites:**
                     - **Google Earth Engine Account** → [Sign up FREE](https://earthengine.google.com/signup/) *(for study & research)*
@@ -273,12 +324,17 @@ class AuthComponent:
                     st.session_state.auth_project_id = project_id
                     st.session_state.project_id = project_id  # For display in nav
 
-                    # Note: Cookie-based persistence is handled in app.py (per-browser)
-                    # No server-side credential storage to prevent cross-user issues
+                    # Cache credentials in session state for this browser session
+                    if credentials_content:
+                        st.session_state.gee_credentials_content = credentials_content
+
+                    # Save project_id to browser cookies for next visit (1 year)
+                    self.save_credentials({"project_id": project_id})
 
                     # Show single success message
-                    st.success("🎉 Authentication complete! Click below to proceed...")
-                    time.sleep(1)
+                    st.success("🎉 Authentication complete! Project ID will be remembered.")
+                    st.info("ℹ️ Your session stays active while your browser tab is open. You'll need to re-upload credentials if you close the browser or the session expires.")
+                    time.sleep(2)
                     st.rerun()  # Rerun to proceed to main app
 
                     return True  # Return True to indicate successful authentication
