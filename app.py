@@ -56,10 +56,26 @@ except ImportError:
     cookie_manager = FallbackCookieManager()
     COOKIES_AVAILABLE = False
 
+# Get or generate secret key for token generation
+def get_secret_key():
+    """Get secret key from environment or generate a secure random one"""
+    # Try to get from environment variable first
+    secret = os.environ.get('GEOCLIMATE_SECRET_KEY')
+
+    if not secret:
+        # Generate a random secret for this session
+        # This will be different each time the app restarts, which is more secure
+        if 'session_secret' not in st.session_state:
+            import secrets
+            st.session_state.session_secret = secrets.token_hex(32)
+        secret = st.session_state.session_secret
+
+    return secret
+
 # Function to create a secure token
 def create_auth_token(project_id, timestamp):
     """Create a secure authentication token"""
-    secret = "geoclimate-fetcher-secret-key"  # Change this in production
+    secret = get_secret_key()
     token_string = f"{project_id}:{timestamp}:{secret}"
     return hashlib.sha256(token_string.encode()).hexdigest()
 
