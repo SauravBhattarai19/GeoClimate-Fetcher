@@ -148,13 +148,14 @@ st.markdown("""
         
         /* Landing page styles - dark mode */
         .landing-hero {
-            background: linear-gradient(135deg, #1e3a8a 0%, #312e81 100%);
+            background: linear-gradient(135deg, #0a4d68 0%, #088395 50%, #05bfdb 100%);
             color: white;
             padding: 3rem 2rem;
             border-radius: 20px;
             text-align: center;
             margin-bottom: 2rem;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            box-shadow: 0 10px 40px rgba(8, 131, 149, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.1);
         }
         
         .tool-card {
@@ -171,7 +172,7 @@ st.markdown("""
         .tool-card:hover {
             transform: translateY(-5px);
             box-shadow: 0 10px 25px rgba(0,0,0,0.4);
-            border-color: #667eea;
+            border-color: #05bfdb;
         }
         
         .tool-title {
@@ -188,17 +189,24 @@ st.markdown("""
             padding: 2rem;
             margin-top: 3rem;
             text-align: center;
-            border-left: 5px solid #667eea;
+            border-left: 5px solid #088395;
             color: #fafafa;
         }
         
         .feature-item {
-            background: #262730;
-            padding: 1rem;
-            border-radius: 10px;
+            background: linear-gradient(135deg, #1a2332 0%, #243447 100%);
+            padding: 1.5rem;
+            border-radius: 12px;
             text-align: center;
-            border: 1px solid #464852;
+            border: 1px solid #088395;
             color: #fafafa;
+            transition: all 0.3s ease;
+        }
+
+        .feature-item:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 5px 15px rgba(8, 131, 149, 0.3);
+            border-color: #05bfdb;
         }
         
         .step-header {
@@ -247,13 +255,14 @@ st.markdown("""
     /* Light mode styles (default) */
     @media (prefers-color-scheme: light) {
         .landing-hero {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #0a4d68 0%, #088395 50%, #05bfdb 100%);
             color: white;
             padding: 3rem 2rem;
             border-radius: 20px;
             text-align: center;
             margin-bottom: 2rem;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            box-shadow: 0 10px 40px rgba(8, 131, 149, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.1);
         }
         
         .tool-card {
@@ -269,8 +278,8 @@ st.markdown("""
         
         .tool-card:hover {
             transform: translateY(-5px);
-            box-shadow: 0 10px 25px rgba(0,0,0,0.15);
-            border-color: #667eea;
+            box-shadow: 0 10px 25px rgba(8, 131, 149, 0.3);
+            border-color: #088395;
         }
         
         .tool-title {
@@ -287,15 +296,21 @@ st.markdown("""
             padding: 2rem;
             margin-top: 3rem;
             text-align: center;
-            border-left: 5px solid #667eea;
+            border-left: 5px solid #088395;
         }
         
         .feature-item {
-            background: #f0f4ff;
-            padding: 1rem;
-            border-radius: 10px;
+            background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+            padding: 1.5rem;
+            border-radius: 12px;
             text-align: center;
-            border: 1px solid #e0e7ff;
+            border: 1px solid #bae6fd;
+            transition: all 0.3s ease;
+        }
+
+        .feature-item:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 5px 15px rgba(8, 131, 149, 0.2);
         }
         
         .step-header {
@@ -335,16 +350,45 @@ st.markdown("""
     
     /* Universal styles that work in both modes */
     .landing-title {
-        font-size: 3.5rem;
-        font-weight: bold;
+        font-size: 3rem;
+        font-weight: 600;
         margin-bottom: 1rem;
         text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+        letter-spacing: 1px;
     }
-    
+
     .landing-subtitle {
-        font-size: 1.3rem;
+        font-size: 1.2rem;
         opacity: 0.95;
-        margin-bottom: 2rem;
+        margin-bottom: 2.5rem;
+        font-weight: 300;
+    }
+
+    .hero-stats {
+        display: flex;
+        justify-content: center;
+        gap: 3rem;
+        margin-top: 2rem;
+        flex-wrap: wrap;
+    }
+
+    .stat-item {
+        text-align: center;
+    }
+
+    .stat-number {
+        font-size: 2.5rem;
+        font-weight: bold;
+        color: white;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+    }
+
+    .stat-label {
+        font-size: 0.9rem;
+        opacity: 0.9;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-top: 0.3rem;
     }
     
     .tool-icon {
@@ -373,7 +417,7 @@ st.markdown("""
     .feature-icon {
         font-size: 2rem;
         margin-bottom: 0.5rem;
-        color: #667eea;
+        color: #088395;
     }
     
     /* Main title styling */
@@ -580,11 +624,14 @@ if not st.session_state.get('auth_complete', False):
     
     # Show dedicated login page
     st.markdown("""
-    <div style="text-align: center; padding: 3rem 2rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-         border-radius: 20px; color: white; margin: 0.5rem 0 0.75rem 0; box-shadow: 0 10px 30px rgba(0,0,0,0.1);">
+    <div style="text-align: center; padding: 3rem 2rem;
+         background: linear-gradient(135deg, #0a4d68 0%, #088395 50%, #05bfdb 100%);
+         border-radius: 20px; color: white; margin: 0.5rem 0 0.75rem 0;
+         box-shadow: 0 10px 40px rgba(8, 131, 149, 0.3);
+         border: 1px solid rgba(255, 255, 255, 0.1);">
         <div style="font-size: 3rem; font-weight: bold; margin-bottom: 1rem;">🌍</div>
-        <h1 style="margin: 0 0 1rem 0;">GeoClimate Intelligence Platform</h1>
-        <p style="font-size: 1.2rem; margin: 0; opacity: 0.9;">Please authenticate to access the platform</p>
+        <h1 style="margin: 0 0 1rem 0; font-weight: 600; letter-spacing: 1px;">GeoClimate Intelligence Platform</h1>
+        <p style="font-size: 1.2rem; margin: 0; opacity: 0.95; font-weight: 300;">Please authenticate to access the platform</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -716,9 +763,24 @@ if st.session_state.app_mode is None:
     # Hero Section
     st.markdown("""
     <div class="landing-hero">
-        <div class="landing-title">🌍 GeoClimate Intelligence Platform</div>
+        <div style="font-size: 4rem; margin-bottom: 1rem;">🌍</div>
+        <div class="landing-title">GeoClimate Intelligence Platform</div>
         <div class="landing-subtitle">
-            Unlock the power of Earth Engine climate data with advanced analytics and visualization
+            Advanced Earth observation analytics powered by Google Earth Engine
+        </div>
+        <div class="hero-stats">
+            <div class="stat-item">
+                <div class="stat-number">33+</div>
+                <div class="stat-label">Datasets</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number">25+</div>
+                <div class="stat-label">Climate Indices</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number">6</div>
+                <div class="stat-label">Analysis Tools</div>
+            </div>
         </div>
     </div>
     """, unsafe_allow_html=True)
