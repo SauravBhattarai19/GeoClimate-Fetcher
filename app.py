@@ -1030,6 +1030,23 @@ if not st.session_state.get('auth_complete', False):
 # =====================
 # If we reach here, user is authenticated
 
+# Check for admin dashboard access
+if st.query_params.get("admin") == "true":
+    from interface.admin_dashboard import render_admin_dashboard
+    render_admin_dashboard()
+    st.stop()
+
+# Check for user registration (one-time)
+from app_components.user_registration import UserRegistration
+
+user_reg = UserRegistration()
+if not user_reg.is_registered(st.session_state.project_id):
+    # Show registration form for new users
+    if not user_reg.render(st.session_state.project_id):
+        # User is filling the form, stop here
+        st.stop()
+    # Form submitted, will rerun and proceed
+
 # Global Navigation Bar - Available across all tools
 from app_components.global_navigation import render_global_navigation
 render_global_navigation(clear_authentication)
