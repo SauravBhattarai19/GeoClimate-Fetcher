@@ -7,7 +7,7 @@
 
 A Streamlit web application for downloading and analyzing climate data from Google Earth Engine. Developed as a research tool for climate data analysis and educational purposes.
 
-**Status**: Under development. Manuscript submitted for peer review.
+**Status**: Published in Environmental Modelling & Software. See [Publication](#-publication) section below.
 
 🚀 **[Try the Live Platform](https://geeclimate.streamlit.app/)** - Ready to use online!
 
@@ -265,35 +265,55 @@ streamlit run app.py
 
 ## 👨‍💻 Authors
 
-**Saurav Bhattarai**
+**Saurav Bhattarai**<sup>a</sup>
 Civil Engineer & Geospatial Developer
 📧 [saurav.bhattarai.1999@gmail.com](mailto:saurav.bhattarai.1999@gmail.com)
 🌐 [sauravbhattarai19.github.io](https://sauravbhattarai19.github.io)
 🔗 [GitHub](https://github.com/sauravbhattarai19) | [LinkedIn](https://www.linkedin.com/in/saurav-bhattarai-7133a3176/)
 
-**Supervision:**
-- Dr. Rocky Talchabhadel
-- Dr. Nawaraj Pradhan
+**Nawa Raj Pradhan**<sup>b</sup>
+
+**Rocky Talchabhadel**<sup>a</sup>
+
+<sup>a</sup> Jackson State University
 
 ## 🙏 Acknowledgments
 
-- **Google Earth Engine** - For providing the computational platform and data access
-- **Streamlit** - For the excellent web application framework
-- **ETCCDI** - For climate indices standards and definitions
-- **Claude AI** - For development assistance and code optimization
-- **Open source community** - For the many Python libraries that make this possible
+This study was conducted for the Department of War under Project No. PE 622182CX3 and PE 633042CX7, Advanced Technology and Applied Technology, Hydrology Mapping.
+
+The first author gratefully acknowledges support from the Oak Ridge Institute for Science and Education (ORISE) fellowship program under the Department of Defense at the U.S. Army Engineer Research and Development Center (ERDC), USACE.
+
+This research was supported by the Hydrological Impacts Computing, Outreach, and Resiliency Partnership (HICORPS) Project, developed in collaboration with the U.S. Army Engineer Research and Development Center (ERDC), WOOLPERT, and Taylor Engineering. Additional funding was provided by the Microsoft-Atlanta University Center (AUC) Data Science Mini-Grant Program, which advances data science research and education at Historically Black Colleges and Universities (HBCUs) through virtually integrated projects promoting innovative solutions to real-world problems.
+
+We thank Jackson State University for providing computational resources and infrastructure support throughout this research. Special appreciation goes to the JSU Water Lab for their invaluable assistance during training workshops and beta version testing phases, which were critical for platform development and validation.
+
+The authors thank Google Earth Engine for providing free access to planetary-scale computing and datasets that made this comprehensive analysis platform possible, and Streamlit for the open-source framework that enabled interactive platform deployment. We acknowledge the climate science community for developing and maintaining the ETCCDI climate indices standards that ensure scientific rigor and international comparability. Special thanks to the students and educators who provided feedback during the platform's educational component development, contributing to its pedagogical effectiveness.
+
+## 📄 Publication
+
+This platform has been published in **Environmental Modelling & Software**:
+
+**Bhattarai, S., Pradhan, N. R., & Talchabhadel, R.** (2025). GeoClimate intelligence platform: A web-based framework for environmental data analysis. *Environmental Modelling & Software*, 106826.
+
+- **DOI**: [10.1016/j.envsoft.2025.106826](https://doi.org/10.1016/j.envsoft.2025.106826)
+- **Article Link**: [https://www.sciencedirect.com/science/article/pii/S1364815225005109](https://www.sciencedirect.com/science/article/pii/S1364815225005109)
+- **License**: Open access under Creative Commons license
 
 ## 📄 Citation
 
 If you use this platform in your research, please cite:
 
 ```bibtex
-@software{geoclimate_fetcher,
-  title={GeoClimate Fetcher: A Web-Based Tool for Climate Data Analysis},
-  author={Bhattarai, Saurav},
+@article{bhattarai2025geoclimate,
+  title={GeoClimate intelligence platform: A web-based framework for environmental data analysis},
+  author={Bhattarai, Saurav and Pradhan, Nawa Raj and Talchabhadel, Rocky},
+  journal={Environmental Modelling \& Software},
+  volume={},
+  pages={106826},
   year={2025},
-  url={https://github.com/SauravBhattarai19/GeoClimate-Fetcher},
-  version={1.0.0}
+  publisher={Elsevier},
+  doi={10.1016/j.envsoft.2025.106826},
+  url={https://www.sciencedirect.com/science/article/pii/S1364815225005109}
 }
 ```
 
