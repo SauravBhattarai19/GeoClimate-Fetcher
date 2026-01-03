@@ -81,23 +81,41 @@ def _detect_temporal_resolution(ee_id):
 
 
 def get_bands_for_dataset(dataset_name):
-    """Get bands for a dataset directly from the CSV files"""
+    """
+    Get bands for a dataset using STAC API or CSV fallback.
+
+    Args:
+        dataset_name: Name of the dataset
+
+    Returns:
+        List of band names
+    """
     import os
     import pandas as pd
     from pathlib import Path
 
-    # Look in the geoclimate_fetcher data directory for CSV files
+    # Try STAC-powered MetadataCatalog first
+    try:
+        from geoclimate_fetcher.core.metadata import MetadataCatalog
+        catalog = MetadataCatalog(use_stac=True)
+        bands = catalog.get_bands_for_dataset(dataset_name)
+        if bands:
+            return bands
+    except Exception as e:
+        print(f"STAC lookup failed, falling back to CSV: {e}")
+
+    # Fallback to direct CSV reading
     data_dir = Path('geoclimate_fetcher') / 'data'
     if not data_dir.exists():
         return []
-    
+
     # Try to find the dataset in any CSV file
     for csv_file in data_dir.glob('*.csv'):
         try:
             df = pd.read_csv(csv_file)
             if 'Dataset Name' not in df.columns or 'Band Names' not in df.columns:
                 continue
-                
+
             # Find the dataset
             dataset_row = df[df['Dataset Name'] == dataset_name]
             if not dataset_row.empty:
@@ -106,7 +124,7 @@ def get_bands_for_dataset(dataset_name):
                     return [band.strip() for band in bands_str.split(',')]
         except Exception as e:
             print(f"Error reading {csv_file}: {e}")
-    
+
     # If not found, try the Datasets.csv file specifically
     datasets_file = data_dir / 'Datasets.csv'
     if datasets_file.exists():

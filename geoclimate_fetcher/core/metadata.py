@@ -1,5 +1,5 @@
 """
-Module for handling dataset metadata from CSV catalogs.
+Module for handling dataset metadata from STAC API and CSV catalogs.
 """
 import os
 import pandas as pd
@@ -7,16 +7,32 @@ from pathlib import Path
 from typing import Dict, List, Optional, Union, Tuple
 import glob
 from rapidfuzz import fuzz, process
+import logging
+
+# Import STAC modules
+try:
+    from .stac_client import STACClient
+    from .stac_cache import STACCache
+    from .dataset_models import DatasetMetadata, BandMetadata
+    STAC_AVAILABLE = True
+except ImportError as e:
+    logging.warning(f"STAC modules not available: {e}")
+    STAC_AVAILABLE = False
+
+logger = logging.getLogger(__name__)
+
 
 class MetadataCatalog:
-    """Class to manage and search dataset metadata from CSV files."""
-    
-    def __init__(self, data_dir: Optional[str] = None):
+    """Class to manage and search dataset metadata from STAC API or CSV files."""
+
+    def __init__(self, use_stac: Optional[bool] = None, data_dir: Optional[str] = None):
         """
         Initialize the metadata catalog.
-        
+
         Args:
-            data_dir: Directory containing the CSV metadata files.
+            use_stac: If True, use STAC API. If False, use CSV. If None, auto-detect
+                     (use STAC if available, fallback to CSV)
+            data_dir: Directory containing the CSV metadata files (for CSV fallback).
                      If None, defaults to 'data/' relative to the package.
         """
         if data_dir is None:
@@ -25,10 +41,53 @@ class MetadataCatalog:
             data_dir = package_dir / 'data'
         else:
             data_dir = Path(data_dir)
-            
+
         self.data_dir = data_dir
         self._catalog: Dict[str, pd.DataFrame] = {}
         self._all_datasets: Optional[pd.DataFrame] = None
+        self._datasets_cache: List[DatasetMetadata] = []
+        self._stac_client: Optional[STACClient] = None
+
+        # Determine whether to use STAC
+        if use_stac is None:
+            # Auto-detect: prefer STAC if available
+            use_stac = STAC_AVAILABLE and os.getenv('ENABLE_STAC_API', 'true').lower() == 'true'
+
+        self.use_stac = use_stac and STAC_AVAILABLE
+
+        # Initialize
+        if self.use_stac:
+            try:
+                logger.info("Initializing MetadataCatalog with STAC API")
+                self._init_stac()
+            except Exception as e:
+                logger.warning(f"STAC initialization failed: {e}")
+                # Fallback to CSV if enabled
+                if os.getenv('FALLBACK_TO_CSV', 'true').lower() == 'true':
+                    logger.info("Falling back to CSV catalog")
+                    self.use_stac = False
+                    self._load_csv_catalogs()
+                else:
+                    raise
+        else:
+            logger.info("Initializing MetadataCatalog with CSV files")
+            self._load_csv_catalogs()
+
+    def _init_stac(self):
+        """Initialize STAC client and load datasets."""
+        self._stac_client = STACClient()
+        # Load datasets from STAC (cached if available)
+        self._datasets_cache = self._stac_client.fetch_all_datasets()
+
+        # Convert to pandas DataFrame for compatibility with existing code
+        self._all_datasets = pd.DataFrame([
+            ds.to_dataframe_row() for ds in self._datasets_cache
+        ])
+
+        logger.info(f"Loaded {len(self._datasets_cache)} datasets from STAC API")
+
+    def _load_csv_catalogs(self):
+        """Load all CSV catalogs from the data directory (fallback method)."""
         self._load_catalogs()
         
     def _load_catalogs(self) -> None:
@@ -274,16 +333,169 @@ class MetadataCatalog:
     def get_snippet_type(self, dataset_name: str) -> Optional[str]:
         """
         Get the snippet type (Image/ImageCollection) for a dataset.
-        
+
         Args:
             dataset_name: The name of the dataset
-            
+
         Returns:
             Snippet type string or None if not found
         """
         dataset = self.get_dataset_by_name(dataset_name)
-        
+
         if dataset is None:
             return None
-            
+
         return dataset.get('Snippet Type')
+
+    # ========== NEW STAC-SPECIFIC METHODS ==========
+
+    def get_band_metadata(self, dataset_name: str, band_name: str) -> Optional['BandMetadata']:
+        """
+        Get detailed band metadata (STAC only).
+
+        Args:
+            dataset_name: The name of the dataset
+            band_name: The name of the band
+
+        Returns:
+            BandMetadata object or None if not found or using CSV
+        """
+        if not self.use_stac:
+            logger.debug("get_band_metadata only available with STAC API")
+            return None
+
+        dataset = next((ds for ds in self._datasets_cache if ds.name == dataset_name), None)
+        if dataset:
+            return dataset.get_band(band_name)
+        return None
+
+    def get_dataset_metadata(self, dataset_name: str) -> Optional['DatasetMetadata']:
+        """
+        Get full dataset metadata object (STAC only).
+
+        Args:
+            dataset_name: The name of the dataset
+
+        Returns:
+            DatasetMetadata object or None if not found or using CSV
+        """
+        if not self.use_stac:
+            logger.debug("get_dataset_metadata only available with STAC API")
+            return None
+
+        return next((ds for ds in self._datasets_cache if ds.name == dataset_name), None)
+
+    def get_datasets_by_provider(self, provider: str) -> pd.DataFrame:
+        """
+        Filter datasets by provider.
+
+        Args:
+            provider: Provider name
+
+        Returns:
+            DataFrame with datasets from the provider
+        """
+        if self._all_datasets is None or self._all_datasets.empty:
+            return pd.DataFrame()
+
+        return self._all_datasets[self._all_datasets['Provider'] == provider].reset_index(drop=True)
+
+    def get_all_providers(self) -> List[str]:
+        """
+        Get list of all unique providers.
+
+        Returns:
+            List of provider names
+        """
+        if self._all_datasets is None or self._all_datasets.empty:
+            return []
+
+        providers = self._all_datasets['Provider'].unique().tolist()
+        return sorted([p for p in providers if p and str(p) != 'nan'])
+
+    def get_all_categories(self) -> List[str]:
+        """
+        Get list of all unique categories.
+
+        Returns:
+            List of category names
+        """
+        if self._all_datasets is None or self._all_datasets.empty:
+            return []
+
+        # For STAC, use the Category field
+        if 'Category' in self._all_datasets.columns:
+            categories = self._all_datasets['Category'].unique().tolist()
+            return sorted([c for c in categories if c and str(c) != 'nan'])
+
+        return []
+
+    def get_all_temporal_resolutions(self) -> List[str]:
+        """
+        Get list of all unique temporal resolutions.
+
+        Returns:
+            List of temporal resolution values
+        """
+        if self._all_datasets is None or self._all_datasets.empty:
+            return []
+
+        if 'Temporal Resolution' in self._all_datasets.columns:
+            resolutions = self._all_datasets['Temporal Resolution'].unique().tolist()
+            return sorted([r for r in resolutions if r and str(r) != 'nan'])
+
+        return []
+
+    def get_statistics(self) -> Dict:
+        """
+        Get catalog statistics.
+
+        Returns:
+            Dictionary with statistics
+        """
+        if self.use_stac and self._stac_client:
+            return self._stac_client.get_statistics()
+
+        # CSV fallback
+        stats = {
+            'total_datasets': len(self._all_datasets) if self._all_datasets is not None else 0,
+            'total_providers': len(self.get_all_providers()),
+            'total_categories': len(self.get_all_categories()),
+            'cache_fresh': False,
+            'source': 'CSV'
+        }
+        return stats
+
+    def refresh_cache(self, progress_callback: Optional[callable] = None):
+        """
+        Refresh STAC cache by fetching latest data from API.
+
+        Args:
+            progress_callback: Function(current, total, message) for progress updates
+        """
+        if not self.use_stac:
+            logger.warning("refresh_cache only available with STAC API")
+            return
+
+        if self._stac_client:
+            # Clear cache and refetch
+            self._stac_client.cache.clear_cache()
+            self._datasets_cache = self._stac_client.fetch_all_datasets(
+                progress_callback=progress_callback
+            )
+
+            # Update DataFrame
+            self._all_datasets = pd.DataFrame([
+                ds.to_dataframe_row() for ds in self._datasets_cache
+            ])
+
+            logger.info(f"Cache refreshed: {len(self._datasets_cache)} datasets")
+
+    def is_using_stac(self) -> bool:
+        """
+        Check if catalog is using STAC API.
+
+        Returns:
+            True if using STAC, False if using CSV
+        """
+        return self.use_stac

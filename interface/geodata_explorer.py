@@ -213,26 +213,31 @@ def _render_dataset_selection():
         ["All", "Daily", "hourly", "Monthly", "Yearly", "Annual", "Static", "Other"]
     )
     
-    # Load datasets - try multiple methods
+    # Load datasets using STAC API (with CSV fallback)
     datasets = []
-    
-    with st.spinner("🔄 Loading dataset catalog..."):
-        # Method 1: Load from geoclimate_fetcher data directory
-        # Get project root directory first
-        current_dir = Path(__file__).parent.parent  # Go up from interface/ to project root
-        data_dir = current_dir / "geoclimate_fetcher" / "data"
-        datasets_csv = data_dir / "Datasets.csv"
-        
-        if datasets_csv.exists():
-            try:
-                df = pd.read_csv(datasets_csv)
-                # Transform CSV columns to expected format
+
+    with st.spinner("🔄 Loading Earth Engine catalog..."):
+        try:
+            # Try STAC API first
+            from geoclimate_fetcher.core.metadata import MetadataCatalog
+
+            catalog = MetadataCatalog(use_stac=True)
+
+            # Check if using STAC
+            if catalog.is_using_stac():
+                # Get all datasets from STAC
+                datasets_df = catalog.all_datasets
+                datasets = [row.to_dict() for _, row in datasets_df.iterrows()]
+                st.success(f"📂 Loaded {len(datasets)} datasets from STAC API ✨")
+            else:
+                # Using CSV fallback
+                datasets_df = catalog.all_datasets
                 datasets = []
-                for _, row in df.iterrows():
+                for _, row in datasets_df.iterrows():
                     dataset = {
                         'name': row.get('Dataset Name', 'Unknown'),
                         'ee_id': row.get('Earth Engine ID', ''),
-                        'snippet_type': row.get('Snippet Type', 'Image').strip() if pd.notna(row.get('Snippet Type')) else 'Image',  # Critical for processing logic
+                        'snippet_type': str(row.get('Snippet Type', 'Image')).strip() if pd.notna(row.get('Snippet Type')) else 'Image',
                         'description': row.get('Description', 'No description available'),
                         'category': _extract_category(row.get('Dataset Name', '')),
                         'temporal_resolution': row.get('Temporal Resolution', 'Unknown'),
@@ -244,11 +249,38 @@ def _render_dataset_selection():
                         'band_units': row.get('Band Units', '')
                     }
                     datasets.append(dataset)
-                st.success(f"📂 Loaded {len(datasets)} datasets from catalog")
-            except Exception as e:
-                st.warning(f"⚠️ Could not load catalog: {str(e)}")
-        else:
-            st.warning("⚠️ Dataset catalog not found. Using fallback datasets.")
+                st.success(f"📂 Loaded {len(datasets)} datasets from CSV catalog")
+
+        except Exception as e:
+            st.warning(f"⚠️ Error loading catalog: {str(e)}")
+            # Try direct CSV as last resort
+            current_dir = Path(__file__).parent.parent
+            data_dir = current_dir / "geoclimate_fetcher" / "data"
+            datasets_csv = data_dir / "Datasets.csv"
+
+            if datasets_csv.exists():
+                try:
+                    df = pd.read_csv(datasets_csv)
+                    datasets = []
+                    for _, row in df.iterrows():
+                        dataset = {
+                            'name': row.get('Dataset Name', 'Unknown'),
+                            'ee_id': row.get('Earth Engine ID', ''),
+                            'snippet_type': str(row.get('Snippet Type', 'Image')).strip() if pd.notna(row.get('Snippet Type')) else 'Image',
+                            'description': row.get('Description', 'No description available'),
+                            'category': _extract_category(row.get('Dataset Name', '')),
+                            'temporal_resolution': row.get('Temporal Resolution', 'Unknown'),
+                            'provider': row.get('Provider', 'Unknown'),
+                            'start_date': row.get('Start Date', ''),
+                            'end_date': row.get('End Date', ''),
+                            'pixel_size': row.get('Pixel Size (m)', ''),
+                            'band_names': row.get('Band Names', ''),
+                            'band_units': row.get('Band Units', '')
+                        }
+                        datasets.append(dataset)
+                    st.info(f"📋 Loaded {len(datasets)} datasets from CSV fallback")
+                except Exception as csv_e:
+                    st.error(f"❌ CSV fallback also failed: {csv_e}")
     
     # Fallback datasets if catalog loading fails
     if not datasets:
@@ -284,21 +316,74 @@ def _render_band_selection():
     
     # Get available bands
     bands = get_bands_for_dataset(selected_dataset.get('name', ''))
-    
+
     if bands:
-        st.markdown("### Available Bands:")
-        
-        # Band selection interface
-        selected_bands = st.multiselect(
-            "Choose bands to download:",
-            bands,
-            default=bands[:3] if len(bands) >= 3 else bands,  # Select first 3 by default
-            help="Select the spectral bands or variables you want to download"
-        )
-        
+        st.markdown(f"### Available Bands ({len(bands)}):")
+
+        # Check if we can get rich metadata from STAC
+        show_metadata = False
+        catalog = None
+        try:
+            from geoclimate_fetcher.core.metadata import MetadataCatalog
+            catalog = MetadataCatalog(use_stac=True)
+            if catalog.is_using_stac():
+                show_metadata = st.checkbox("Show detailed band information", value=False,
+                                           help="Display units, wavelengths, descriptions, and other metadata")
+        except:
+            pass
+
+        # Band selection interface with optional rich metadata
+        if show_metadata and catalog:
+            st.markdown("**Select bands (with metadata):**")
+            selected_bands = []
+
+            # Show bands with metadata in expandable sections
+            for band_name in bands[:20]:  # Limit to first 20 for performance
+                band_meta = catalog.get_band_metadata(selected_dataset.get('name', ''), band_name)
+
+                col1, col2 = st.columns([1, 5])
+
+                with col1:
+                    is_selected = st.checkbox(band_name, key=f"band_{band_name}", value=False)
+                    if is_selected:
+                        selected_bands.append(band_name)
+
+                with col2:
+                    if band_meta:
+                        meta_parts = []
+                        if band_meta.description:
+                            meta_parts.append(f"**{band_meta.description}**")
+                        if band_meta.units:
+                            meta_parts.append(f"Units: {band_meta.units}")
+                        if band_meta.wavelength:
+                            meta_parts.append(f"λ: {band_meta.wavelength}")
+                        elif band_meta.center_wavelength:
+                            meta_parts.append(f"λ: {band_meta.center_wavelength}µm")
+                        if band_meta.gsd:
+                            meta_parts.append(f"Resolution: {band_meta.gsd}m")
+
+                        if meta_parts:
+                            st.markdown(" | ".join(meta_parts))
+                        else:
+                            st.markdown("_No metadata available_")
+                    else:
+                        st.markdown("_No metadata available_")
+
+            if len(bands) > 20:
+                st.info(f"💡 Showing first 20 bands. Total: {len(bands)} bands available.")
+
+        else:
+            # Standard multiselect (faster for large band lists)
+            selected_bands = st.multiselect(
+                "Choose bands to download:",
+                bands,
+                default=bands[:3] if len(bands) >= 3 else bands,
+                help="Select the spectral bands or variables you want to download"
+            )
+
         if selected_bands:
             st.success(f"✅ Selected {len(selected_bands)} band(s)")
-            
+
             # Show band details if available
             col1, col2 = st.columns(2)
             with col1:
