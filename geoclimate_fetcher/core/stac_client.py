@@ -8,6 +8,10 @@ STAC API at storage.googleapis.com/earthengine-stac.
 import requests
 import logging
 import time
+import pickle
+import gzip
+import json
+from datetime import datetime
 from typing import Dict, List, Optional, Callable, Tuple
 from pathlib import Path
 from .dataset_models import DatasetMetadata, BandMetadata
@@ -39,6 +43,176 @@ class STACClient:
         })
 
         logger.info("STAC client initialized")
+
+    def _load_snapshot(self) -> Optional[Dict]:
+        """
+        Load pre-built STAC snapshot from repository.
+
+        Returns:
+            Snapshot dict or None if not found
+        """
+        # Try pickle first (fastest)
+        snapshot_path = Path(__file__).parent.parent / 'data' / 'stac_snapshot.pkl'
+
+        if snapshot_path.exists():
+            try:
+                logger.info("Loading pre-built STAC snapshot...")
+                with open(snapshot_path, 'rb') as f:
+                    snapshot = pickle.load(f)
+
+                # Validate snapshot structure
+                if not isinstance(snapshot, dict) or 'datasets' not in snapshot:
+                    logger.warning("Invalid snapshot structure, ignoring")
+                    return None
+
+                logger.info(f"✅ Loaded snapshot with {snapshot.get('dataset_count', 0)} datasets")
+                logger.info(f"   Generated: {snapshot.get('generated_at', 'unknown')}")
+
+                # Show age warning if old
+                self._check_snapshot_age(snapshot.get('generated_at'))
+
+                return snapshot
+
+            except Exception as e:
+                logger.warning(f"Error loading snapshot: {e}")
+                return None
+
+        # Try compressed JSON fallback
+        json_gz_path = Path(__file__).parent.parent / 'data' / 'stac_snapshot.json.gz'
+        if json_gz_path.exists():
+            try:
+                logger.info("Loading compressed JSON snapshot...")
+                with gzip.open(json_gz_path, 'rt', encoding='utf-8') as f:
+                    snapshot = json.load(f)
+
+                logger.info(f"✅ Loaded snapshot with {snapshot.get('dataset_count', 0)} datasets")
+                return snapshot
+
+            except Exception as e:
+                logger.warning(f"Error loading JSON snapshot: {e}")
+                return None
+
+        logger.info("No pre-built snapshot found")
+        return None
+
+    def _check_snapshot_age(self, generated_at_str: Optional[str]):
+        """Check snapshot age and warn if stale."""
+        if not generated_at_str:
+            return
+
+        try:
+            generated_at = datetime.fromisoformat(generated_at_str)
+            age = datetime.now() - generated_at
+            age_days = age.days
+
+            if age_days > 60:
+                logger.warning(f"⚠️  Snapshot is {age_days} days old (consider refreshing)")
+            elif age_days > 30:
+                logger.info(f"💡 Snapshot is {age_days} days old")
+            else:
+                logger.debug(f"Snapshot age: {age_days} days")
+
+        except Exception as e:
+            logger.debug(f"Could not parse snapshot age: {e}")
+
+    def _parse_snapshot_datasets(self, snapshot: Dict) -> List[DatasetMetadata]:
+        """
+        Parse snapshot data into DatasetMetadata objects.
+
+        Args:
+            snapshot: Snapshot dictionary
+
+        Returns:
+            List of DatasetMetadata objects
+        """
+        datasets = []
+
+        for ds_data in snapshot.get('datasets', []):
+            try:
+                # Parse dates
+                start_date = None
+                end_date = None
+
+                if ds_data.get('start_date'):
+                    try:
+                        start_date = datetime.fromisoformat(ds_data['start_date'])
+                    except:
+                        pass
+
+                if ds_data.get('end_date'):
+                    try:
+                        end_date = datetime.fromisoformat(ds_data['end_date'])
+                    except:
+                        pass
+
+                # Parse bands
+                bands = []
+                for band_data in ds_data.get('bands', []):
+                    band = BandMetadata(
+                        name=band_data.get('name', ''),
+                        description=band_data.get('description', ''),
+                        units=band_data.get('units'),
+                        scale=band_data.get('scale'),
+                        offset=band_data.get('offset'),
+                        wavelength=band_data.get('wavelength'),
+                        center_wavelength=band_data.get('center_wavelength'),
+                        gsd=band_data.get('gsd'),
+                        data_type=band_data.get('data_type'),
+                        bitmask=band_data.get('bitmask'),
+                        classes=band_data.get('classes'),
+                        minimum=band_data.get('minimum'),
+                        maximum=band_data.get('maximum')
+                    )
+                    bands.append(band)
+
+                # Create dataset
+                dataset = DatasetMetadata(
+                    id=ds_data.get('id', ''),
+                    name=ds_data.get('name', ''),
+                    description=ds_data.get('description', ''),
+                    provider=ds_data.get('provider', 'Unknown'),
+                    all_providers=ds_data.get('all_providers', []),
+                    snippet_type=ds_data.get('snippet_type', 'ImageCollection'),
+                    start_date=start_date,
+                    end_date=end_date,
+                    temporal_resolution=ds_data.get('temporal_resolution', 'Unknown'),
+                    pixel_size=ds_data.get('pixel_size'),
+                    bands=bands,
+                    keywords=ds_data.get('keywords', []),
+                    license=ds_data.get('license', 'Unknown'),
+                    stac_version=ds_data.get('stac_version', '1.0.0'),
+                    category=ds_data.get('category', 'Other'),
+                    spatial_extent=ds_data.get('spatial_extent')
+                )
+                datasets.append(dataset)
+
+            except Exception as e:
+                logger.warning(f"Error parsing dataset {ds_data.get('name', 'unknown')}: {e}")
+                continue
+
+        return datasets
+
+    def get_snapshot_age_days(self) -> Optional[int]:
+        """
+        Get age of current snapshot in days.
+
+        Returns:
+            Age in days or None if no snapshot
+        """
+        snapshot = self._load_snapshot()
+        if not snapshot:
+            return None
+
+        generated_at_str = snapshot.get('generated_at')
+        if not generated_at_str:
+            return None
+
+        try:
+            generated_at = datetime.fromisoformat(generated_at_str)
+            age = datetime.now() - generated_at
+            return age.days
+        except:
+            return None
 
     def _fetch_with_retry(self, url: str) -> Dict:
         """
@@ -193,15 +367,22 @@ class STACClient:
         self,
         providers: Optional[List[str]] = None,
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
-        max_datasets: Optional[int] = None
+        max_datasets: Optional[int] = None,
+        force_refresh: bool = False
     ) -> List[DatasetMetadata]:
         """
-        Fetch all datasets from STAC API with optional filtering.
+        Fetch all datasets from pre-built snapshot, cache, or STAC API.
+
+        Priority order (unless force_refresh=True):
+        1. Pre-built snapshot (instant, ~0.5s)
+        2. Cache (fast, if fresh)
+        3. STAC API (slow, ~2-3 min)
 
         Args:
             providers: Filter by specific providers (None = all providers)
             progress_callback: Function(current, total, message) for progress updates
             max_datasets: Maximum number of datasets to fetch (for testing)
+            force_refresh: Skip snapshot/cache and fetch from API
 
         Returns:
             List of DatasetMetadata objects
@@ -209,21 +390,37 @@ class STACClient:
         Raises:
             requests.RequestException: If critical fetch fails
         """
-        # Check cache first
-        cached = self.cache.get_all_datasets()
-        if cached:
-            logger.info(f"Using cached dataset list ({len(cached)} datasets)")
-            if progress_callback:
-                progress_callback(1, 1, f"Loaded {len(cached)} datasets from cache")
+        if not force_refresh:
+            # Priority 1: Check for pre-built snapshot (FASTEST - instant load!)
+            snapshot = self._load_snapshot()
+            if snapshot:
+                datasets = self._parse_snapshot_datasets(snapshot)
 
-            # Apply provider filter if specified
-            if providers:
-                cached = [ds for ds in cached if ds.provider in providers]
-                logger.info(f"Filtered to {len(cached)} datasets from providers: {providers}")
+                if progress_callback:
+                    progress_callback(1, 1, f"✅ Loaded {len(datasets)} datasets from snapshot")
 
-            return cached
+                # Apply provider filter if specified
+                if providers:
+                    datasets = [ds for ds in datasets if ds.provider in providers]
+                    logger.info(f"Filtered to {len(datasets)} datasets from providers: {providers}")
 
-        # Fetch from API
+                return datasets
+
+            # Priority 2: Check cache
+            cached = self.cache.get_all_datasets()
+            if cached:
+                logger.info(f"Using cached dataset list ({len(cached)} datasets)")
+                if progress_callback:
+                    progress_callback(1, 1, f"Loaded {len(cached)} datasets from cache")
+
+                # Apply provider filter if specified
+                if providers:
+                    cached = [ds for ds in cached if ds.provider in providers]
+                    logger.info(f"Filtered to {len(cached)} datasets from providers: {providers}")
+
+                return cached
+
+        # Priority 3: Fetch from API (SLOWEST - 2-3 minutes)
         logger.info("Fetching all datasets from STAC API (this may take a few minutes)")
 
         # Get root catalog

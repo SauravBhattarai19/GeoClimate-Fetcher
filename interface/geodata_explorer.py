@@ -318,7 +318,37 @@ def _render_band_selection():
     bands = get_bands_for_dataset(selected_dataset.get('name', ''))
 
     if bands:
-        st.markdown(f"### Available Bands ({len(bands)}):")
+        st.markdown(f"### Available Bands ({len(bands)} total):")
+
+        # Initialize session state for band pagination
+        if 'band_show_count' not in st.session_state:
+            st.session_state.band_show_count = 15
+
+        # Add band search filter
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            band_search = st.text_input(
+                "🔍 Filter bands:",
+                placeholder="e.g., temperature, B4, precipitation",
+                help="Search by band name (case-insensitive)",
+                key="band_search_filter"
+            )
+        with col2:
+            # Quick select all/none
+            col_a, col_b = st.columns(2)
+            with col_a:
+                select_all = st.button("✅ All", help="Select all visible bands", use_container_width=True)
+            with col_b:
+                select_none = st.button("❌ None", help="Deselect all", use_container_width=True)
+
+        # Filter bands based on search
+        if band_search:
+            filtered_bands = [b for b in bands if band_search.lower() in b.lower()]
+        else:
+            filtered_bands = bands
+
+        if len(filtered_bands) < len(bands):
+            st.info(f"📊 Showing {len(filtered_bands)} of {len(bands)} bands (filtered)")
 
         # Check if we can get rich metadata from STAC
         show_metadata = False
@@ -332,21 +362,40 @@ def _render_band_selection():
         except:
             pass
 
+        # Determine bands to show (with pagination)
+        show_count = min(st.session_state.band_show_count, len(filtered_bands))
+        visible_bands = filtered_bands[:show_count]
+
+        # Initialize selected_bands from session state or create new
+        if 'selected_bands_list' not in st.session_state:
+            st.session_state.selected_bands_list = []
+
+        # Handle select all/none
+        if select_all:
+            st.session_state.selected_bands_list = list(set(st.session_state.selected_bands_list + visible_bands))
+        if select_none:
+            st.session_state.selected_bands_list = []
+
         # Band selection interface with optional rich metadata
         if show_metadata and catalog:
             st.markdown("**Select bands (with metadata):**")
-            selected_bands = []
 
-            # Show bands with metadata in expandable sections
-            for band_name in bands[:20]:  # Limit to first 20 for performance
+            # Show bands with metadata
+            for band_name in visible_bands:
                 band_meta = catalog.get_band_metadata(selected_dataset.get('name', ''), band_name)
 
                 col1, col2 = st.columns([1, 5])
 
                 with col1:
-                    is_selected = st.checkbox(band_name, key=f"band_{band_name}", value=False)
-                    if is_selected:
-                        selected_bands.append(band_name)
+                    is_selected = st.checkbox(
+                        band_name,
+                        key=f"band_meta_{band_name}",
+                        value=band_name in st.session_state.selected_bands_list
+                    )
+                    if is_selected and band_name not in st.session_state.selected_bands_list:
+                        st.session_state.selected_bands_list.append(band_name)
+                    elif not is_selected and band_name in st.session_state.selected_bands_list:
+                        st.session_state.selected_bands_list.remove(band_name)
 
                 with col2:
                     if band_meta:
@@ -369,17 +418,25 @@ def _render_band_selection():
                     else:
                         st.markdown("_No metadata available_")
 
-            if len(bands) > 20:
-                st.info(f"💡 Showing first 20 bands. Total: {len(bands)} bands available.")
+            # Load more button
+            if len(filtered_bands) > show_count:
+                remaining = len(filtered_bands) - show_count
+                if st.button(f"⬇️ Load {min(15, remaining)} more bands", use_container_width=True):
+                    st.session_state.band_show_count += 15
+                    st.rerun()
+
+            selected_bands = st.session_state.selected_bands_list
 
         else:
             # Standard multiselect (faster for large band lists)
             selected_bands = st.multiselect(
                 "Choose bands to download:",
-                bands,
-                default=bands[:3] if len(bands) >= 3 else bands,
-                help="Select the spectral bands or variables you want to download"
+                filtered_bands,
+                default=filtered_bands[:3] if len(filtered_bands) >= 3 else filtered_bands,
+                help="Select the spectral bands or variables you want to download",
+                key="band_multiselect"
             )
+            st.session_state.selected_bands_list = selected_bands
 
         if selected_bands:
             st.success(f"✅ Selected {len(selected_bands)} band(s)")
