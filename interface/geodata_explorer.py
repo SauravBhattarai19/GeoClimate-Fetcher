@@ -1204,25 +1204,87 @@ def _render_geemap_preview():
                 overall_min = float(np.percentile(all_min_values, 5))
                 overall_max = float(np.percentile(all_max_values, 95))
 
-            # Add all images as layers
-            show_all = st.checkbox("Show all layers at once", value=False,
-                                   help="Warning: This may make the map slower")
+            # Get available dates from collection
+            with st.spinner("📅 Loading available dates..."):
+                # Get all timestamps efficiently
+                timestamps = collection.aggregate_array('system:time_start').getInfo()
 
-            img_list = collection.toList(num_images)
+                # Convert to datetime objects and sort
+                available_dates = sorted([datetime.fromtimestamp(ts / 1000) for ts in timestamps])
 
-            with st.spinner(f"🗺️ Adding {num_images} layers to map..."):
-                for i in range(num_images):
-                    img = ee.Image(img_list.get(i))
+                if not available_dates:
+                    st.error("❌ No dates found in collection")
+                    return
 
-                    # Get date for layer name
-                    try:
-                        date_millis = img.get('system:time_start').getInfo()
-                        date_obj = datetime.fromtimestamp(date_millis / 1000)
-                        date_str = date_obj.strftime('%Y-%m-%d')
-                    except:
-                        date_str = f"Image {i+1}"
+            # Date selection UI
+            st.markdown("---")
+            col1, col2 = st.columns([3, 1])
 
-                    # Use consistent vis params
+            with col1:
+                st.markdown("**📅 Select Date to Visualize:**")
+
+                # Check if we should show all layers mode
+                show_all_mode = st.checkbox(
+                    f"Load all {len(available_dates)} images (slower, may take 2-3 minutes)",
+                    value=False,
+                    help="⚠️ This loads all images as layers. Use date picker for instant preview."
+                )
+
+            with col2:
+                st.metric("Available Images", len(available_dates))
+
+            if not show_all_mode:
+                # FAST MODE: Single image selection with date picker
+
+                # Date selection method
+                date_method = st.radio(
+                    "Selection method:",
+                    ["Date Picker", "Slider (Index)", "Latest Image"],
+                    horizontal=True,
+                    help="Choose how to select the image date"
+                )
+
+                if date_method == "Latest Image":
+                    selected_date = available_dates[-1]
+                    st.info(f"📅 Showing latest image: **{selected_date.strftime('%Y-%m-%d %H:%M')}**")
+
+                elif date_method == "Date Picker":
+                    # Date picker
+                    selected_date_input = st.date_input(
+                        "Select date:",
+                        value=available_dates[-1].date(),
+                        min_value=available_dates[0].date(),
+                        max_value=available_dates[-1].date(),
+                        help="Pick a date from the calendar"
+                    )
+
+                    # Find closest available date
+                    selected_date_dt = datetime.combine(selected_date_input, datetime.min.time())
+                    selected_date = min(available_dates, key=lambda d: abs((d - selected_date_dt).total_seconds()))
+
+                    if (selected_date.date() - selected_date_input).days != 0:
+                        st.info(f"ℹ️ Closest available date: **{selected_date.strftime('%Y-%m-%d')}**")
+
+                else:  # Slider
+                    selected_idx = st.slider(
+                        "Image index:",
+                        min_value=0,
+                        max_value=len(available_dates) - 1,
+                        value=len(available_dates) - 1,
+                        help=f"Slide to select image (0 = oldest, {len(available_dates)-1} = newest)"
+                    )
+                    selected_date = available_dates[selected_idx]
+                    st.info(f"📅 Selected: **{selected_date.strftime('%Y-%m-%d %H:%M')}** (Image {selected_idx + 1} of {len(available_dates)})")
+
+                # Load only the selected image (FAST!)
+                with st.spinner(f"🗺️ Loading image for {selected_date.strftime('%Y-%m-%d')}..."):
+                    # Filter collection to selected date
+                    selected_timestamp = int(selected_date.timestamp() * 1000)
+                    selected_image = collection.filter(
+                        ee.Filter.eq('system:time_start', selected_timestamp)
+                    ).first()
+
+                    # Visualization parameters
                     vis_params = {
                         'bands': [selected_band],
                         'min': overall_min,
@@ -1230,10 +1292,50 @@ def _render_geemap_preview():
                         'palette': vis_config['palette']
                     }
 
-                    # Show only last layer by default (unless show_all is checked)
-                    show_layer = show_all or (i == num_images - 1)
+                    # Add single layer
+                    date_str = selected_date.strftime('%Y-%m-%d %H:%M')
+                    Map.addLayer(selected_image, vis_params, f"{selected_band} - {date_str}", True)
 
-                    Map.addLayer(img, vis_params, f"{selected_band} - {date_str}", show_layer)
+                    st.success(f"✅ Loaded 1 image in ~2 seconds (instead of {len(available_dates)} images in 2-3 minutes!)")
+
+            else:
+                # LEGACY MODE: Load all images (slow but shows all layers)
+                st.warning(f"⚠️ Loading all {len(available_dates)} images. This may take 2-3 minutes...")
+
+                img_list = collection.toList(num_images)
+
+                show_all_layers = st.checkbox(
+                    "Show all layers at once",
+                    value=False,
+                    help="Warning: This may make the map very slow"
+                )
+
+                with st.spinner(f"🗺️ Adding {num_images} layers to map..."):
+                    for i in range(num_images):
+                        img = ee.Image(img_list.get(i))
+
+                        # Get date for layer name
+                        try:
+                            date_millis = img.get('system:time_start').getInfo()
+                            date_obj = datetime.fromtimestamp(date_millis / 1000)
+                            date_str = date_obj.strftime('%Y-%m-%d')
+                        except:
+                            date_str = f"Image {i+1}"
+
+                        # Use consistent vis params
+                        vis_params = {
+                            'bands': [selected_band],
+                            'min': overall_min,
+                            'max': overall_max,
+                            'palette': vis_config['palette']
+                        }
+
+                        # Show only last layer by default (unless show_all_layers is checked)
+                        show_layer = show_all_layers or (i == num_images - 1)
+
+                        Map.addLayer(img, vis_params, f"{selected_band} - {date_str}", show_layer)
+
+                st.success(f"✅ Loaded all {num_images} layers. Use layer control (top-right) to toggle dates.")
 
             # Add colorbar
             colorbar_vis = {'min': overall_min, 'max': overall_max, 'palette': vis_config['palette']}
@@ -1248,7 +1350,12 @@ def _render_geemap_preview():
         # Display the map
         Map.to_streamlit(height=600)
 
-        st.success("✅ Preview loaded! Use the layer control (top-right) to toggle between dates.")
+        # Context-aware success message
+        if not is_static:
+            if not show_all_mode:
+                st.info("💡 **Tip:** Use the date selection controls above to view different dates instantly!")
+            else:
+                st.success("✅ Preview loaded! Use the layer control (top-right) to toggle between dates.")
 
     except Exception as e:
         st.error(f"❌ Error creating preview: {str(e)}")
