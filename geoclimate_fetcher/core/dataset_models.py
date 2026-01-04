@@ -96,6 +96,36 @@ class DatasetMetadata:
     category: str = "Other"
     spatial_extent: Optional[Dict[str, Any]] = None
 
+    @staticmethod
+    def _normalize_snippet_type(raw_type: str) -> str:
+        """
+        Normalize STAC snippet type to expected format.
+
+        STAC returns: 'image_collection', 'image', 'table', etc.
+        Code expects: 'ImageCollection', 'Image', 'Table', etc.
+
+        Args:
+            raw_type: Raw type from STAC (e.g., 'image_collection')
+
+        Returns:
+            Normalized type (e.g., 'ImageCollection')
+        """
+        # Mapping from STAC format to expected format
+        type_mapping = {
+            'image_collection': 'ImageCollection',
+            'image': 'Image',
+            'table': 'Table',
+            'bigquery_table': 'BigQueryTable',
+            'table_collection': 'TableCollection'
+        }
+
+        # Return mapped value or convert to CamelCase as fallback
+        if raw_type in type_mapping:
+            return type_mapping[raw_type]
+
+        # Fallback: convert snake_case to CamelCase
+        return ''.join(word.capitalize() for word in raw_type.split('_'))
+
     @classmethod
     def from_stac_collection(cls, collection: Dict[str, Any]) -> 'DatasetMetadata':
         """
@@ -166,8 +196,9 @@ class DatasetMetadata:
         if gsd_list:
             pixel_size = gsd_list[0] if isinstance(gsd_list, list) else gsd_list
 
-        # Extract snippet type (gee:type)
-        snippet_type = collection.get('gee:type', 'ImageCollection')
+        # Extract snippet type (gee:type) and normalize to CamelCase
+        raw_snippet_type = collection.get('gee:type', 'image_collection')
+        snippet_type = cls._normalize_snippet_type(raw_snippet_type)
 
         # Extract keywords
         keywords = collection.get('keywords', [])

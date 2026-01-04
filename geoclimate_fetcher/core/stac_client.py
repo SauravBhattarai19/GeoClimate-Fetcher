@@ -166,13 +166,17 @@ class STACClient:
                     bands.append(band)
 
                 # Create dataset
+                # Normalize snippet_type from snapshot (handles old lowercase format)
+                raw_snippet_type = ds_data.get('snippet_type', 'image_collection')
+                normalized_snippet_type = DatasetMetadata._normalize_snippet_type(raw_snippet_type)
+
                 dataset = DatasetMetadata(
                     id=ds_data.get('id', ''),
                     name=ds_data.get('name', ''),
                     description=ds_data.get('description', ''),
                     provider=ds_data.get('provider', 'Unknown'),
                     all_providers=ds_data.get('all_providers', []),
-                    snippet_type=ds_data.get('snippet_type', 'ImageCollection'),
+                    snippet_type=normalized_snippet_type,
                     start_date=start_date,
                     end_date=end_date,
                     temporal_resolution=ds_data.get('temporal_resolution', 'Unknown'),
