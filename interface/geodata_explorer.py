@@ -11,8 +11,11 @@ import os
 import ee
 import numpy as np
 import geemap.foliumap as geemap
+import logging
 from pathlib import Path
 from datetime import datetime, timedelta
+
+logger = logging.getLogger(__name__)
 
 # Import core components
 from geoclimate_fetcher.core import (
@@ -1183,26 +1186,47 @@ def _render_geemap_preview():
 
                 # Sample up to 20 images for statistics (performance optimization)
                 sample_size = min(num_images, 20)
-                sample_collection = _sample_evenly_spaced(collection, sample_size)
-                sample_list = sample_collection.toList(sample_size)
 
-                for i in range(sample_size):
-                    img = ee.Image(sample_list.get(i))
-                    stats = img.select(selected_band).reduceRegion(
-                        reducer=ee.Reducer.minMax(),
-                        geometry=geometry,
-                        scale=5000,
-                        maxPixels=1e8
-                    ).getInfo()
+                if sample_size > 0:
+                    try:
+                        sample_collection = _sample_evenly_spaced(collection, sample_size)
+                        sample_list = sample_collection.toList(sample_size)
 
-                    vmin = stats.get(f'{selected_band}_min', 0)
-                    vmax = stats.get(f'{selected_band}_max', 100)
-                    all_min_values.append(vmin)
-                    all_max_values.append(vmax)
+                        for i in range(sample_size):
+                            try:
+                                img = ee.Image(sample_list.get(i))
+                                stats = img.select(selected_band).reduceRegion(
+                                    reducer=ee.Reducer.minMax(),
+                                    geometry=geometry,
+                                    scale=5000,
+                                    maxPixels=1e8
+                                ).getInfo()
 
-                # Calculate percentile range
-                overall_min = float(np.percentile(all_min_values, 5))
-                overall_max = float(np.percentile(all_max_values, 95))
+                                vmin = stats.get(f'{selected_band}_min')
+                                vmax = stats.get(f'{selected_band}_max')
+
+                                # Only add valid values
+                                if vmin is not None and vmax is not None:
+                                    all_min_values.append(vmin)
+                                    all_max_values.append(vmax)
+
+                            except Exception as e:
+                                logger.warning(f"Failed to get stats for image {i}: {e}")
+                                continue
+
+                    except Exception as e:
+                        logger.warning(f"Failed to sample collection: {e}")
+
+                # Calculate percentile range (with fallback to vis_config defaults)
+                if all_min_values and all_max_values:
+                    overall_min = float(np.percentile(all_min_values, 5))
+                    overall_max = float(np.percentile(all_max_values, 95))
+                else:
+                    # Fallback to default range from vis_config
+                    logger.warning("No stats available, using default range")
+                    overall_min = vis_config.get('min', 0)
+                    overall_max = vis_config.get('max', 100)
+                    st.warning("⚠️ Could not calculate value range. Using default visualization parameters.")
 
             # Get available dates from collection
             with st.spinner("📅 Loading available dates..."):
