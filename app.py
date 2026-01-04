@@ -1075,8 +1075,12 @@ if st.session_state.app_mode is None:
         </div>
         <div class="hero-stats">
             <div class="stat-item">
-                <div class="stat-number">33+</div>
+                <div class="stat-number">900+</div>
                 <div class="stat-label">Datasets</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number">90+</div>
+                <div class="stat-label">Petabytes of Data</div>
             </div>
             <div class="stat-item">
                 <div class="stat-number">25+</div>
@@ -1127,7 +1131,7 @@ if st.session_state.app_mode is None:
             <span class="tool-icon">🔍</span>
             <div class="tool-title">GeoData Explorer</div>
             <div class="tool-description">
-                Browse and download from 33+ Earth Engine datasets with interactive geemap preview.
+                Access 90+ petabytes of Earth observation data from 900+ Earth Engine datasets with interactive geemap preview.
                 Adaptive temporal aggregation handles hourly to yearly data. Export to GeoTIFF, NetCDF, and CSV.
             </div>
         </div>
