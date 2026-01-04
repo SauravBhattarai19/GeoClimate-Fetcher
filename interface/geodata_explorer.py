@@ -45,8 +45,8 @@ def render_geodata_explorer():
 
     # App title and header
     st.markdown('<h1 class="main-title">🔍 GeoData Explorer</h1>', unsafe_allow_html=True)
-    st.markdown("### Download and visualize from 900+ Earth Engine datasets")
-    st.caption("🌍 Powered by Google Earth Engine STAC API • Climate, Weather, Land Cover, Vegetation & More")
+    st.markdown("### Access 90+ petabytes of Earth observation data")
+    st.caption("🌍 Powered by Google Earth Engine STAC API • 900+ datasets • Climate, Weather, Land Cover, Vegetation & More")
     
     # Initialize session state for post-download persistence
     if 'post_download_active' not in st.session_state:
