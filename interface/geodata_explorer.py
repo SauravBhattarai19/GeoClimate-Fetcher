@@ -10,7 +10,8 @@ import time
 import os
 import ee
 import numpy as np
-import geemap.foliumap as geemap
+# Use compatibility wrapper for geemap to avoid BoxKeyError
+from geemap_compat import geemap
 import logging
 from pathlib import Path
 from datetime import datetime, timedelta

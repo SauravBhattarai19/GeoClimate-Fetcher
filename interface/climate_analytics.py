@@ -9,7 +9,8 @@ import json
 import time
 from pathlib import Path
 from datetime import datetime, timedelta
-import geemap.foliumap as geemap
+# Use compatibility wrapper for geemap to avoid BoxKeyError
+from geemap_compat import geemap
 
 # Import core components
 from geoclimate_fetcher.core import (

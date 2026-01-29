@@ -15,7 +15,8 @@ st.set_page_config(
 
 # Now import the rest of the modules
 import ee
-import geemap.foliumap as geemap
+# Use compatibility wrapper for geemap to avoid BoxKeyError on Streamlit Cloud
+from geemap_compat import geemap
 import folium
 from folium.plugins import Draw
 from datetime import datetime, timedelta
