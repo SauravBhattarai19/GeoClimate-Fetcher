@@ -1,5 +1,6 @@
 earthengine-api>=0.1.380
 geemap>=0.34.0
+python-box<7.0.0
 ipyleaflet>=0.18.0
 ipywidgets>=8.1.0
 pandas
