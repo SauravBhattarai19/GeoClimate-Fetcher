@@ -25,6 +25,7 @@ if str(geoclimate_path) not in sys.path:
     sys.path.insert(0, str(geoclimate_path))
 
 from geoclimate_fetcher.core import GeometryHandler, MetadataCatalog, GEEExporter, GeometrySelectionWidget
+from geoclimate_fetcher.core.dataset_config import DatasetConfig
 from geoclimate_fetcher.core.product_selector import MeteostatHandler, GriddedDataHandler, StatisticalAnalyzer
 from streamlit_folium import st_folium
 from app_components.product_selector_visualizer import ProductSelectorVisualizer
@@ -83,9 +84,9 @@ class ProductSelectorComponent:
             st.session_state.ps_custom_data_mode = False
     
     def _load_data_catalogs(self):
-        """Load station metadata and dataset catalogs"""
+        """Load station metadata and dataset catalogs with STAC integration"""
         try:
-            # Load meteostat stations
+            # Load meteostat stations (unchanged)
             stations_path = project_root / "geoclimate_fetcher" / "data" / "meteostat_stations.csv"
             if stations_path.exists():
                 self.meteostat_stations = pd.read_csv(stations_path)
@@ -94,25 +95,26 @@ class ProductSelectorComponent:
                 self.meteostat_stations = None
                 st.session_state.meteostat_available = False
 
-            # Load climate datasets from datasets.json
-            datasets_path = project_root / "geoclimate_fetcher" / "data" / "datasets.json"
+            # Use DatasetConfig with STAC enrichment (same as climate_analytics & hydrology)
+            config = DatasetConfig(use_stac=True)
 
-            if datasets_path.exists():
-                with open(datasets_path, 'r') as f:
-                    datasets_config = json.load(f)
+            # Get STAC-enriched datasets for both precipitation and temperature
+            precip_datasets_dict = config.get_datasets_for_analysis('precipitation')
+            temp_datasets_dict = config.get_datasets_for_analysis('temperature')
 
-                # Transform JSON to CSV-like format for existing UI
-                self.precipitation_datasets = self._extract_datasets_by_type(
-                    datasets_config["datasets"], "precipitation"
-                )
-                self.temperature_datasets = self._extract_datasets_by_type(
-                    datasets_config["datasets"], "temperature"
-                )
-            else:
-                self.precipitation_datasets = pd.DataFrame()
-                self.temperature_datasets = pd.DataFrame()
+            # Transform enriched data to DataFrame format expected by UI
+            self.precipitation_datasets = self._transform_enriched_to_dataframe(
+                precip_datasets_dict, 'precipitation'
+            )
+            self.temperature_datasets = self._transform_enriched_to_dataframe(
+                temp_datasets_dict, 'temperature'
+            )
+
+            logging.info(f"Loaded {len(self.precipitation_datasets)} precipitation datasets from STAC")
+            logging.info(f"Loaded {len(self.temperature_datasets)} temperature datasets from STAC")
 
         except Exception as e:
+            logging.error(f"Error loading data catalogs: {str(e)}")
             st.error(f"Error loading data catalogs: {str(e)}")
             self.meteostat_stations = None
             self.precipitation_datasets = pd.DataFrame()
@@ -163,6 +165,65 @@ class ProductSelectorComponent:
 
         # Fallback - return first available band
         return list(bands_dict.values())[0]
+
+    def _transform_enriched_to_dataframe(self, datasets_dict, analysis_type):
+        """
+        Transform STAC-enriched datasets dictionary to DataFrame format for UI.
+
+        Args:
+            datasets_dict: Dictionary of STAC-enriched datasets from DatasetConfig
+            analysis_type: 'precipitation' or 'temperature'
+
+        Returns:
+            DataFrame with columns expected by ProductSelector UI
+        """
+        rows = []
+
+        for ee_id, ds_info in datasets_dict.items():
+            # Get band info for the analysis type
+            bands = ds_info.get('bands', {})
+
+            if analysis_type == 'temperature':
+                # Prioritize temperature_max, then tmin, then tmean
+                band_info = (bands.get('temperature_max') or
+                           bands.get('temperature_min') or
+                           bands.get('temperature_mean'))
+            else:  # precipitation
+                band_info = bands.get('precipitation')
+
+            if not band_info:
+                # Skip datasets that don't have the required band
+                continue
+
+            # Build row matching CSV format expectations
+            row = {
+                "Dataset Name": ds_info.get('name', ee_id),
+                "Earth Engine ID": ee_id,
+                "Provider": ds_info.get('provider', 'Unknown'),
+                "Start Date": ds_info.get('start_date', ''),
+                "End Date": ds_info.get('end_date', ''),
+                "Pixel Size (m)": ds_info.get('pixel_size_m', ''),
+                "Temporal Resolution": ds_info.get('temporal_resolution', ''),
+                "Band Names": band_info.get('band_name', ''),
+                "Band Units": band_info.get('unit', ''),
+                "Original Units": self._format_original_units(band_info),
+                "Description": ds_info.get('description', '')
+            }
+
+            rows.append(row)
+
+        return pd.DataFrame(rows)
+
+    def _format_original_units(self, band_info):
+        """Format original units string with conversion info"""
+        original_unit = band_info.get('original_unit', '')
+        scaling = band_info.get('scaling_factor', 1.0)
+        offset = band_info.get('offset', 0.0)
+
+        if scaling != 1.0 or offset != 0.0:
+            return f"{original_unit} (auto-converted)"
+        else:
+            return f"{original_unit} (native)"
 
     def render(self):
         """Render the main component interface"""

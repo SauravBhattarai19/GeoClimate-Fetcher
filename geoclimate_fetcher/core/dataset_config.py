@@ -1,6 +1,7 @@
 """
 Dataset Configuration Utilities
 Handles loading and processing of datasets.json configuration file
+Enriches climate-specific config with general metadata from STAC API
 """
 
 import json
@@ -9,17 +10,21 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import pandas as pd
 from datetime import datetime, date
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class DatasetConfig:
-    """Handles dataset configuration from JSON file"""
+    """Handles dataset configuration from JSON file with STAC enrichment"""
 
-    def __init__(self, config_path: Optional[str] = None):
+    def __init__(self, config_path: Optional[str] = None, use_stac: bool = True):
         """
         Initialize with dataset configuration
 
         Args:
             config_path: Path to datasets.json file. If None, uses default location.
+            use_stac: If True, enrich datasets with STAC metadata (default: True)
         """
         if config_path is None:
             # Default location
@@ -28,7 +33,12 @@ class DatasetConfig:
             base_path = Path(config_path)
 
         self.config_path = base_path
+        self.use_stac = use_stac
         self._config = self._load_config()
+
+        # Enrich from STAC if enabled
+        if self.use_stac:
+            self._enrich_from_stac()
 
     def _load_config(self) -> Dict:
         """Load configuration from JSON file"""
@@ -39,6 +49,96 @@ class DatasetConfig:
             raise FileNotFoundError(f"Dataset configuration not found at: {self.config_path}")
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON in configuration file: {e}")
+
+    def _enrich_from_stac(self):
+        """
+        Enrich dataset configurations with metadata from STAC API.
+
+        Adds: name, provider, start_date, end_date, temporal_resolution,
+        pixel_size_m, snippet_type, geographic_coverage, description
+        """
+        try:
+            from .metadata import MetadataCatalog
+
+            logger.info("Enriching climate datasets from STAC API...")
+            catalog = MetadataCatalog(use_stac=True)
+
+            if not catalog.is_using_stac():
+                logger.warning("STAC API not available, using minimal config only")
+                return
+
+            enriched_count = 0
+            for ee_id in self._config.get('datasets', {}).keys():
+                stac_metadata = catalog.get_dataset_by_ee_id(ee_id)
+
+                if stac_metadata:
+                    dataset_config = self._config['datasets'][ee_id]
+
+                    # Enrich with STAC metadata (only if not already present)
+                    dataset_config['id'] = ee_id
+                    dataset_config['name'] = stac_metadata.get('name', stac_metadata.get('title', ee_id))
+                    dataset_config['provider'] = stac_metadata.get('provider', 'Unknown')
+
+                    # Handle dates - STAC provides datetime objects or strings
+                    start_date = stac_metadata.get('start_date')
+                    end_date = stac_metadata.get('end_date')
+
+                    if start_date:
+                        if isinstance(start_date, datetime):
+                            dataset_config['start_date'] = start_date.strftime('%Y-%m-%d')
+                        elif isinstance(start_date, str):
+                            # Parse and reformat if needed
+                            try:
+                                dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+                                dataset_config['start_date'] = dt.strftime('%Y-%m-%d')
+                            except:
+                                dataset_config['start_date'] = start_date[:10]  # Take first 10 chars
+
+                    if end_date:
+                        if isinstance(end_date, datetime):
+                            dataset_config['end_date'] = end_date.strftime('%Y-%m-%d')
+                        elif isinstance(end_date, str):
+                            try:
+                                dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+                                dataset_config['end_date'] = dt.strftime('%Y-%m-%d')
+                            except:
+                                dataset_config['end_date'] = end_date[:10]
+                    else:
+                        # No end date means ongoing dataset
+                        dataset_config['end_date'] = datetime.now().strftime('%Y-%m-%d')
+
+                    dataset_config['temporal_resolution'] = stac_metadata.get('temporal_resolution', 'Unknown')
+                    dataset_config['pixel_size_m'] = stac_metadata.get('pixel_size', stac_metadata.get('gsd', None))
+                    dataset_config['snippet_type'] = stac_metadata.get('snippet_type', 'ImageCollection')
+                    dataset_config['description'] = stac_metadata.get('description', '')
+
+                    # Try to determine geographic coverage
+                    spatial_extent = stac_metadata.get('spatial_extent')
+                    if spatial_extent:
+                        # Simple heuristic: if bbox is roughly global
+                        bbox = spatial_extent.get('bbox', [[]])
+                        if bbox and len(bbox[0]) == 4:
+                            lon_range = abs(bbox[0][2] - bbox[0][0])
+                            lat_range = abs(bbox[0][3] - bbox[0][1])
+                            if lon_range > 300 and lat_range > 150:
+                                dataset_config['geographic_coverage'] = 'Global'
+                            else:
+                                dataset_config['geographic_coverage'] = 'Regional'
+                    else:
+                        dataset_config['geographic_coverage'] = 'Unknown'
+
+                    enriched_count += 1
+                    logger.debug(f"Enriched {ee_id} from STAC")
+                else:
+                    logger.warning(f"Could not find {ee_id} in STAC catalog")
+
+            logger.info(f"Successfully enriched {enriched_count}/{len(self._config['datasets'])} datasets from STAC")
+
+        except ImportError as e:
+            logger.warning(f"STAC modules not available: {e}")
+        except Exception as e:
+            logger.error(f"Error enriching from STAC: {e}")
+            # Continue with minimal config if STAC enrichment fails
 
     def get_datasets_for_analysis(self, analysis_type: str) -> Dict[str, Dict]:
         """

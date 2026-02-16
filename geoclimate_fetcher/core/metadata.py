@@ -385,6 +385,34 @@ class MetadataCatalog:
 
         return next((ds for ds in self._datasets_cache if ds.name == dataset_name), None)
 
+    def get_dataset_by_ee_id(self, ee_id: str) -> Optional[Dict]:
+        """
+        Get dataset metadata by Earth Engine ID.
+        Works with both STAC and CSV backends.
+
+        Args:
+            ee_id: Earth Engine asset ID (e.g., 'ECMWF/ERA5/DAILY')
+
+        Returns:
+            Dictionary with dataset metadata or None if not found
+        """
+        if self.use_stac and self._datasets_cache:
+            # Search in STAC cache (list of DatasetMetadata objects converted to dicts)
+            for ds in self._datasets_cache:
+                if isinstance(ds, dict) and ds.get('id') == ee_id:
+                    return ds
+                elif hasattr(ds, 'id') and ds.id == ee_id:
+                    # Convert DatasetMetadata object to dict
+                    return ds.to_dict() if hasattr(ds, 'to_dict') else ds.__dict__
+
+        # Fallback to DataFrame search (works for both STAC and CSV)
+        if self._all_datasets is not None and not self._all_datasets.empty:
+            matches = self._all_datasets[self._all_datasets['Earth Engine ID'] == ee_id]
+            if not matches.empty:
+                return matches.iloc[0].to_dict()
+
+        return None
+
     def get_datasets_by_provider(self, provider: str) -> pd.DataFrame:
         """
         Filter datasets by provider.

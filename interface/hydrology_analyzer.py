@@ -14,6 +14,7 @@ import ee
 
 # Import core components
 from geoclimate_fetcher.core import GeometrySelectionWidget
+from geoclimate_fetcher.core.dataset_config import DatasetConfig
 from geoclimate_fetcher.hydrology_analysis import HydrologyAnalyzer
 
 # Import post-download integration
@@ -1184,45 +1185,111 @@ def _render_sample_results():
 
 
 def _get_precipitation_datasets():
-    """Get available precipitation datasets"""
-    return [
-        {
-            'name': 'CHIRPS Daily',
-            'provider': 'UCSB Climate Hazards Group',
-            'resolution': '0.05° (~5.5 km)',
-            'period': '1981-present',
-            'description': 'High-resolution precipitation dataset combining satellite and station data',
-            'ee_id': 'UCSB-CHG/CHIRPS/DAILY',
-            'precipitation_band': 'precipitation',
-            'unit': 'mm',
-            'start_date': '1981-01-01',
-            'end_date': '2025-09-12'
-        },
-        {
-            'name': 'GPM IMERG V07',
-            'provider': 'NASA',
-            'resolution': '0.1° (~11 km)',
-            'period': '2000-06-01 to present',
-            'description': 'GPM IMERG V07 - snapshot precipitation (calibrated)',
-            'ee_id': 'NASA/GPM_L3/IMERG_V07',
-            'precipitation_band': 'precipitation',
-            'unit': 'mm/hr',
-            'start_date': '2000-06-01',
-            'end_date': '2025-09-12'
-        },
-        {
-            'name': 'ERA5-Land Daily',
-            'provider': 'ECMWF',
-            'resolution': '0.1° (~11 km)',
-            'period': '1950-01-02 to present',
-            'description': 'ERA5-Land Daily Aggregated - ECMWF Climate Reanalysis',
-            'ee_id': 'ECMWF/ERA5_LAND/DAILY_AGGR',
-            'precipitation_band': 'total_precipitation_sum',
-            'unit': 'm',
-            'start_date': '1950-01-02',
-            'end_date': '2025-09-06'
-        }
-    ]
+    """
+    Get available precipitation datasets from STAC-enriched configuration.
+
+    Uses DatasetConfig with STAC integration to automatically retrieve
+    up-to-date dataset metadata including current end dates.
+
+    Returns:
+        list: List of dataset dictionaries compatible with hydrology UI
+    """
+    import logging
+
+    try:
+        # Initialize DatasetConfig with STAC enrichment (same as climate_analytics)
+        config = DatasetConfig(use_stac=True)
+
+        # Get all precipitation datasets (auto-enriched from STAC API)
+        precip_datasets = config.get_datasets_for_analysis('precipitation')
+
+        # Transform to format expected by hydrology analyzer UI
+        datasets_list = []
+
+        for ee_id, ds_info in precip_datasets.items():
+            # Get precipitation band configuration from datasets.json
+            precip_band = ds_info.get('bands', {}).get('precipitation', {})
+
+            # Format resolution string from pixel_size_m
+            pixel_size_m = ds_info.get('pixel_size_m')
+            if pixel_size_m:
+                resolution_km = pixel_size_m / 1000
+                if resolution_km < 1:
+                    resolution = f"{pixel_size_m:.0f} m"
+                else:
+                    resolution = f"{resolution_km:.1f} km"
+            else:
+                # Fallback to temporal resolution if no pixel size
+                resolution = ds_info.get('temporal_resolution', 'Variable')
+
+            # Format period string from start and end dates
+            start_date = ds_info.get('start_date', 'Unknown')
+            end_date = ds_info.get('end_date', 'Present')
+
+            # Create user-friendly period string
+            if end_date and start_date != 'Unknown':
+                period = f"{start_date} to {end_date}"
+            else:
+                period = f"{start_date} to present"
+
+            # Build dataset entry matching UI expectations
+            dataset_entry = {
+                'name': ds_info.get('name', ee_id),
+                'provider': ds_info.get('provider', 'Unknown'),
+                'resolution': resolution,
+                'period': period,
+                'description': ds_info.get('description', 'No description available'),
+                'ee_id': ee_id,
+                'precipitation_band': precip_band.get('band_name', 'precipitation'),
+                'unit': precip_band.get('unit', 'mm'),
+                'start_date': start_date,
+                'end_date': end_date
+            }
+
+            # Include sub-daily aggregation info if present (for GPM IMERG)
+            if 'sub_daily_aggregation' in ds_info:
+                dataset_entry['sub_daily_aggregation'] = ds_info['sub_daily_aggregation']
+
+            datasets_list.append(dataset_entry)
+
+        # Sort by start date (oldest first) for consistency
+        datasets_list.sort(key=lambda x: x['start_date'])
+
+        logging.info(f"Loaded {len(datasets_list)} precipitation datasets from STAC")
+
+        return datasets_list
+
+    except Exception as e:
+        # Fallback to minimal hardcoded list if STAC integration fails
+        logging.error(f"Failed to load datasets from STAC, using fallback: {e}")
+
+        # Return minimal fallback list (most reliable datasets)
+        return [
+            {
+                'name': 'CHIRPS Daily',
+                'provider': 'UCSB/CHG',
+                'resolution': '5.5 km',
+                'period': '1981-present',
+                'description': 'CHIRPS Daily precipitation dataset',
+                'ee_id': 'UCSB-CHG/CHIRPS/DAILY',
+                'precipitation_band': 'precipitation',
+                'unit': 'mm',
+                'start_date': '1981-01-01',
+                'end_date': '2025-11-30'
+            },
+            {
+                'name': 'ERA5-Land Daily Aggregated',
+                'provider': 'ECMWF',
+                'resolution': '11 km',
+                'period': '1950-present',
+                'description': 'ERA5-Land Daily precipitation',
+                'ee_id': 'ECMWF/ERA5_LAND/DAILY_AGGR',
+                'precipitation_band': 'total_precipitation_sum',
+                'unit': 'mm/day',
+                'start_date': '1950-01-02',
+                'end_date': '2025-12-28'
+            }
+        ]
 
 
 def _simulate_precipitation_data(start_date, end_date):

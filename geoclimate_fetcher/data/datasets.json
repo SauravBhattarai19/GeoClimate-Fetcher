@@ -1,15 +1,6 @@
 {
   "datasets": {
     "ECMWF/ERA5/DAILY": {
-      "name": "ERA5 Daily Aggregates",
-      "provider": "ECMWF",
-      "start_date": "1979-01-02",
-      "end_date": "2020-07-09",
-      "temporal_resolution": "daily",
-      "pixel_size_m": 27830,
-      "snippet_type": "ImageCollection",
-      "geographic_coverage": "Global",
-      "description": "ERA5 daily surface climate variables - automatically converted units",
       "bands": {
         "temperature_max": {
           "band_name": "maximum_2m_air_temperature",
@@ -51,15 +42,6 @@
       }
     },
     "NASA/ORNL/DAYMET_V4": {
-      "name": "Daymet V4 Daily Meteorology",
-      "provider": "ORNL DAAC (US DOE)",
-      "start_date": "1980-01-01",
-      "end_date": "2023-12-31",
-      "temporal_resolution": "daily",
-      "pixel_size_m": 1000,
-      "snippet_type": "ImageCollection",
-      "geographic_coverage": "North America",
-      "description": "Daily 1-km gridded weather data for North America",
       "bands": {
         "temperature_max": {
           "band_name": "tmax",
@@ -93,15 +75,6 @@
       }
     },
     "ECMWF/ERA5_LAND/DAILY_AGGR": {
-      "name": "ERA5-Land Daily Aggregated",
-      "provider": "Google and Copernicus Climate Data Store",
-      "start_date": "1950-01-02",
-      "end_date": "present",
-      "temporal_resolution": "daily",
-      "pixel_size_m": 11132,
-      "snippet_type": "ImageCollection",
-      "geographic_coverage": "Global",
-      "description": "ERA5-Land daily aggregated reanalysis data with higher spatial resolution than ERA5",
       "bands": {
         "temperature_max": {
           "band_name": "temperature_2m_max",
@@ -135,15 +108,6 @@
       }
     },
     "NASA/GPM_L3/IMERG_V07": {
-      "name": "GPM IMERG V07 (Global Precipitation Measurement)",
-      "provider": "NASA GES DISC at NASA Goddard Space Flight Center",
-      "start_date": "2000-06-01",
-      "end_date": "present",
-      "temporal_resolution": "half-hourly",
-      "pixel_size_m": 11132,
-      "snippet_type": "ImageCollection",
-      "geographic_coverage": "Global",
-      "description": "NASA Global Precipitation Measurement (GPM) IMERG Release 07 - high resolution global precipitation estimates",
       "sub_daily_aggregation": {
         "is_sub_daily": true,
         "images_per_day": 48,
@@ -165,6 +129,128 @@
       "supports_analysis": ["precipitation"],
       "recommended_indices": {
         "precipitation": ["RX1day", "CDD", "PRCPTOT", "R95p", "R99p", "R75p", "R10mm", "R20mm", "SDII"]
+      }
+    },
+    "UCSB-CHG/CHIRPS/DAILY": {
+      "bands": {
+        "precipitation": {
+          "band_name": "precipitation",
+          "unit": "mm/day",
+          "original_unit": "mm/d",
+          "scaling_factor": 1.0,
+          "offset": 0.0,
+          "description": "Daily total precipitation from CHIRPS"
+        }
+      },
+      "supports_analysis": ["precipitation"],
+      "recommended_indices": {
+        "precipitation": ["RX1day", "CDD", "CWD", "PRCPTOT", "R95p", "R99p", "R10mm", "R20mm", "SDII"]
+      }
+    },
+    "NOAA/PERSIANN-CDR": {
+      "bands": {
+        "precipitation": {
+          "band_name": "precipitation",
+          "unit": "mm/day",
+          "original_unit": "mm",
+          "scaling_factor": 1.0,
+          "offset": 0.0,
+          "description": "Estimated daily precipitation from PERSIANN-CDR"
+        }
+      },
+      "supports_analysis": ["precipitation"],
+      "recommended_indices": {
+        "precipitation": ["RX1day", "CDD", "CWD", "PRCPTOT", "R95p", "R99p", "R10mm", "R20mm", "SDII"]
+      }
+    },
+    "OREGONSTATE/PRISM/ANd": {
+      "bands": {
+        "temperature_max": {
+          "band_name": "tmax",
+          "unit": "°C",
+          "original_unit": "°C",
+          "scaling_factor": 1.0,
+          "offset": 0.0,
+          "description": "Daily maximum temperature"
+        },
+        "temperature_min": {
+          "band_name": "tmin",
+          "unit": "°C",
+          "original_unit": "°C",
+          "scaling_factor": 1.0,
+          "offset": 0.0,
+          "description": "Daily minimum temperature"
+        },
+        "temperature_mean": {
+          "band_name": "tmean",
+          "unit": "°C",
+          "original_unit": "°C",
+          "scaling_factor": 1.0,
+          "offset": 0.0,
+          "description": "Daily mean temperature (calculated as (tmin+tmax)/2)"
+        },
+        "precipitation": {
+          "band_name": "ppt",
+          "unit": "mm/day",
+          "original_unit": "mm",
+          "scaling_factor": 1.0,
+          "offset": 0.0,
+          "description": "Daily total precipitation (including rain and melted snow)"
+        }
+      },
+      "supports_analysis": ["temperature", "precipitation"],
+      "recommended_indices": {
+        "temperature": ["TXx", "TNn", "DTR", "TX90p", "TN10p", "FD", "SU", "TXn", "TNx"],
+        "precipitation": ["RX1day", "CDD", "CWD", "PRCPTOT", "R95p", "R99p", "R10mm", "R20mm", "SDII"]
+      }
+    },
+    "NOAA/CPC/Precipitation": {
+      "bands": {
+        "precipitation": {
+          "band_name": "precipitation",
+          "unit": "mm/day",
+          "original_unit": "mm",
+          "scaling_factor": 1.0,
+          "offset": 0.0,
+          "description": "Daily total precipitation from CPC gauge-based analysis"
+        }
+      },
+      "supports_analysis": ["precipitation"],
+      "recommended_indices": {
+        "precipitation": ["RX1day", "CDD", "CWD", "PRCPTOT", "R95p", "R99p", "R10mm", "R20mm", "SDII"]
+      }
+    },
+    "IDAHO_EPSCOR/GRIDMET": {
+      "bands": {
+        "temperature_max": {
+          "band_name": "tmmx",
+          "unit": "°C",
+          "original_unit": "K",
+          "scaling_factor": 1.0,
+          "offset": -273.15,
+          "description": "Daily maximum temperature"
+        },
+        "temperature_min": {
+          "band_name": "tmmn",
+          "unit": "°C",
+          "original_unit": "K",
+          "scaling_factor": 1.0,
+          "offset": -273.15,
+          "description": "Daily minimum temperature"
+        },
+        "precipitation": {
+          "band_name": "pr",
+          "unit": "mm/day",
+          "original_unit": "mm",
+          "scaling_factor": 1.0,
+          "offset": 0.0,
+          "description": "Daily total precipitation amount"
+        }
+      },
+      "supports_analysis": ["temperature", "precipitation"],
+      "recommended_indices": {
+        "temperature": ["TXx", "TNn", "DTR", "TX90p", "TN10p", "FD", "SU", "TXn", "TNx"],
+        "precipitation": ["RX1day", "CDD", "CWD", "PRCPTOT", "R95p", "R99p", "R10mm", "R20mm", "SDII"]
       }
     }
   },
@@ -225,6 +311,24 @@
         "min_value": 0.1,
         "max_value": 10.0,
         "help": "Daily precipitation threshold for defining dry days"
+      }
+    },
+    "CWD": {
+      "name": "Consecutive Wet Days",
+      "description": "Annual maximum number of consecutive days with precipitation ≥ threshold mm",
+      "unit": "days",
+      "category": "precipitation",
+      "complexity": "simple",
+      "required_bands": ["precipitation"],
+      "temporal_aggregation": "annual",
+      "etccdi_standard": true,
+      "threshold_config": {
+        "param": "threshold",
+        "default": 1.0,
+        "unit": "mm",
+        "min_value": 0.1,
+        "max_value": 10.0,
+        "help": "Daily precipitation threshold for defining wet days"
       }
     },
     "PRCPTOT": {
@@ -482,10 +586,12 @@
     }
   },
   "metadata": {
-    "version": "1.0",
+    "version": "2.0",
     "created": "2025-01-13",
-    "description": "Climate datasets and indices configuration for GeoClimate Intelligence Platform",
+    "updated": "2026-02-16",
+    "description": "Climate datasets configuration with STAC API integration. General metadata (dates, provider, etc.) is enriched from STAC at runtime.",
     "supported_analysis_types": ["temperature", "precipitation"],
-    "etccdi_compliance": true
+    "etccdi_compliance": true,
+    "data_source": "Minimal climate-specific config enriched from STAC API"
   }
 }
