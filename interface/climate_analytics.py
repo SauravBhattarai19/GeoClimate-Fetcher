@@ -2165,7 +2165,8 @@ def _display_geemap_visualization(results):
         ee.Number(1).getInfo()
     except Exception as e:
         try:
-            ee.Initialize(project=project_id)
+            # Use geemap.ee_initialize() instead of ee.Initialize() for Streamlit Cloud compatibility
+            geemap.ee_initialize(project=project_id)
         except Exception as init_error:
             st.error(f"❌ Earth Engine initialization failed: {str(init_error)}")
             st.info("💡 Please try re-authenticating with your Earth Engine credentials.")

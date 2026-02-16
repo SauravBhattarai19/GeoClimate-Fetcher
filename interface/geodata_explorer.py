@@ -1011,7 +1011,8 @@ def _render_geemap_preview():
     except Exception as e:
         # Not initialized or credentials issue - try to reinitialize
         try:
-            ee.Initialize(project=project_id)
+            # Use geemap.ee_initialize() instead of ee.Initialize() for Streamlit Cloud compatibility
+            geemap.ee_initialize(project=project_id)
         except Exception as init_error:
             st.error(f"❌ Earth Engine initialization failed: {str(init_error)}")
             st.info("💡 Please try re-authenticating with your Earth Engine credentials.")
