@@ -427,7 +427,18 @@ def _render_climate_results():
         # Display interactive geemap visualization if image collections are available
         st.markdown("---")
         if 'image_collections' in results and results['image_collections']:
-            _display_geemap_visualization(results)
+            st.markdown("### 🗺️ Spatial Data Preview")
+            show_map = st.checkbox(
+                "Show interactive map visualization",
+                value=False,
+                help="Enable to see spatial visualization on the map. Disable for faster loading or if experiencing issues.",
+                key="climate_show_map_existing_results"
+            )
+
+            if show_map:
+                _display_geemap_visualization(results)
+            else:
+                st.info("💡 Interactive map visualization is disabled. Enable the checkbox above to view spatial data on the map.")
         else:
             st.info("💡 Spatial visualization requires image collection data. This is available when analysis is run with spatial data generation.")
 
@@ -1330,7 +1341,18 @@ def _run_climate_analysis():
                 # Display interactive geemap visualization if image collections are available
                 st.markdown("---")
                 if 'image_collections' in results and results['image_collections']:
-                    _display_geemap_visualization(results)
+                    st.markdown("### 🗺️ Spatial Data Preview")
+                    show_map = st.checkbox(
+                        "Show interactive map visualization",
+                        value=False,
+                        help="Enable to see spatial visualization on the map. Disable for faster loading or if experiencing issues.",
+                        key="climate_show_map_new_results"
+                    )
+
+                    if show_map:
+                        _display_geemap_visualization(results)
+                    else:
+                        st.info("💡 Interactive map visualization is disabled. Enable the checkbox above to view spatial data on the map.")
                 else:
                     st.info("💡 Spatial visualization requires image collection data. This is available when analysis is run with spatial data generation.")
 

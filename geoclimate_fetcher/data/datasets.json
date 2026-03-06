@@ -40,7 +40,7 @@
         "temperature": ["TXx", "TNn", "DTR", "TX90p", "TN10p", "FD", "SU"],
         "precipitation": ["RX1day", "CDD", "PRCPTOT", "R95p", "R10mm", "SDII"]
       }
-    },
+    },    
     "NASA/ORNL/DAYMET_V4": {
       "bands": {
         "temperature_max": {

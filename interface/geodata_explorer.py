@@ -177,18 +177,9 @@ def render_geodata_explorer():
     # Step 3: Band Selection
     elif not st.session_state.bands_selected:
         _render_band_selection()
-    
-    # Step 4: Date Range Selection
-    elif not st.session_state.dates_selected:
-        _render_date_selection()
 
-    # Step 5: Interactive Preview and Download
+    # Step 4+5: Date selection, optional map preview, and download (combined — no extra step)
     else:
-        # Show geemap preview first
-        _render_geemap_preview()
-
-        # Show download interface below preview
-        st.markdown("---")
         _render_download_interface()
 
 
@@ -1390,8 +1381,180 @@ def _render_geemap_preview():
         st.code(traceback.format_exc())
 
 
+def _render_geemap_preview_lazy(start_date, end_date):
+    """
+    Lazy map preview. We already know the date range and temporal resolution
+    from the dataset metadata — no need to fetch timestamps first.
+    User picks a date (+ hour for sub-daily), clicks once, one image loads.
+    """
+    selected_dataset = st.session_state.selected_dataset
+    selected_bands = st.session_state.selected_bands
+    geometry = st.session_state.geometry_handler.current_geometry
+    temporal_resolution = selected_dataset.get('temporal_resolution', 'Daily')
+    is_static = temporal_resolution == 'Static'
+
+    # Band selector — pure UI, zero GEE calls
+    if len(selected_bands) > 1:
+        viz_band = st.selectbox("Band to visualize:", selected_bands, key="preview_band_sel")
+    else:
+        viz_band = selected_bands[0]
+
+    if not is_static:
+        tr_lower = temporal_resolution.lower()
+        is_subdaily = any(x in tr_lower for x in ['hour', 'minute'])
+
+        picked_hour = 0
+        if is_subdaily:
+            col_date, col_hour = st.columns([2, 1])
+            with col_date:
+                picked_date = st.date_input(
+                    "Pick a date:",
+                    value=end_date,
+                    min_value=start_date,
+                    max_value=end_date,
+                    key="preview_date_picker"
+                )
+            with col_hour:
+                picked_hour = st.selectbox(
+                    "Hour (UTC):",
+                    list(range(24)),
+                    index=0,
+                    key="preview_hour_sel",
+                    format_func=lambda h: f"{h:02d}:00"
+                )
+        else:
+            picked_date = st.date_input(
+                "Pick a date:",
+                value=end_date,
+                min_value=start_date,
+                max_value=end_date,
+                key="preview_date_picker"
+            )
+
+        # Build filterDate strings — no timestamp conversion needed
+        if is_subdaily:
+            d = picked_date
+            filter_start = f"{d.year}-{d.month:02d}-{d.day:02d} {picked_hour:02d}:00:00"
+            end_dt = datetime(d.year, d.month, d.day, picked_hour) + timedelta(hours=1)
+            filter_end = end_dt.strftime('%Y-%m-%d %H:%M:%S')
+            label = f"{picked_date} {picked_hour:02d}:00 UTC"
+        else:
+            filter_start = str(picked_date)
+            filter_end = str(picked_date + timedelta(days=1))
+            label = str(picked_date)
+
+        if st.button(f"🗺️ Show Map — {label}", type="primary", key="btn_show_preview"):
+            with st.spinner(f"🔄 Loading {label}..."):
+                try:
+                    img = (
+                        ee.ImageCollection(selected_dataset['ee_id'])
+                        .select(selected_bands)
+                        .filterDate(filter_start, filter_end)
+                        .filterBounds(geometry)
+                        .first()
+                        .clip(geometry)
+                    )
+                    vis_config = _get_vis_params_for_band(viz_band, img, geometry)
+                    stats = img.select(viz_band).reduceRegion(
+                        reducer=ee.Reducer.percentile([5, 95]),
+                        geometry=geometry,
+                        scale=5000,
+                        maxPixels=1e8
+                    ).getInfo()
+                    vmin = stats.get(f'{viz_band}_p5') or 0
+                    vmax = stats.get(f'{viz_band}_p95') or 100
+
+                    Map = geemap.Map()
+                    try:
+                        centroid = geometry.centroid().getInfo()['coordinates']
+                        Map.setCenter(centroid[0], centroid[1], 8)
+                    except Exception:
+                        Map.setCenter(0, 0, 3)
+                    Map.addLayer(geometry, {'color': 'red'}, 'Study Area', True, 0.5)
+                    Map.addLayer(
+                        img,
+                        {'bands': [viz_band], 'min': vmin, 'max': vmax,
+                         'palette': vis_config['palette']},
+                        f"{viz_band} — {label}", True
+                    )
+                    try:
+                        Map.add_colorbar(
+                            vis_params={'min': vmin, 'max': vmax,
+                                        'palette': vis_config['palette']},
+                            label=f"{viz_band} ({vis_config['unit']})",
+                            position='bottomright'
+                        )
+                    except Exception:
+                        pass
+                    Map.to_streamlit(height=500)
+                    st.caption(f"{viz_band} | {vmin:.2f}–{vmax:.2f} {vis_config['unit']}")
+                except Exception as e:
+                    st.error(f"❌ Preview failed: {str(e)}")
+
+    else:
+        # Static dataset — no date needed, just one button
+        if st.button("🗺️ Load Static Preview", type="primary", key="btn_static_preview"):
+            with st.spinner("🔄 Loading..."):
+                try:
+                    image = (
+                        ee.Image(selected_dataset['ee_id'])
+                        .select(selected_bands)
+                        .clip(geometry)
+                    )
+                    vis_config = _get_vis_params_for_band(viz_band, image, geometry)
+                    stats = image.select(viz_band).reduceRegion(
+                        reducer=ee.Reducer.percentile([5, 95]),
+                        geometry=geometry,
+                        scale=1000,
+                        maxPixels=1e8
+                    ).getInfo()
+                    vmin = stats.get(f'{viz_band}_p5') or 0
+                    vmax = stats.get(f'{viz_band}_p95') or 100
+
+                    Map = geemap.Map()
+                    try:
+                        centroid = geometry.centroid().getInfo()['coordinates']
+                        Map.setCenter(centroid[0], centroid[1], 8)
+                    except Exception:
+                        Map.setCenter(0, 0, 3)
+                    Map.addLayer(geometry, {'color': 'red'}, 'Study Area', True, 0.5)
+                    Map.addLayer(
+                        image,
+                        {'bands': [viz_band], 'min': vmin, 'max': vmax,
+                         'palette': vis_config['palette']},
+                        viz_band, True
+                    )
+                    Map.to_streamlit(height=500)
+                    st.caption(f"{viz_band} | {vmin:.2f}–{vmax:.2f} {vis_config['unit']}")
+                except Exception as e:
+                    st.error(f"❌ Preview failed: {str(e)}")
+
+
+def _estimate_record_count(temporal_resolution: str, days: int) -> int:
+    """Estimate the number of CSV records for a given temporal resolution and day span."""
+    tr = (temporal_resolution or 'daily').lower()
+    if '30' in tr and 'min' in tr:
+        return days * 48
+    elif 'hour' in tr:
+        return days * 24
+    elif '3-hour' in tr or '3hour' in tr:
+        return days * 8
+    elif '2-day' in tr:
+        return max(days // 2, 1)
+    elif '6-day' in tr:
+        return max(days // 6, 1)
+    elif '8-day' in tr:
+        return max(days // 8, 1)
+    elif '16-day' in tr:
+        return max(days // 16, 1)
+    elif 'month' in tr:
+        return max(days // 30, 1)
+    else:
+        return days
+
+
 def _render_download_interface():
-    """Render download and export interface below the preview"""
+    """Render download interface with inline date selection and optional lazy map preview."""
     from app_utils import go_back_to_step
 
     # Check if download is already complete and show persistent results
@@ -1399,23 +1562,95 @@ def _render_download_interface():
         _render_download_results_interface()
         return
 
-    # Header
-    st.markdown("### 💾 Download Data")
-    st.info("💡 Download the data for offline analysis or further processing in your preferred format.")
+    # ── INLINE DATE SELECTION ─────────────────────────────────────────────
+    selected_dataset = st.session_state.selected_dataset
+    dataset_start_date, dataset_end_date = _parse_dataset_dates(
+        selected_dataset.get('start_date', ''),
+        selected_dataset.get('end_date', '')
+    )
+    if not dataset_start_date or not dataset_end_date:
+        st.error("❌ Unable to determine data availability for this dataset.")
+        if st.button("← Back to Dataset Selection"):
+            go_back_to_step("dataset")
+        return
 
-    # Show summary of selections
-    st.markdown("#### 📋 Download Summary")
-    
+    today = datetime.now().date()
+    max_end_date = min(dataset_end_date, today)
+
+    st.markdown("### 📅 Select Date Range")
+    st.caption(f"Dataset available: {dataset_start_date} → {dataset_end_date}")
+
+    preset_options = []
+    preset_dates_map = {}
+    if (max_end_date - timedelta(days=30)) >= dataset_start_date:
+        preset_options.append("Last 30 days")
+        preset_dates_map["Last 30 days"] = (max_end_date - timedelta(days=30), max_end_date)
+    if (max_end_date - timedelta(days=90)) >= dataset_start_date:
+        preset_options.append("Last 3 months")
+        preset_dates_map["Last 3 months"] = (max_end_date - timedelta(days=90), max_end_date)
+    if (max_end_date - timedelta(days=365)) >= dataset_start_date:
+        preset_options.append("Last year")
+        preset_dates_map["Last year"] = (max_end_date - timedelta(days=365), max_end_date)
+    preset_options.append("Full available period")
+    preset_dates_map["Full available period"] = (dataset_start_date, dataset_end_date)
+    preset_options.append("Custom range")
+
+    col_preset, col_dates = st.columns([1, 2])
+    with col_preset:
+        date_option = st.radio("Quick select:", preset_options, key="dl_date_preset",
+                               label_visibility="collapsed")
+    with col_dates:
+        if date_option == "Custom range":
+            c1, c2 = st.columns(2)
+            default_start = st.session_state.get(
+                'start_date', max(dataset_start_date, max_end_date - timedelta(days=30)))
+            default_end = st.session_state.get('end_date', max_end_date)
+            with c1:
+                start_date = st.date_input("Start", value=default_start,
+                    min_value=dataset_start_date, max_value=dataset_end_date,
+                    key="dl_start_date")
+            with c2:
+                end_date = st.date_input("End", value=default_end,
+                    min_value=dataset_start_date, max_value=dataset_end_date,
+                    key="dl_end_date")
+        else:
+            start_date, end_date = preset_dates_map[date_option]
+            st.info(f"📅 {start_date}  →  {end_date}")
+
+    if start_date >= end_date:
+        st.error("❌ Start date must be before end date")
+        return
+
+    days_diff = (end_date - start_date).days
+    # Save to session state immediately — no "Continue" button needed
+    st.session_state.start_date = start_date
+    st.session_state.end_date = end_date
+    st.session_state.dates_selected = True
+
+    if days_diff > 365:
+        st.warning(f"⚠️ {days_diff}-day range — large requests may take several minutes")
+    else:
+        st.success(f"✅ {start_date} → {end_date}  ·  {days_diff} days")
+
+    # ── OPTIONAL MAP PREVIEW (lazy — only loads when user clicks) ─────────
+    with st.expander("🗺️ Preview on Map (Optional)", expanded=False):
+        _render_geemap_preview_lazy(start_date, end_date)
+
+    st.markdown("---")
+
+    # ── DOWNLOAD CONFIGURATION ────────────────────────────────────────────
+    st.markdown("### 💾 Download Data")
+
     col1, col2, col3 = st.columns(3)
-    
+
     with col1:
         st.markdown("**📊 Dataset:**")
         st.info(st.session_state.selected_dataset.get('name', 'Unknown'))
-        
+
         st.markdown("**🎛️ Bands:**")
         for band in st.session_state.selected_bands:
             st.info(f"• {band}")
-    
+
     with col2:
         st.markdown("**🗺️ Area:**")
         try:
@@ -1423,196 +1658,91 @@ def _render_download_interface():
             st.info(f"{area:.2f} km²")
         except:
             st.info("Custom area selected")
-        
+
         st.markdown("**📅 Time Period:**")
-        days = (st.session_state.end_date - st.session_state.start_date).days
-        st.info(f"{st.session_state.start_date} to {st.session_state.end_date}")
-        st.info(f"({days} days)")
-    
+        st.info(f"{start_date} to {end_date}")
+        st.info(f"({days_diff} days)")
+
     with col3:
         st.markdown("**📁 Export Options:**")
-        
-        # Export format selection
+
         export_format = st.selectbox(
             "Choose format:",
             ["CSV", "GeoTIFF", "NetCDF"],
-            help="• CSV: Time series with area-averaged values (daily/hourly data with date column)\n"
-                 "• GeoTIFF: Individual raster files with time info (≤5 images) or temporal composite (>5 images)\n"
-                 "• NetCDF: Multi-dimensional dataset with proper time axis (requires xarray)"
+            help="• CSV: Time series with area-averaged values\n"
+                 "• GeoTIFF: Spatial raster files\n"
+                 "• NetCDF: Multi-dimensional dataset"
         )
 
-        # Add performance hints based on dataset and format selection
         if export_format == 'CSV':
             temporal_resolution = st.session_state.selected_dataset.get('temporal_resolution', 'Daily')
-            days = (st.session_state.end_date - st.session_state.start_date).days
-
-            # Estimate total records for performance prediction
-            if temporal_resolution == '30-minute':
-                estimated_records = days * 48  # 48 records per day
-            elif temporal_resolution == 'Hourly':
-                estimated_records = days * 24
-            elif temporal_resolution == '3-hourly':
-                estimated_records = days * 8
-            elif temporal_resolution == 'Daily':
-                estimated_records = days
-            elif temporal_resolution == '2-Day':
-                estimated_records = days // 2
-            elif temporal_resolution == '6-Day':
-                estimated_records = days // 6
-            elif temporal_resolution == '8-Day':
-                estimated_records = days // 8
-            elif temporal_resolution == '16-Day':
-                estimated_records = days // 16
-            elif temporal_resolution == 'Monthly':
-                estimated_records = days // 30
-            else:
-                estimated_records = days
-
-            # Performance estimates
-            if estimated_records < 1000:
-                performance_hint = "🚀 **Very Fast** (~10-30 seconds)"
-                hint_color = "success"
-            elif estimated_records < 5000:
-                performance_hint = "⚡ **Fast** (~30-90 seconds)"
-                hint_color = "success"
-            elif estimated_records < 20000:
-                performance_hint = "⏱️ **Moderate** (~2-5 minutes)"
-                hint_color = "info"
-            elif estimated_records < 50000:
-                performance_hint = "🐌 **Slow** (~5-15 minutes)"
-                hint_color = "warning"
-            else:
-                performance_hint = "🐌 **Very Slow** (>15 minutes)"
-                hint_color = "warning"
-
-            # Performance hint removed as requested
-
-            # Optimization tips for slow downloads
+            estimated_records = _estimate_record_count(temporal_resolution, days_diff)
             if estimated_records > 20000:
-                st.info("💡 **Optimization Tips**: CSV downloads use 10km scale automatically for maximum performance. Consider shorter date ranges for sub-daily data.")
+                st.info("💡 Large request: auto-uses 10km scale. Shorter date ranges speed things up.")
 
-        # Get dataset pixel size for all formats
         dataset_pixel_size = st.session_state.selected_dataset.get('pixel_size')
 
-        # Scale selection for both GeoTIFF and CSV formats
         st.markdown("---")
         if export_format == 'GeoTIFF':
             st.markdown("**🎯 Spatial Resolution (GeoTIFF):**")
-        else:  # CSV
-            st.markdown("**🎯 Spatial Resolution (CSV Area Averaging):**")
+        else:
+            st.markdown("**🎯 Spatial Resolution (CSV averaging):**")
 
-        # Get native resolution
         native_resolution = None
         if dataset_pixel_size:
             try:
                 native_resolution = int(float(dataset_pixel_size))
             except (ValueError, TypeError):
-                native_resolution = 100  # fallback
+                native_resolution = 100
 
-        # Format-specific guidance
         if export_format == 'CSV':
-            st.info("💡 **CSV Performance Guide**: Higher scales (coarser resolution) process faster. For area-averaged CSV data, spatial detail has minimal impact unless analyzing very small areas.")
+            base_options = [1000, 5000, 10000, 25000, 50000]
+            recommended_default = 10000
+            st.caption("Higher = faster processing for CSV")
+        else:
+            base_options = [30, 100, 250, 500, 1000, 5000, 10000]
+            recommended_default = 100
 
-        # Scale input method selection
-        scale_method = st.radio(
-            "Scale selection method:",
-            ["Preset values", "Custom value"],
-            help="Choose preset values for common scales or enter your own custom scale"
+        if native_resolution and native_resolution not in base_options:
+            scale_options = sorted(base_options + [native_resolution])
+        else:
+            scale_options = base_options
+
+        if export_format == 'CSV':
+            default_index = scale_options.index(recommended_default) if recommended_default in scale_options else 2
+        else:
+            if native_resolution and native_resolution in scale_options:
+                default_index = scale_options.index(native_resolution)
+            else:
+                default_index = scale_options.index(100) if 100 in scale_options else 1
+
+        scale = st.selectbox(
+            "Spatial resolution:",
+            scale_options,
+            index=default_index,
+            format_func=lambda x: f"{x}m ({'Fast' if x >= 10000 else 'Medium' if x >= 1000 else 'Detailed'})"
         )
 
-        if scale_method == "Preset values":
-            # Create scale options with format-specific defaults
-            if export_format == 'CSV':
-                # CSV options emphasize performance
-                base_options = [1000, 5000, 10000, 25000, 50000]
-                recommended_default = 10000
-            else:
-                # GeoTIFF options emphasize spatial detail
-                base_options = [30, 100, 250, 500, 1000, 5000, 10000]
-                recommended_default = 100
-
-            if native_resolution and native_resolution not in base_options:
-                # Add native resolution to options and sort
-                scale_options = sorted(base_options + [native_resolution])
-            else:
-                scale_options = base_options
-
-            # Determine default index
-            if export_format == 'CSV':
-                # For CSV, default to 10km for performance
-                default_index = scale_options.index(recommended_default) if recommended_default in scale_options else 2
-                help_text = f"10km recommended for CSV (fast processing). Native resolution: {native_resolution}m" if native_resolution else "10km recommended for CSV (fast processing)"
-            else:
-                # For GeoTIFF, prefer native resolution
-                if native_resolution and native_resolution in scale_options:
-                    default_index = scale_options.index(native_resolution)
-                    help_text = f"Dataset native resolution is {native_resolution}m (recommended)"
-                else:
-                    default_index = scale_options.index(100) if 100 in scale_options else 1
-                    help_text = "100m is a good balance between detail and processing speed"
-
-            scale = st.selectbox(
-                "Spatial resolution:",
-                scale_options,
-                index=default_index,
-                help=help_text,
-                format_func=lambda x: f"{x}m ({'Fast' if x >= 10000 else 'Medium' if x >= 1000 else 'Detailed'})"
-            )
-
-        else:  # Custom value
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                if export_format == 'CSV':
-                    default_custom = 10000
-                    help_text = f"Enter scale in meters. For CSV: Higher values = faster processing. Native resolution: {native_resolution}m" if native_resolution else "Enter scale in meters. For CSV: Higher values = faster processing"
-                else:
-                    default_custom = native_resolution if native_resolution else 100
-                    help_text = f"Enter scale in meters. Native resolution: {native_resolution}m" if native_resolution else "Enter scale in meters. Smaller values = higher detail but slower processing"
-
-                scale = st.number_input(
-                    "Custom scale (meters):",
-                    min_value=10,
-                    max_value=100000,
-                    value=default_custom,
-                    step=10,
-                    help=help_text
-                )
-            with col2:
-                if export_format == 'CSV':
-                    if st.button("🚀 Fast (10km)", help="Set to 10km for fastest CSV processing"):
-                        scale = 10000
-                        st.rerun()
-                else:
-                    if native_resolution:
-                        if st.button("Use Native", help=f"Set to dataset's native resolution ({native_resolution}m)"):
-                            scale = native_resolution
-                            st.rerun()
-
-        # Format-specific performance and accuracy guidance
         if export_format == 'CSV':
             if scale >= 10000:
-                st.success(f"🚀 **Fast Processing**: {scale}m scale optimized for CSV area averaging")
+                st.success(f"🚀 {scale}m — fast")
             elif scale >= 1000:
-                st.warning(f"⚡ **Medium Speed**: {scale}m scale - moderate processing time")
+                st.warning(f"⚡ {scale}m — moderate speed")
             else:
-                st.error(f"🐌 **Slow Processing**: {scale}m scale may be slow for large time series. Consider 10km+ for CSV area averaging")
-
-            # Additional guidance for small areas
-            st.caption("📍 **Note**: For very small study areas (<1km²), finer resolution may provide more accurate results despite longer processing time.")
+                st.error(f"🐌 {scale}m — slow; consider 10km+")
         else:
-            # GeoTIFF specific guidance about native resolution
             if dataset_pixel_size:
                 try:
                     native_res = int(float(dataset_pixel_size))
                     if scale == native_res:
-                        st.success(f"✅ Using native dataset resolution ({native_res}m)")
+                        st.success(f"✅ Native resolution ({native_res}m)")
                     elif scale < native_res:
-                        st.warning(f"⚠️ Selected resolution ({scale}m) is finer than native resolution ({native_res}m). This won't add detail but may increase processing time.")
+                        st.warning(f"⚠️ Finer than native ({native_res}m) — no extra detail")
                     else:
-                        st.info(f"ℹ️ Selected resolution ({scale}m) is coarser than native resolution ({native_res}m). This will reduce file size and processing time.")
+                        st.info(f"ℹ️ Coarser than native ({native_res}m) — smaller file")
                 except (ValueError, TypeError):
                     pass
-    
+
     # Smart Download Interface
     st.markdown("---")
 
@@ -2781,7 +2911,7 @@ def _process_smart_download(export_format, scale, export_preference):
                                         'scale': scale,
                                         'download_timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                                     }
-
+                                    
                                     st.session_state.download_complete = True
                                     st.session_state.download_results = download_results
                                     st.success(f"✅ Chunked CSV processing successful! ({len(df)} records)")
@@ -2946,7 +3076,7 @@ def _reset_all_selections():
     keys_to_reset = [
         'geometry_complete', 'dataset_selected', 'bands_selected', 'dates_selected',
         'selected_dataset', 'selected_bands', 'start_date', 'end_date',
-        'download_complete', 'download_results'
+        'download_complete', 'download_results',
     ]
 
     for key in keys_to_reset:
