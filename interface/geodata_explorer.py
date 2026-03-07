@@ -159,6 +159,12 @@ def render_geodata_explorer():
             st.session_state.geometry_handler._current_geometry = geometry
             st.session_state.geometry_handler._current_geometry_name = "selected_aoi"
             st.session_state.geometry_complete = True
+            # Cache area once so download interface never needs a GEE .getInfo() call
+            try:
+                area_km2 = geometry.area().divide(1e6).getInfo()
+                st.session_state.geodata_cached_area_km2 = round(area_km2, 2)
+            except Exception:
+                st.session_state.geodata_cached_area_km2 = None
             st.success("✅ Area of interest selected successfully!")
         
         # Use the unified geometry selection widget
@@ -166,8 +172,15 @@ def render_geodata_explorer():
             session_prefix="geodata_",
             title="📍 Step 1: Select Area of Interest"
         )
-        
-        if geometry_widget.render_complete_interface(on_geometry_selected=on_geometry_selected):
+
+        result = geometry_widget.render_complete_interface(on_geometry_selected=on_geometry_selected)
+        if result:
+            # Widget returned True (user clicked "Continue" on an already-selected area).
+            # The on_geometry_selected callback was NOT called in that path, so we must
+            # restore geometry_complete manually to avoid an infinite loop.
+            existing_geom = st.session_state.get('geodata_geometry')
+            if existing_geom and not st.session_state.get('geometry_complete', False):
+                on_geometry_selected(existing_geom)
             st.rerun()
     
     # Step 2: Dataset Selection
@@ -1585,6 +1598,12 @@ def _render_download_interface():
         _render_download_results_interface()
         return
 
+    # ── BACK NAVIGATION ───────────────────────────────────────────────────
+    col_back, _ = st.columns([1, 4])
+    with col_back:
+        if st.button("← Back to Band Selection"):
+            go_back_to_step("bands")
+
     # ── INLINE DATE SELECTION ─────────────────────────────────────────────
     selected_dataset = st.session_state.selected_dataset
     dataset_start_date, dataset_end_date = _parse_dataset_dates(
@@ -1676,10 +1695,10 @@ def _render_download_interface():
 
     with col2:
         st.markdown("**🗺️ Area:**")
-        try:
-            area = st.session_state.geometry_handler.get_geometry_area()
-            st.info(f"{area:.2f} km²")
-        except:
+        cached_area = st.session_state.get('geodata_cached_area_km2')
+        if cached_area is not None:
+            st.info(f"{cached_area:.2f} km²")
+        else:
             st.info("Custom area selected")
 
         st.markdown("**📅 Time Period:**")
@@ -1692,6 +1711,7 @@ def _render_download_interface():
         export_format = st.selectbox(
             "Choose format:",
             ["CSV", "GeoTIFF", "NetCDF"],
+            key="dl_export_format",
             help="• CSV: Time series with area-averaged values\n"
                  "• GeoTIFF: Spatial raster files\n"
                  "• NetCDF: Multi-dimensional dataset"
@@ -1743,6 +1763,7 @@ def _render_download_interface():
             "Spatial resolution:",
             scale_options,
             index=default_index,
+            key="dl_scale_selectbox",
             format_func=lambda x: f"{x}m ({'Fast' if x >= 10000 else 'Medium' if x >= 1000 else 'Detailed'})"
         )
 
@@ -1849,7 +1870,7 @@ def _render_download_results_interface():
 
     with col1:
         st.download_button(
-            label=f"📥 Download {results['export_format']} ({results['file_size_mb']:.1f} MB)",
+            label=f"📥 Re-download {results['export_format']} ({results['file_size_mb']:.1f} MB)",
             data=results['file_data'],
             file_name=results['filename'],
             mime=results['mime_type'],
@@ -1859,50 +1880,38 @@ def _render_download_results_interface():
         )
 
     with col2:
-        if st.button("📋 Download Different Format", use_container_width=True):
-            # Clear download complete state to show format options
-            st.session_state.download_complete = False
-            st.session_state.download_results = None
-            st.rerun()
-
-    st.markdown("---")
-
-    # Action buttons
-    st.markdown("### 🔄 Next Actions")
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
         if st.button("📊 Go to Visualization", use_container_width=True, type="primary"):
-            # Prepare data for visualization with error handling
             try:
                 _launch_visualization_from_results()
             except Exception as e:
-                # On error, go to visualizer without data (fallback to upload interface)
                 st.warning(f"⚠️ Could not transfer data to visualizer: {str(e)}")
                 st.info("💡 Redirecting to visualization module for manual upload...")
                 st.session_state.direct_visualization_data = None
                 st.session_state.app_mode = "data_visualizer"
                 st.rerun()
 
-    with col2:
-        if st.button("🔄 Download Different Format/Resolution", use_container_width=True):
-            # Go back to download configuration but keep selections
+    st.markdown("---")
+    st.markdown("### 🔄 What would you like to do next?")
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        if st.button("🔄 Change Format / Resolution", use_container_width=True):
+            # Back to download config — keep all selections, just redo the download
             st.session_state.download_complete = False
             st.session_state.download_results = None
             st.rerun()
+
+    with col2:
+        if st.button("🎛️ Change Bands", use_container_width=True):
+            # Go back to band selection
+            st.session_state.download_complete = False
+            st.session_state.download_results = None
+            go_back_to_step("bands")
 
     with col3:
-        if st.button("📅 Change Date Range", use_container_width=True):
-            # Go back to date selection
-            st.session_state.download_complete = False
-            st.session_state.download_results = None
-            st.session_state.dates_selected = False
-            st.rerun()
-
-    with col4:
         if st.button("🆕 Start New Download", use_container_width=True):
-            # Reset everything for new download
+            # Reset everything for a brand-new study
             st.session_state.download_complete = False
             st.session_state.download_results = None
             _reset_all_selections()
@@ -3063,16 +3072,39 @@ def _process_smart_download(export_format, scale, export_preference):
 
 
 def _reset_all_selections():
-    """Reset all session state variables"""
+    """Reset ALL session state keys used by the GeoData Explorer."""
     keys_to_reset = [
+        # Step flags
         'geometry_complete', 'dataset_selected', 'bands_selected', 'dates_selected',
+        # Data
         'selected_dataset', 'selected_bands', 'start_date', 'end_date',
+        # Download state
         'download_complete', 'download_results',
+        # Band selection widget state
+        'selected_bands_list', 'band_show_count', 'band_search_filter',
+        # Geometry widget state (GeometrySelectionWidget uses "geodata_" prefix)
+        'geodata_geometry', 'geodata_geometry_complete',
+        'geodata_method_selection',
+        # Cached values
+        'geodata_cached_area_km2',
+        # Download widget widget keys
+        'dl_date_preset', 'dl_start_date', 'dl_end_date',
+        'dl_export_format', 'dl_scale_selectbox',
+        # Post-download state
+        'post_download_active', 'post_download_results',
     ]
 
     for key in keys_to_reset:
         if key in st.session_state:
             del st.session_state[key]
+
+    # Also reset geometry handler
+    if 'geometry_handler' in st.session_state:
+        try:
+            st.session_state.geometry_handler._current_geometry = None
+            st.session_state.geometry_handler._current_geometry_name = None
+        except Exception:
+            pass
 
 
 def _extract_category(dataset_name):

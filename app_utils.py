@@ -12,51 +12,88 @@ from pathlib import Path
 
 
 def go_back_to_step(step_name):
-    """Navigate back to a specific step in the application"""
+    """Navigate back to a specific step in the GeoData Explorer.
+
+    Each level clears its own state PLUS everything downstream of it.
+    Keys are deleted (not just set False) so that Streamlit widget defaults
+    are restored cleanly on the next render.
+    """
+
+    def _del(*keys):
+        for k in keys:
+            if k in st.session_state:
+                del st.session_state[k]
+
     if step_name == "home":
         st.session_state.app_mode = None
         st.rerun()
-    elif step_name == "geometry":
-        # Go back to step 1: Reset all selections
-        # Reset both variable names (geometry_selected and geometry_complete) for compatibility
-        st.session_state.geometry_selected = False
-        st.session_state.geometry_complete = False
-        st.session_state.dataset_selected = False
-        st.session_state.bands_selected = False
-        st.session_state.dates_selected = False
 
-        # Also reset geometry handler state if it exists
+    elif step_name == "geometry":
+        # ── Step 1 back: wipe everything including geometry widget state ──
+        _del(
+            # Step flags
+            'geometry_complete', 'geometry_selected',
+            'dataset_selected', 'bands_selected', 'dates_selected',
+            # Data selections
+            'selected_dataset', 'selected_bands', 'start_date', 'end_date',
+            # Band widget
+            'selected_bands_list', 'band_show_count', 'band_search_filter',
+            # Download state
+            'download_complete', 'download_results',
+            # Geometry widget (GeometrySelectionWidget prefix "geodata_")
+            'geodata_geometry', 'geodata_geometry_complete',
+            'geodata_method_selection',
+            # Cached values
+            'geodata_cached_area_km2',
+            # Download widget keys
+            'dl_date_preset', 'dl_start_date', 'dl_end_date',
+            'dl_export_format', 'dl_scale_selectbox',
+        )
+        # Reset geometry handler
         if 'geometry_handler' in st.session_state:
             try:
                 st.session_state.geometry_handler._current_geometry = None
                 st.session_state.geometry_handler._current_geometry_name = None
-            except:
+            except Exception:
                 pass
-
-        # Clear any download state
-        if 'download_complete' in st.session_state:
-            st.session_state.download_complete = False
-        if 'download_results' in st.session_state:
-            st.session_state.download_results = None
-
         st.rerun()
+
     elif step_name == "dataset":
-        # Go back to step 2: Keep geometry, reset dataset and onwards
-        st.session_state.dataset_selected = False
-        st.session_state.bands_selected = False
-        st.session_state.dates_selected = False
+        # ── Step 2 back: keep geometry, clear dataset onwards ──
+        _del(
+            'dataset_selected', 'selected_dataset',
+            'bands_selected', 'selected_bands',
+            'selected_bands_list', 'band_show_count', 'band_search_filter',
+            'dates_selected', 'start_date', 'end_date',
+            'download_complete', 'download_results',
+            'dl_date_preset', 'dl_start_date', 'dl_end_date',
+            'dl_export_format', 'dl_scale_selectbox',
+        )
         st.rerun()
+
     elif step_name == "bands":
-        # Go back to step 3: Keep geometry and dataset, reset bands and onwards
-        st.session_state.bands_selected = False
-        st.session_state.dates_selected = False
+        # ── Step 3 back: keep geometry + dataset, clear bands onwards ──
+        _del(
+            'bands_selected', 'selected_bands',
+            'selected_bands_list', 'band_show_count', 'band_search_filter',
+            'dates_selected', 'start_date', 'end_date',
+            'download_complete', 'download_results',
+            'dl_date_preset', 'dl_start_date', 'dl_end_date',
+            'dl_export_format', 'dl_scale_selectbox',
+        )
         st.rerun()
+
     elif step_name == "dates":
-        # Go back to step 4: Keep geometry, dataset and bands, reset dates
-        st.session_state.dates_selected = False
+        # ── Step 4 back: keep geometry, dataset, bands; clear dates/download ──
+        _del(
+            'dates_selected', 'start_date', 'end_date',
+            'download_complete', 'download_results',
+            'dl_date_preset', 'dl_start_date', 'dl_end_date',
+        )
         st.rerun()
+
     else:
-        # Handle other navigation steps if needed
+        # Fallback: treat as app_mode navigation
         st.session_state.app_mode = step_name
         st.rerun()
 

@@ -1326,201 +1326,209 @@ def render_enhanced_correlation_viz(df: pd.DataFrame, column_suggestions: Dict):
 
 
 def render_trend_analysis_viz(df: pd.DataFrame, column_suggestions: Dict):
-    """Render Mann-Kendall trend test and Sen's slope analysis"""
+    """Render Mann-Kendall trend test and Sen's slope analysis.
+
+    Resampling is always offered first so the user can reduce the series to a
+    meaningful temporal resolution before running the (expensive) MK test.
+    The MK test itself is never run automatically — the user must click a button.
+    """
 
     st.markdown("#### 📈 Statistical Trend Analysis")
 
     if not column_suggestions['date_columns']:
-        st.warning("Trend analysis requires a date/time column for proper temporal ordering.")
+        st.warning("Trend analysis requires a date/time column.")
         return
-
     if not column_suggestions['numeric_columns']:
-        st.warning("Trend analysis requires numeric columns to analyze.")
+        st.warning("Trend analysis requires numeric columns.")
         return
 
-    # Column selection
+    # ── Column selection ────────────────────────────────────────────────────
     col1, col2 = st.columns(2)
-
     with col1:
-        date_col = st.selectbox(
-            "Date Column:",
-            column_suggestions['date_columns'],
-            key="trend_date_col"
-        )
-
+        date_col = st.selectbox("Date Column:", column_suggestions['date_columns'],
+                                key="trend_date_col")
     with col2:
-        value_col = st.selectbox(
-            "Value Column:",
-            column_suggestions['numeric_columns'],
-            key="trend_value_col"
-        )
+        value_col = st.selectbox("Value Column:", column_suggestions['numeric_columns'],
+                                 key="trend_value_col")
 
-    if date_col and value_col:
-        # Prepare data for trend analysis
-        trend_df = df[[date_col, value_col]].dropna()
+    if not date_col or not value_col:
+        return
 
-        if len(trend_df) < 3:
-            st.warning("Insufficient data for trend analysis (need at least 3 data points).")
-            return
+    # ── Prepare base dataframe ──────────────────────────────────────────────
+    trend_df = df[[date_col, value_col]].dropna().copy()
+    if len(trend_df) < 3:
+        st.warning("Insufficient data (need at least 3 points).")
+        return
 
-        # Sort by date
+    # Ensure date column is datetime
+    try:
+        trend_df[date_col] = pd.to_datetime(trend_df[date_col], errors='coerce')
+        trend_df = trend_df.dropna(subset=[date_col]).sort_values(date_col)
+    except Exception:
         trend_df = trend_df.sort_values(date_col)
 
-        # Check data size and show performance warning
-        data_size = len(trend_df)
-        if data_size > 10000:
-            st.warning(f"⚠️ Large dataset detected ({data_size:,} data points). Mann-Kendall trend analysis may take several minutes and could cause the app to freeze.")
-            st.info("💡 **Recommendation**: Use the checkbox below to enable trend calculation only when needed.")
+    raw_size = len(trend_df)
 
-        # Performance control checkbox for large datasets
-        perform_trend_analysis = True
-        if data_size > 5000:
-            st.markdown("---")
-            perform_trend_analysis = st.checkbox(
-                "🧮 **Perform Mann-Kendall Trend Analysis**",
-                value=data_size <= 10000,  # Auto-check for medium datasets, uncheck for very large
-                help=f"Enable this to calculate statistical trends for {data_size:,} data points. May take time for large datasets."
+    # ── Resampling ──────────────────────────────────────────────────────────
+    st.markdown("#### 🔁 Resample Before Analysis")
+    st.caption(
+        f"Original series: **{raw_size:,} records**. "
+        "Running Mann-Kendall on hourly or daily sub-daily data is statistically "
+        "inappropriate and very slow. Resample to a meaningful frequency first."
+    )
+
+    resample_freq = st.radio(
+        "Temporal resolution:",
+        ["Original", "Daily", "Monthly", "Yearly"],
+        horizontal=True,
+        key="trend_resample_freq",
+        help=(
+            "Original — use data as-is (safe only for monthly/yearly datasets).\n"
+            "Daily / Monthly / Yearly — aggregate by mean to reduce series length."
+        )
+    )
+
+    if resample_freq != "Original":
+        freq_map = {"Daily": "D", "Monthly": "ME", "Yearly": "YE"}
+        try:
+            trend_df = (
+                trend_df.set_index(date_col)
+                .resample(freq_map[resample_freq])[value_col]
+                .mean()
+                .dropna()
+                .reset_index()
             )
+            trend_df.columns = [date_col, value_col]
+        except Exception as e:
+            st.error(f"❌ Resampling failed: {e}")
+            return
 
-            if not perform_trend_analysis:
-                st.info("📊 Trend analysis disabled. Check the box above to enable trend calculations.")
+    data_size = len(trend_df)
 
-                # Show basic info without computation
-                st.markdown("#### 📋 Dataset Info")
-                info_cols = st.columns(3)
-                with info_cols[0]:
-                    st.metric("Data Points", f"{data_size:,}")
-                with info_cols[1]:
-                    try:
-                        # Try to convert dates and calculate range
-                        date_series = pd.to_datetime(trend_df[date_col], errors='coerce')
-                        if not date_series.isna().all():
-                            date_range = (date_series.max() - date_series.min()).days
-                            st.metric("Date Range", f"{date_range} days")
-                        else:
-                            # If date conversion fails, show first and last values
-                            first_date = trend_df[date_col].iloc[0]
-                            last_date = trend_df[date_col].iloc[-1]
-                            st.metric("Date Range", f"{first_date} to {last_date}")
-                    except Exception:
-                        # Fallback: show first and last date values
-                        first_date = trend_df[date_col].iloc[0]
-                        last_date = trend_df[date_col].iloc[-1]
-                        st.metric("Date Range", f"{first_date} to {last_date}")
-                with info_cols[2]:
-                    try:
-                        value_range = trend_df[value_col].max() - trend_df[value_col].min()
-                        st.metric("Value Range", f"{value_range:.3f}")
-                    except Exception:
-                        st.metric("Value Range", "N/A")
+    # ── Quick dataset info ──────────────────────────────────────────────────
+    info_cols = st.columns(3)
+    with info_cols[0]:
+        st.metric("Records after resample", f"{data_size:,}")
+    with info_cols[1]:
+        try:
+            date_range = (trend_df[date_col].max() - trend_df[date_col].min()).days
+            st.metric("Date span", f"{date_range:,} days")
+        except Exception:
+            st.metric("Date span", "N/A")
+    with info_cols[2]:
+        try:
+            st.metric("Value range",
+                      f"{trend_df[value_col].min():.3f} – {trend_df[value_col].max():.3f}")
+        except Exception:
+            st.metric("Value range", "N/A")
 
-                st.markdown("**✅ Quick Visual Trend**: Check the Time Series tab for visual trend assessment.")
-                return
+    # ── Always show the time-series plot (instant, no GEE calls) ───────────
+    st.markdown("#### 📊 Resampled Time Series")
+    fig_preview = go.Figure()
+    fig_preview.add_trace(go.Scatter(
+        x=trend_df[date_col], y=trend_df[value_col],
+        mode='lines', name=value_col,
+        line=dict(color='steelblue', width=2)
+    ))
+    fig_preview.update_layout(
+        xaxis_title=date_col, yaxis_title=value_col,
+        height=350, template='plotly_white', margin=dict(t=20)
+    )
+    st.plotly_chart(fig_preview, use_container_width=True)
 
-        # Show processing indicator for large datasets
-        if data_size > 5000:
-            st.info(f"🔄 Processing {data_size:,} data points for trend analysis...")
+    # ── Mann-Kendall — opt-in only ──────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("#### 🧮 Mann-Kendall Trend Test")
 
-        with st.spinner("🧮 Calculating Mann-Kendall trend test..." if data_size > 5000 else None):
-            # Perform Mann-Kendall test
-            mk_result = mann_kendall_test(trend_df[value_col])
+    if data_size > 5000:
+        st.warning(
+            f"⚠️ {data_size:,} records — MK test will be very slow. "
+            "Please resample to Monthly or Yearly above before running."
+        )
+    elif data_size > 1000:
+        st.info(f"ℹ️ {data_size:,} records — test may take a few seconds.")
 
-        with st.spinner("📐 Calculating Sen's slope..." if data_size > 5000 else None):
-            # Perform Sen's slope calculation
-            sens_result = sens_slope(trend_df[value_col])
+    run_mk = st.button(
+        "▶️ Run Mann-Kendall + Sen's Slope",
+        key="run_mk_btn",
+        type="primary",
+        disabled=(data_size > 5000),
+        help="Disabled for >5 000 records — resample first."
+    )
 
-        # Display results
-        st.markdown("#### 🧪 Mann-Kendall Trend Test Results")
+    if not run_mk:
+        st.caption("Click the button above to calculate the trend test on the resampled series.")
+        return
 
-        if 'error' not in mk_result:
-            result_cols = st.columns(4)
+    # ── Run the tests ───────────────────────────────────────────────────────
+    with st.spinner(f"🧮 Running Mann-Kendall on {data_size:,} records…"):
+        mk_result = mann_kendall_test(trend_df[value_col])
 
-            with result_cols[0]:
-                trend_color = "🟢" if mk_result['trend'] == 'increasing' else "🔴" if mk_result['trend'] == 'decreasing' else "🟡"
-                st.metric("Trend", f"{trend_color} {mk_result['trend'].title()}")
+    with st.spinner("📐 Calculating Sen's slope…"):
+        sens_result = sens_slope(trend_df[value_col])
 
-            with result_cols[1]:
-                sig_color = "🟢" if mk_result['significant'] else "🔴"
-                st.metric("Significant", f"{sig_color} {'Yes' if mk_result['significant'] else 'No'}")
+    # ── MK results ─────────────────────────────────────────────────────────
+    if 'error' not in mk_result:
+        result_cols = st.columns(4)
+        trend_color = ("🟢" if mk_result['trend'] == 'increasing'
+                       else "🔴" if mk_result['trend'] == 'decreasing' else "🟡")
+        with result_cols[0]:
+            st.metric("Trend", f"{trend_color} {mk_result['trend'].title()}")
+        with result_cols[1]:
+            sig_color = "🟢" if mk_result['significant'] else "🔴"
+            st.metric("Significant", f"{sig_color} {'Yes' if mk_result['significant'] else 'No'}")
+        with result_cols[2]:
+            st.metric("P-value", f"{mk_result['p_value']:.4f}")
+        with result_cols[3]:
+            st.metric("Z-statistic", f"{mk_result['Z']:.3f}")
 
-            with result_cols[2]:
-                st.metric("P-value", f"{mk_result['p_value']:.4f}")
-
-            with result_cols[3]:
-                st.metric("Z-statistic", f"{mk_result['Z']:.3f}")
-
-            # Interpretation
-            st.markdown("#### 📋 Interpretation")
-            if mk_result['significant']:
-                st.success(f"✅ **Significant {mk_result['trend']} trend detected** (p < {mk_result['alpha']})")
-            else:
-                st.info(f"ℹ️ **No significant trend detected** (p = {mk_result['p_value']:.4f} ≥ {mk_result['alpha']})")
+        if mk_result['significant']:
+            st.success(f"✅ Significant **{mk_result['trend']}** trend (p < {mk_result['alpha']})")
         else:
-            st.error(f"Mann-Kendall test failed: {mk_result['error']}")
+            st.info(f"ℹ️ No significant trend (p = {mk_result['p_value']:.4f} ≥ {mk_result['alpha']})")
+    else:
+        st.error(f"Mann-Kendall failed: {mk_result['error']}")
 
-        # Sen's slope results
-        st.markdown("#### 📐 Sen's Slope Results")
+    # ── Sen's slope results ─────────────────────────────────────────────────
+    st.markdown("#### 📐 Sen's Slope")
+    if 'error' not in sens_result:
+        slope_cols = st.columns(3)
+        with slope_cols[0]:
+            st.metric("Slope", f"{sens_result['slope']:.6f}")
+        with slope_cols[1]:
+            st.metric("95% CI Lower", f"{sens_result['ci_low']:.6f}")
+        with slope_cols[2]:
+            st.metric("95% CI Upper", f"{sens_result['ci_high']:.6f}")
 
-        if 'error' not in sens_result:
-            slope_cols = st.columns(3)
-
-            with slope_cols[0]:
-                st.metric("Sen's Slope", f"{sens_result['slope']:.6f}")
-
-            with slope_cols[1]:
-                st.metric("95% CI Lower", f"{sens_result['ci_low']:.6f}")
-
-            with slope_cols[2]:
-                st.metric("95% CI Upper", f"{sens_result['ci_high']:.6f}")
-
-            # Slope interpretation
-            st.markdown("#### 📊 Slope Interpretation")
-            if abs(sens_result['slope']) > 0.001:
-                direction = "increasing" if sens_result['slope'] > 0 else "decreasing"
-                st.info(f"📈 **Sen's slope indicates {direction} trend** at rate of {abs(sens_result['slope']):.6f} units per time step")
-            else:
-                st.info("➡️ **Sen's slope indicates minimal change** over time")
+        direction = "increasing" if sens_result['slope'] > 0 else "decreasing"
+        if abs(sens_result['slope']) > 1e-6:
+            st.info(f"Sen's slope → **{direction}** trend at {abs(sens_result['slope']):.6f} units / time-step")
         else:
-            st.error(f"Sen's slope calculation failed: {sens_result['error']}")
+            st.info("Sen's slope → minimal change over time")
+    else:
+        st.error(f"Sen's slope failed: {sens_result['error']}")
 
-        # Visual trend plot
-        if 'error' not in mk_result and 'error' not in sens_result:
-            st.markdown("#### 📈 Trend Visualization")
-
-            # Create trend plot
-            fig = go.Figure()
-
-            # Original data
-            fig.add_trace(go.Scatter(
-                x=trend_df[date_col],
-                y=trend_df[value_col],
-                mode='lines+markers',
-                name='Data',
-                line=dict(color='blue', width=2),
-                marker=dict(size=4)
-            ))
-
-            # Sen's slope trend line
-            x_numeric = np.arange(len(trend_df))
-            trend_line = sens_result['slope'] * x_numeric + trend_df[value_col].iloc[0]
-
-            fig.add_trace(go.Scatter(
-                x=trend_df[date_col],
-                y=trend_line,
-                mode='lines',
-                name=f"Sen's Slope Trend",
-                line=dict(color='red', width=2, dash='dash')
-            ))
-
-            fig.update_layout(
-                title=f"Trend Analysis: {value_col}",
-                xaxis_title=date_col,
-                yaxis_title=value_col,
-                height=400,
-                template='plotly_white'
-            )
-
-            st.plotly_chart(fig, use_container_width=True)
+    # ── Trend overlay plot ──────────────────────────────────────────────────
+    if 'error' not in mk_result and 'error' not in sens_result:
+        st.markdown("#### 📈 Trend Line")
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=trend_df[date_col], y=trend_df[value_col],
+            mode='lines', name='Data',
+            line=dict(color='steelblue', width=2)
+        ))
+        x_num = np.arange(len(trend_df))
+        trend_line = sens_result['slope'] * x_num + trend_df[value_col].iloc[0]
+        fig.add_trace(go.Scatter(
+            x=trend_df[date_col], y=trend_line,
+            mode='lines', name="Sen's Slope",
+            line=dict(color='crimson', width=2, dash='dash')
+        ))
+        fig.update_layout(
+            xaxis_title=date_col, yaxis_title=value_col,
+            height=380, template='plotly_white', margin=dict(t=20)
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
 
 # Removed complex band naming and categorization functions to keep it simple
