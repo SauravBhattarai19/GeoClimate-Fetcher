@@ -339,7 +339,8 @@ def _download_image_collection_simple(ee_id, bands, geometry, start_date, end_da
                     end_date=end_date,
                     export_format='CSV',
                     scale=scale,
-                    temporal_resolution=temporal_resolution
+                    temporal_resolution=temporal_resolution,
+                    ee_id=ee_id  # pass so _process_csv_chunks never calls getInfo() on full collection
                 )
 
             except Exception as csv_error:
@@ -366,7 +367,8 @@ def _download_image_collection_simple(ee_id, bands, geometry, start_date, end_da
                     end_date=end_date,
                     export_format='GeoTIFF',
                     scale=scale,
-                    temporal_resolution=temporal_resolution
+                    temporal_resolution=temporal_resolution,
+                    ee_id=ee_id
                 )
             except Exception as tiff_error:
                 return {

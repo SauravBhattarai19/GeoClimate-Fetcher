@@ -2323,10 +2323,11 @@ def _display_geemap_visualization(results):
             st.error(f"Error getting collection size: {str(e)}")
             return
 
-        # Get list of all images with dates
+        # Get list of all images with dates — cap at the display limit (100)
+        # to avoid GEE's 5000-element toList() failure on large collections.
         try:
-            # Convert ImageCollection to list
-            collection_list = collection.toList(collection.size())
+            display_limit = min(collection_size, 100)
+            collection_list = collection.toList(display_limit)
 
             # Create layers for each time period
             layers_added = []
@@ -2912,10 +2913,40 @@ def _execute_smart_spatial_export(results):
     for band_type, ee_band_name in band_mapping.items():
         collections[band_type] = base_collection.filterDate(start_date, end_date).select([ee_band_name])
 
-    # Smart export with learning
+    # ── PRE-VALIDATE: estimate output collection size before attempting local export ──
+    # Climate indices produce 1 image per time-period (monthly or yearly).
+    # Local GeoTIFF export calls geemap.ee_export_image per image — impractical at scale.
     spatial_results = {}
-    local_failed = False  # Track if local download has failed (for learning)
-    force_drive = False   # If True, skip local entirely
+    local_failed = False
+    force_drive = False
+
+    try:
+        from datetime import datetime as _dt
+        _s = _dt.strptime(str(start_date)[:10], '%Y-%m-%d')
+        _e = _dt.strptime(str(end_date)[:10], '%Y-%m-%d')
+        _total_days = (_e - _s).days
+        _tr = (temporal_resolution or 'monthly').lower()
+        if 'year' in _tr or 'annual' in _tr:
+            estimated_output_images = max(1, _total_days // 365)
+        elif 'month' in _tr:
+            estimated_output_images = max(1, _total_days // 30)
+        else:
+            estimated_output_images = max(1, _total_days)
+
+        # >200 output GeoTIFF images is impractical locally (50MB limit + per-image export calls)
+        if estimated_output_images > 200:
+            force_drive = True
+            st.info(
+                f"📤 ~{estimated_output_images} output images estimated — "
+                f"skipping local export and going directly to Google Drive."
+            )
+        elif estimated_output_images > 50:
+            st.info(
+                f"ℹ️ ~{estimated_output_images} output images — "
+                f"attempting local download; Drive export will be used if the file is too large."
+            )
+    except Exception:
+        pass  # If estimation fails, let the existing learning logic handle it
 
     progress_bar = st.progress(0)
     status_text = st.empty()

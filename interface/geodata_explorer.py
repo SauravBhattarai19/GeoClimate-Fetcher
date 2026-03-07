@@ -1531,26 +1531,49 @@ def _render_geemap_preview_lazy(start_date, end_date):
 
 
 def _estimate_record_count(temporal_resolution: str, days: int) -> int:
-    """Estimate the number of CSV records for a given temporal resolution and day span."""
+    """Estimate the number of CSV records for a given temporal resolution and day span.
+
+    STAC API quirks:
+      - ERA5-Land Hourly / ERA5 Hourly → temporal_resolution = "Variable"
+      - Some providers return "1 hour", "Hourly", "hourly", "3-hourly", etc.
+    All sub-daily variants must be caught here so the smart-download router
+    sends them to the chunked path instead of the (doomed) single-pass path.
+    """
     tr = (temporal_resolution or 'daily').lower()
-    if '30' in tr and 'min' in tr:
+
+    # 30-minute data (e.g. GOES)
+    if ('30' in tr and 'min' in tr) or tr in ('30min', '30-min', '30minute'):
         return days * 48
-    elif 'hour' in tr:
-        return days * 24
-    elif '3-hour' in tr or '3hour' in tr:
+
+    # 3-hourly data
+    if '3-hour' in tr or '3hour' in tr or tr == '3h':
         return days * 8
-    elif '2-day' in tr:
+
+    # Hourly data — also catches STAC "Variable" which ERA5 products return
+    # for sub-daily datasets, and any "1 hour" / "1h" variant.
+    if ('hour' in tr) or tr in ('variable', '1h', '1 hour'):
+        return days * 24
+
+    # Multi-day composites
+    if '2-day' in tr:
         return max(days // 2, 1)
-    elif '6-day' in tr:
+    if '5-day' in tr:
+        return max(days // 5, 1)
+    if '6-day' in tr:
         return max(days // 6, 1)
-    elif '8-day' in tr:
+    if '8-day' in tr:
         return max(days // 8, 1)
-    elif '16-day' in tr:
+    if '16-day' in tr:
         return max(days // 16, 1)
-    elif 'month' in tr:
+
+    # Monthly / annual
+    if 'month' in tr:
         return max(days // 30, 1)
-    else:
-        return days
+    if 'year' in tr or 'annual' in tr:
+        return max(days // 365, 1)
+
+    # Default → daily
+    return days
 
 
 def _render_download_interface():
@@ -2769,54 +2792,65 @@ def _process_smart_download(export_format, scale, export_preference):
 
                 # Handle CSV format with optimized path
                 if export_format == 'CSV':
-                    st.info("📊 Using optimized CSV processing for area-averaged time series...")
+                    # ── PRE-VALIDATE: estimate total images before touching GEE ──────────
+                    temporal_resolution = dataset.get('temporal_resolution', 'Daily')
+                    days_diff = (end_date - start_date).days + 1
+                    estimated_images = _estimate_record_count(temporal_resolution, days_diff)
 
-                    # Use the optimized get_time_series_average method
+                    dataset_native_scale = dataset.get('pixel_size')
+                    if dataset_native_scale:
+                        try:
+                            dataset_native_scale = float(dataset_native_scale)
+                        except (ValueError, TypeError):
+                            dataset_native_scale = None
+
+                    # Tier 3: mega-request → Drive export immediately, no local attempt
+                    if estimated_images > 200_000:
+                        st.warning(
+                            f"⚠️ Estimated **~{estimated_images:,} records** for this period — "
+                            f"too large for a local download ({days_diff} days of {temporal_resolution} data)."
+                        )
+                        st.info("📤 Routing to Google Drive export automatically...")
+                        return _process_csv_drive_export(export_format, scale)
+
+                    # Tier 2: medium collection → chunked getDownloadURL
+                    # Threshold uses estimated_images (case-insensitive, works for any TR string)
+                    use_chunked = estimated_images > 5_000
+
+                    if use_chunked:
+                        st.info(
+                            f"📊 ~{estimated_images:,} records detected — "
+                            f"using chunked download ({temporal_resolution})..."
+                        )
+                    else:
+                        st.info("📊 Using single-pass CSV download...")
+
                     try:
-                        # Get dataset native scale for optimization
-                        dataset_native_scale = dataset.get('pixel_size')
-                        if dataset_native_scale:
-                            try:
-                                dataset_native_scale = float(dataset_native_scale)
-                            except (ValueError, TypeError):
-                                dataset_native_scale = None
+                        if use_chunked:
+                            _chunk_progress_bar = st.progress(0)
+                            _chunk_status = st.empty()
 
-                        # Get optimized time series data with automatic chunking if needed
-                        temporal_resolution = dataset.get('temporal_resolution', 'Daily')
+                            def _chunk_callback(done, total, chunk_start, chunk_end, records=None, error=None):
+                                pct = int(done / total * 100)
+                                _chunk_progress_bar.progress(pct)
+                                if error:
+                                    _chunk_status.warning(f"⚠️ Chunk {done}/{total} ({chunk_start} → {chunk_end}): {error}")
+                                elif records is not None:
+                                    _chunk_status.info(f"✅ Chunk {done}/{total} ({chunk_start} → {chunk_end}) — {records:,} records")
+                                else:
+                                    _chunk_status.info(f"🔄 Chunk {done}/{total} ({chunk_start} → {chunk_end})…")
 
-                        # Check if we need chunking based on date range and temporal resolution
-                        days_diff = (end_date - start_date).days + 1
-
-                        # Estimate if collection will exceed 5000 elements
-                        if temporal_resolution == 'Hourly' and days_diff > 200:
-                            # Use chunked method for large hourly collections
                             df = fetcher.get_time_series_average_chunked(
-                                chunk_months=3,
                                 export_format='CSV',
                                 user_scale=scale,
                                 temporal_resolution=temporal_resolution,
-                                dataset_native_scale=dataset_native_scale
+                                dataset_native_scale=dataset_native_scale,
+                                progress_callback=_chunk_callback
                             )
-                        elif temporal_resolution == '30-minute' and days_diff > 100:
-                            # Use chunked method for large sub-hourly collections
-                            df = fetcher.get_time_series_average_chunked(
-                                chunk_months=1,
-                                export_format='CSV',
-                                user_scale=scale,
-                                temporal_resolution=temporal_resolution,
-                                dataset_native_scale=dataset_native_scale
-                            )
-                        elif temporal_resolution == 'Daily' and days_diff > 3650:
-                            # Use chunked method for very large daily collections (>10 years)
-                            df = fetcher.get_time_series_average_chunked(
-                                chunk_months=12,
-                                export_format='CSV',
-                                user_scale=scale,
-                                temporal_resolution=temporal_resolution,
-                                dataset_native_scale=dataset_native_scale
-                            )
+                            _chunk_progress_bar.progress(100)
+                            _chunk_status.success("✅ All chunks downloaded!")
                         else:
-                            # Use optimized single-pass method
+                            # Tier 1: small collection → single getDownloadURL call
                             df = fetcher.get_time_series_average(
                                 export_format='CSV',
                                 user_scale=scale,
@@ -2824,21 +2858,19 @@ def _process_smart_download(export_format, scale, export_preference):
                             )
 
                         if df is None or df.empty:
-                            st.error("❌ No data returned from optimized processing")
+                            st.error("❌ No data returned from Earth Engine")
                             st.warning("⚠️ Falling back to standard download method...")
                             return _process_download(export_format, scale)
 
-                        # Generate filename
+                        # ── Build download result ────────────────────────────────────────
                         from datetime import datetime
                         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                         dataset_name = dataset.get('name', 'data').replace(' ', '_').replace('/', '_')
                         filename = f"{dataset_name}_timeseries_{timestamp}.csv"
 
-                        # Convert DataFrame to CSV
                         csv_data = df.to_csv(index=False)
                         file_size_mb = len(csv_data.encode('utf-8')) / (1024 * 1024)
 
-                        # Set up download results
                         download_results = {
                             'file_data': csv_data.encode('utf-8'),
                             'filename': filename,
@@ -2846,7 +2878,7 @@ def _process_smart_download(export_format, scale, export_preference):
                             'file_size_mb': file_size_mb,
                             'export_format': 'CSV',
                             'dataset_name': dataset.get('name', 'Unknown'),
-                            'success_message': f"Optimized CSV download ({file_size_mb:.1f} MB)",
+                            'success_message': f"CSV download ({file_size_mb:.1f} MB, {len(df):,} records)",
                             'scale': scale,
                             'download_timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                         }
@@ -2854,10 +2886,8 @@ def _process_smart_download(export_format, scale, export_preference):
                         st.session_state.download_complete = True
                         st.session_state.download_results = download_results
 
-                        st.success(f"✅ CSV data processed successfully! ({file_size_mb:.1f} MB)")
-                        st.info(f"📊 Generated {len(df)} time series records")
+                        st.success(f"✅ CSV ready! ({len(df):,} records, {file_size_mb:.1f} MB)")
 
-                        # Early visualization option for CSV
                         st.markdown("---")
                         st.markdown("### 🎯 Quick Actions")
                         col1, col2 = st.columns(2)
@@ -2880,45 +2910,6 @@ def _process_smart_download(export_format, scale, export_preference):
 
                     except Exception as csv_error:
                         st.error(f"❌ CSV processing failed: {str(csv_error)}")
-                        if "Collection query aborted after accumulating over 5000 elements" in str(csv_error):
-                            st.warning("⚠️ Large collection detected. Trying chunked processing...")
-                            try:
-                                # Force chunked processing for large collections
-                                df = fetcher.get_time_series_average_chunked(
-                                    chunk_months=6,
-                                    export_format='CSV',
-                                    user_scale=scale,
-                                    temporal_resolution=dataset.get('temporal_resolution', 'Daily'),
-                                    dataset_native_scale=dataset_native_scale
-                                )
-                                if df is not None and not df.empty:
-                                    # Process chunked result same as above
-                                    from datetime import datetime
-                                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                                    dataset_name = dataset.get('name', 'data').replace(' ', '_').replace('/', '_')
-                                    filename = f"{dataset_name}_timeseries_{timestamp}.csv"
-                                    csv_data = df.to_csv(index=False)
-                                    file_size_mb = len(csv_data.encode('utf-8')) / (1024 * 1024)
-
-                                    download_results = {
-                                        'file_data': csv_data.encode('utf-8'),
-                                        'filename': filename,
-                                        'mime_type': "text/csv",
-                                        'file_size_mb': file_size_mb,
-                                        'export_format': 'CSV',
-                                        'dataset_name': dataset.get('name', 'Unknown'),
-                                        'success_message': f"Chunked CSV download ({file_size_mb:.1f} MB)",
-                                        'scale': scale,
-                                        'download_timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                                    }
-                                    
-                                    st.session_state.download_complete = True
-                                    st.session_state.download_results = download_results
-                                    st.success(f"✅ Chunked CSV processing successful! ({len(df)} records)")
-                                    return
-                            except Exception as chunk_error:
-                                st.error(f"❌ Chunked processing also failed: {str(chunk_error)}")
-
                         st.warning("⚠️ Falling back to standard download method...")
                         return _process_download(export_format, scale)
 
