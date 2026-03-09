@@ -19,6 +19,125 @@ from .download_utils import process_image_collection_chunked
 from app_utils import download_ee_data_simple
 
 
+def _is_subdaily_dataset(temporal_resolution: str) -> bool:
+    """Return True if the dataset has sub-daily (hourly / 30-min / variable) resolution.
+
+    ETCCDI climate indices (TXx, TNn, RX1day, CDD, …) are defined on **daily** data.
+    When the user selects an hourly product (ERA5-Land Hourly, ERA5 Hourly, GFS, …),
+    we must pre-aggregate the raw collections to daily before passing them to the
+    ClimateIndicesCalculator.
+    """
+    tr = (temporal_resolution or 'daily').lower()
+    return any(x in tr for x in ('hour', 'variable', '30min', '30-min', '3h', '3-hour'))
+
+
+def _aggregate_to_daily_one_year(year_coll: 'ee.ImageCollection',
+                                 year_start_str: str,
+                                 n_days_in_year: int,
+                                 method: str) -> 'ee.ImageCollection':
+    """Aggregate one calendar year of sub-daily data to daily images.
+
+    Keeping each call to ≤366 mapped offsets avoids the GEE 'User memory limit
+    exceeded' error that occurs when thousands of offsets are mapped at once.
+    """
+    ee_ys   = ee.Date(year_start_str)
+    offsets = ee.List.sequence(0, n_days_in_year - 1)
+
+    def make_daily(offset):
+        d   = ee_ys.advance(offset, 'day')
+        sub = year_coll.filterDate(d, d.advance(1, 'day'))
+        if method == 'sum':
+            img = sub.sum()
+        elif method == 'max':
+            img = sub.max()
+        elif method == 'min':
+            img = sub.min()
+        else:
+            img = sub.mean()
+        return img.set('system:time_start', d.millis())
+
+    return ee.ImageCollection(offsets.map(make_daily))
+
+
+def _aggregate_to_daily_ee(collection: 'ee.ImageCollection',
+                           method: str,
+                           start_date: str,
+                           end_date: str) -> 'ee.ImageCollection':
+    """Aggregate a sub-daily ee.ImageCollection to daily using year-by-year chunks.
+
+    Processes one calendar year at a time (≤366 offsets per GEE map call) so
+    that even 30-year date ranges stay well within GEE memory limits.
+
+    Args:
+        collection:  Sub-daily ee.ImageCollection (hourly, 30-min, …).
+        method:      'sum' | 'max' | 'min' | 'mean'
+        start_date:  ISO date string 'YYYY-MM-DD'
+        end_date:    ISO date string 'YYYY-MM-DD'
+
+    Returns:
+        Daily ee.ImageCollection with one image per calendar day.
+    """
+    from datetime import datetime, timedelta
+
+    start = datetime.strptime(str(start_date)[:10], '%Y-%m-%d')
+    end   = datetime.strptime(str(end_date)[:10],   '%Y-%m-%d')
+
+    yearly_colls = []
+    for year in range(start.year, end.year + 1):
+        y_start = max(datetime(year, 1, 1), start)
+        y_end   = min(datetime(year, 12, 31), end)
+        if y_start > y_end:
+            continue
+
+        y_start_str = y_start.strftime('%Y-%m-%d')
+        y_end_next  = (y_end + timedelta(days=1)).strftime('%Y-%m-%d')
+        n_days_y    = (y_end - y_start).days + 1
+
+        year_coll = collection.filterDate(y_start_str, y_end_next)
+        yearly_colls.append(
+            _aggregate_to_daily_one_year(year_coll, y_start_str, n_days_y, method)
+        )
+
+    if not yearly_colls:
+        return collection
+
+    result = yearly_colls[0]
+    for yc in yearly_colls[1:]:
+        result = result.merge(yc)
+    return result
+
+
+def _aggregate_hourly_to_daily_collections(collections: dict,
+                                           band_mapping: dict,
+                                           start_date: str,
+                                           end_date: str) -> dict:
+    """Pre-aggregate all sub-daily collections to daily per ETCCDI requirements.
+
+    Aggregation rules (climatologically correct):
+    ─────────────────────────────────────────────
+    Band type              GEE operation     Scientific rationale
+    ───────────────────    ─────────────     ───────────────────────────────────
+    precipitation / rain   sum               Daily total = Σ hourly totals
+    max_temperature        max               Daily Tmax = highest hourly reading
+    min_temperature        min               Daily Tmin = lowest  hourly reading
+    everything else        mean              Conservative default (Tmean, etc.)
+    """
+    daily = {}
+    for band_type, hourly_coll in collections.items():
+        bt = band_type.lower()
+        if any(kw in bt for kw in ('precipitation', 'rain', 'precip', 'prcp', 'pr')):
+            method = 'sum'
+        elif 'max' in bt:
+            method = 'max'
+        elif 'min' in bt:
+            method = 'min'
+        else:
+            method = 'mean'
+
+        daily[band_type] = _aggregate_to_daily_ee(hourly_coll, method, start_date, end_date)
+    return daily
+
+
 def run_climate_analysis_with_chunking(config: Dict[str, Any]) -> Dict[str, Any]:
     """
     Run climate analysis with flexible export options (Google Drive or local)
@@ -70,11 +189,11 @@ def run_climate_analysis_with_chunking(config: Dict[str, Any]) -> Dict[str, Any]
         collections = {}
         base_collection = ee.ImageCollection(dataset_id)
 
-        # Get the first image to check available bands
+        # Get the first image to check available bands (suppressed verbose output)
         try:
             first_image = base_collection.first()
             available_bands = first_image.bandNames().getInfo()
-            st.info(f"📋 Available bands in {dataset_id}: {available_bands}")
+            # Verbose band listing removed per user request
         except Exception as e:
             st.warning(f"⚠️ Could not determine available bands: {str(e)}")
             available_bands = []
@@ -100,6 +219,57 @@ def run_climate_analysis_with_chunking(config: Dict[str, Any]) -> Dict[str, Any]
                 st.error(f"❌ Failed to load band '{ee_band_name}' for {band_type}: {str(e)}")
                 return {'success': False, 'error': f'Failed to load band {ee_band_name}: {str(e)}'}
 
+        # ── Sub-daily → daily aggregation ────────────────────────────────────
+        # ETCCDI climate indices are defined on *daily* data.
+        #
+        # Strategy:
+        #   1. Check if STAC temporal_resolution label suggests sub-daily.
+        #   2. Confirm by computing actual images/day from the already-loaded
+        #      collection sizes.  STAC sometimes labels daily ERA5 products as
+        #      "Variable", which would trigger a false positive without this guard.
+        #   3. Only aggregate when truly sub-daily (> 1.5 images / day).
+        #
+        # The aggregation uses year-by-year chunks (≤ 366 offsets per GEE map
+        # call) to stay within GEE memory limits for multi-decade date ranges.
+        dataset_temporal_res = dataset_info.get('temporal_resolution', 'daily')
+        needs_aggregation    = _is_subdaily_dataset(dataset_temporal_res)
+
+        if needs_aggregation:
+            from datetime import datetime as _dta
+            _s           = _dta.strptime(str(start_date)[:10], '%Y-%m-%d')
+            _e           = _dta.strptime(str(end_date)[:10],   '%Y-%m-%d')
+            n_days_range = max((_e - _s).days, 1)
+
+            # Use the first band's already-known collection size
+            first_band_type = next(iter(collections))
+            try:
+                first_size = collections[first_band_type].size().getInfo()
+            except Exception:
+                first_size = 0
+            actual_imgs_per_day = first_size / n_days_range if n_days_range else 1
+
+            if actual_imgs_per_day <= 1.5:
+                # Dataset is already at daily (or coarser) resolution despite label
+                needs_aggregation = False
+                st.info(
+                    f"ℹ️ Dataset labeled '{dataset_temporal_res}' but contains "
+                    f"~{actual_imgs_per_day:.2f} images/day — "
+                    f"already at daily resolution, no aggregation needed."
+                )
+            else:
+                st.info(
+                    f"⏰ **Sub-daily dataset confirmed** "
+                    f"({actual_imgs_per_day:.0f} images/day, "
+                    f"temporal resolution: *{dataset_temporal_res}*). "
+                    f"Pre-aggregating to daily composites per ETCCDI standards "
+                    f"(year-by-year chunking to stay within GEE memory limits)…"
+                )
+
+        if needs_aggregation:
+            collections = _aggregate_hourly_to_daily_collections(
+                collections, band_mapping, start_date, end_date
+            )
+
         # Calculate each index
         results = {}
         all_time_series = {}
@@ -109,21 +279,15 @@ def run_climate_analysis_with_chunking(config: Dict[str, Any]) -> Dict[str, Any]
         progress_bar = st.progress(0)
         status_text = st.empty()
 
-        # Calculate adaptive scale based on area size to prevent memory issues
+        # Use the user-selected spatial scale (which already reflects native dataset
+        # resolution).  The old "adaptive by area" logic was forcing 5 000 m even
+        # when the user correctly selected 11 100 m (ERA5-Land native), which
+        # caused unnecessary sub-native interpolation without any memory benefit.
+        adaptive_scale = spatial_scale   # honours native resolution selection
+
         try:
             area_km2 = ee.Geometry(geometry).area().divide(1e6).getInfo()
-            if area_km2 > 500000:  # Very large (>500,000 km²)
-                adaptive_scale = 20000  # 20km resolution
-                st.warning(f"⚠️ Very large study area ({area_km2:,.0f} km²). Using coarse resolution ({adaptive_scale}m) to prevent memory issues.")
-            elif area_km2 > 100000:  # Large (>100,000 km²)
-                adaptive_scale = 10000  # 10km resolution
-                st.info(f"ℹ️ Large study area ({area_km2:,.0f} km²). Using adaptive resolution ({adaptive_scale}m).")
-            elif area_km2 > 10000:  # Medium (>10,000 km²)
-                adaptive_scale = 5000   # 5km resolution
-            else:  # Small (<10,000 km²)
-                adaptive_scale = 1000   # 1km resolution
-        except:
-            adaptive_scale = 5000  # Default fallback
+        except Exception:
             area_km2 = 0
 
         if temporal_only:
@@ -169,31 +333,26 @@ def run_climate_analysis_with_chunking(config: Dict[str, Any]) -> Dict[str, Any]
                     # Store the ImageCollection for later spatial processing
                     all_index_collections[index_name] = index_result
 
-                    # Extract time series data with ADAPTIVE SCALE and retry logic
+                    # Extract time series data.
+                    # extract_time_series_optimized() uses getDownloadURL (same as
+                    # GeoData Explorer) which routes through GEE's batch API and
+                    # avoids the "User memory limit exceeded" that getInfo() causes
+                    # on complex climate-index expressions.
+                    # Coarsening the scale does NOT fix OOM from expression-graph
+                    # complexity, so we removed the useless scale-retry loop.
                     st.write(f"  📈 Extracting time series (scale={adaptive_scale}m)...")
 
-                    extraction_success = False
-                    current_scale = adaptive_scale
-                    max_retries = 3
-
-                    for retry in range(max_retries):
-                        try:
-                            time_series_df = calculator.extract_time_series_optimized(
-                                index_result, scale=current_scale, max_pixels=1e6
-                            )
-                            extraction_success = True
-                            break
-                        except Exception as extraction_error:
-                            error_msg = str(extraction_error).lower()
-                            if "memory" in error_msg or "limit exceeded" in error_msg:
-                                # Increase scale to reduce memory usage
-                                current_scale = int(current_scale * 2)
-                                if retry < max_retries - 1:
-                                    st.write(f"  ⚠️ Memory limit hit. Retrying with coarser scale ({current_scale}m)...")
-                                else:
-                                    raise extraction_error
-                            else:
-                                raise extraction_error
+                    try:
+                        time_series_df = calculator.extract_time_series_optimized(
+                            index_result,
+                            scale=adaptive_scale,
+                            max_pixels=1e9        # must be generous — 1e6 was too low
+                        )
+                        extraction_success = time_series_df is not None and not time_series_df.empty
+                    except Exception as extraction_error:
+                        st.write(f"  ⚠️ Time series extraction failed: {extraction_error}")
+                        extraction_success = False
+                        time_series_df = pd.DataFrame(columns=['date', 'value'])
 
                     if extraction_success and not time_series_df.empty:
                         all_time_series[index_name] = time_series_df

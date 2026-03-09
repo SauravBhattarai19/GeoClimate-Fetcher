@@ -667,20 +667,27 @@ def export_individual_geotiffs_standalone(collection, temp_path, geometry, scale
         images_list = collection.toList(collection_size)
         exported_files = []
 
-        # Create progress placeholder for larger collections
-        progress_placeholder = st.empty() if collection_size > 5 else None
+        # Progress bar + single status line that updates every image
+        progress_bar         = st.progress(0)
+        progress_placeholder = st.empty()
 
         for i in range(collection_size):
             try:
-                # Show progress for larger collections - replace, don't add
-                if progress_placeholder and i % 5 == 0:
-                    progress_placeholder.info(f"Exporting GeoTIFF {i+1}/{collection_size}...")
+                # Show "fetching…" before the GEE call
+                progress_bar.progress(i / collection_size)
+                progress_placeholder.info(f"🔄 Fetching image {i + 1}/{collection_size}…")
 
                 image = ee.Image(images_list.get(i))
 
-                # Get image date for filename
+                # Get image date for filename (already a required GEE call)
                 date_str = image.date().format('YYYY_MM_dd').getInfo()
                 time_str = image.date().format('HH_mm_ss').getInfo()
+
+                # Update status with the actual date now that we have it
+                year_label = date_str[:4] if date_str else str(i + 1)
+                progress_placeholder.info(
+                    f"📥 Exporting {i + 1}/{collection_size} — {year_label}"
+                )
 
                 # Create filename with time info
                 filename = f"image_{date_str}_{time_str}.tif"
@@ -696,20 +703,23 @@ def export_individual_geotiffs_standalone(collection, temp_path, geometry, scale
                     scale=scale,
                     region=geometry,
                     file_per_band=False,
-                    crs='EPSG:4326'  # Explicitly set coordinate reference system
+                    crs='EPSG:4326'
                 )
 
                 if file_path.exists() and file_path.stat().st_size > 0:
                     exported_files.append(file_path)
+                    progress_placeholder.success(
+                        f"✅ {i + 1}/{collection_size} — {year_label} saved"
+                    )
                 else:
-                    st.warning(f"Failed to export image {i+1}: {filename}")
+                    st.warning(f"⚠️ Image {i + 1} ({year_label}): export produced empty file")
 
             except Exception as img_error:
-                st.warning(f"Error exporting image {i+1}: {str(img_error)}")
+                st.warning(f"⚠️ Image {i + 1}: {str(img_error)}")
                 continue
 
-        if progress_placeholder:
-            progress_placeholder.empty()
+        progress_bar.progress(1.0)
+        progress_placeholder.empty()
 
         if exported_files:
             # Create ZIP file containing all GeoTIFFs

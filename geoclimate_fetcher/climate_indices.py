@@ -1559,27 +1559,38 @@ class ClimateIndicesCalculator:
 
         Formula: SU = count(TX > 25°C) annual count in days
         """
+        # Get scaling info for threshold conversion
+        scaling_factor, offset = 1.0, 0.0
+        if self.dataset_id:
+            band_info = self.dataset_config.get_band_scaling_info(
+                self.dataset_id, 'temperature_max')
+            scaling_factor = band_info.get('scaling_factor', 1.0)
+            offset         = band_info.get('offset', 0.0)
+
+        # Convert threshold from user units (e.g., °C) to raw units (e.g., Kelvin for ERA5)
+        # For ERA5: raw = (user - offset) / scaling_factor
+        # If dataset uses Kelvin: threshold_kelvin = threshold_celsius + 273.15
+        # But we use the dataset's scaling info for consistency
+        raw_threshold = (threshold - offset) / scaling_factor if scaling_factor else threshold
+
         # Filter to analysis period
-        filtered = tmax_collection.filterDate(start_date, end_date)
+        filtered = tmax_collection.filterDate(start_date, end_date).filterBounds(self.geometry)
 
         def calculate_annual_su(year):
             year = ee.Number(year)
-
-            # Get year data
             yearly = filtered.filter(
                 ee.Filter.calendarRange(year, year, 'year')
             )
-
-            # Count summer days
-            summer_days = yearly.map(lambda img: img.gt(threshold))
+            # Count summer days using raw threshold
+            summer_days = yearly.map(lambda img: img.gt(raw_threshold))
             summer_day_count = summer_days.sum()
-
             return summer_day_count.set({
                 'year': year,
-                'system:time_start': ee.Date.fromYMD(year, 1, 1).millis()
+                'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                'index_name': 'SU',
+                'unit': 'days'
             })
 
-        # Create year sequence
         start_year = ee.Date(start_date).get('year')
         end_year = ee.Date(end_date).get('year')
         years = ee.List.sequence(start_year, end_year)
@@ -1587,7 +1598,6 @@ class ClimateIndicesCalculator:
         results = ee.ImageCollection.fromImages(
             years.map(calculate_annual_su)
         )
-
         return results
 
     def calculate_R20mm(self, precip_collection: ee.ImageCollection,
@@ -1605,67 +1615,119 @@ class ClimateIndicesCalculator:
             start_date: Start date string
             end_date: End date string
             threshold: Precipitation threshold (default 20.0 mm)
-            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', 'climatology_median', 'climatology_min', or 'climatology_max' aggregation
-            climatology_reducer: 'mean', 'median', 'min', or 'max' for climatology calculations
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', etc.
+            climatology_reducer: 'mean', 'median', 'min', or 'max'
         """
-        # Filter to analysis period
-        filtered = precip_collection.filterDate(start_date, end_date)
+        threshold_mm = threshold  # User-provided threshold in mm
+        
+        # ── YEARLY PATH: handle before collection-level .map() ───────────────
+        if temporal_resolution == 'yearly':
+            from datetime import datetime as _dt
+            _start = _dt.strptime(str(start_date)[:10], '%Y-%m-%d')
+            _end   = _dt.strptime(str(end_date)[:10],   '%Y-%m-%d')
 
-        # Create year sequence
+            scaling_factor, offset = 1.0, 0.0
+            if self.dataset_id:
+                band_info = self.dataset_config.get_band_scaling_info(
+                    self.dataset_id, 'precipitation')
+                scaling_factor = band_info.get('scaling_factor', 1.0)
+                offset         = band_info.get('offset', 0.0)
+
+            # Convert threshold from mm to raw units (e.g., meters for ERA5)
+            raw_threshold = (threshold_mm - offset) / scaling_factor if scaling_factor else threshold_mm
+
+            raw_filtered = (precip_collection
+                            .filterDate(start_date, end_date)
+                            .filterBounds(self.geometry))
+
+            yearly_images = []
+            for year in range(_start.year, _end.year + 1):
+                year_coll = raw_filtered.filterDate(f'{year}-01-01', f'{year + 1}-01-01')
+                heavy_days = year_coll.map(lambda img: img.gte(raw_threshold))
+                total_heavy = heavy_days.sum()
+                yearly_images.append(total_heavy.set({
+                    'year': year,
+                    'system:time_start': ee.Date(f'{year}-01-01').millis(),
+                    'index_name': 'R20mm',
+                    'unit': 'days'
+                }))
+
+            return (ee.ImageCollection(yearly_images)
+                    if yearly_images else ee.ImageCollection([]))
+
+        # ── MONTHLY PATH: handle before collection-level .map() ───────────────
+        if temporal_resolution == 'monthly':
+            from datetime import datetime as _dt
+            _start = _dt.strptime(str(start_date)[:10], '%Y-%m-%d')
+            _end   = _dt.strptime(str(end_date)[:10],   '%Y-%m-%d')
+
+            scaling_factor, offset = 1.0, 0.0
+            if self.dataset_id:
+                band_info = self.dataset_config.get_band_scaling_info(
+                    self.dataset_id, 'precipitation')
+                scaling_factor = band_info.get('scaling_factor', 1.0)
+                offset         = band_info.get('offset', 0.0)
+
+            raw_threshold = (threshold_mm - offset) / scaling_factor if scaling_factor else threshold_mm
+
+            raw_filtered = (precip_collection
+                            .filterDate(start_date, end_date)
+                            .filterBounds(self.geometry))
+
+            monthly_images = []
+            for year in range(_start.year, _end.year + 1):
+                for month in range(1, 13):
+                    if year == _start.year and month < _start.month:
+                        continue
+                    if year == _end.year and month > _end.month:
+                        continue
+                    
+                    if month == 12:
+                        month_start = f'{year}-12-01'
+                        month_end = f'{year+1}-01-01'
+                    else:
+                        month_start = f'{year}-{month:02d}-01'
+                        month_end = f'{year}-{month+1:02d}-01'
+                    
+                    month_coll = raw_filtered.filterDate(month_start, month_end)
+                    heavy_days = month_coll.map(lambda img: img.gte(raw_threshold))
+                    total_heavy = heavy_days.sum()
+                    monthly_images.append(total_heavy.set({
+                        'month': month,
+                        'year': year,
+                        'system:time_start': ee.Date.fromYMD(year, month, 1).millis(),
+                        'index_name': 'R20mm',
+                        'unit': 'days'
+                    }))
+
+            return (ee.ImageCollection(monthly_images)
+                    if monthly_images else ee.ImageCollection([]))
+
+        # ── Other temporal resolutions (climatology, etc.) ───────────────────────
+        filtered = precip_collection.filterDate(start_date, end_date).filterBounds(self.geometry)
+
+        # Get scaling info for threshold conversion
+        scaling_factor, offset = 1.0, 0.0
+        if self.dataset_id:
+            band_info = self.dataset_config.get_band_scaling_info(
+                self.dataset_id, 'precipitation')
+            scaling_factor = band_info.get('scaling_factor', 1.0)
+            offset         = band_info.get('offset', 0.0)
+
+        raw_threshold = (threshold_mm - offset) / scaling_factor if scaling_factor else threshold_mm
+
         start_year = ee.Date(start_date).get('year')
         end_year = ee.Date(end_date).get('year')
 
-        if temporal_resolution == 'monthly':
-            # Monthly aggregation
-            def calculate_monthly_r20(year_month):
-                year = ee.Number(year_month).divide(100).int()
-                month = ee.Number(year_month).mod(100).int()
-
-                monthly = filtered.filter(
-                    ee.Filter.calendarRange(year, year, 'year')
-                ).filter(
-                    ee.Filter.calendarRange(month, month, 'month')
-                )
-
-                # Count heavy rain days
-                heavy_rain_days = monthly.map(lambda img: img.gte(threshold))
-                heavy_rain_count = heavy_rain_days.sum()
-
-                return heavy_rain_count.set({
-                    'month': month,
-                    'year': year,
-                    'system:time_start': ee.Date.fromYMD(year, month, 1).millis(),
-                    'index_name': 'R20mm',
-                    'unit': 'days'
-                })
-
-            years = ee.List.sequence(start_year, end_year)
-            months = ee.List.sequence(1, 12)
-
-            year_months = years.map(
-                lambda y: months.map(lambda m: ee.Number(y).multiply(100).add(m))
-            ).flatten()
-
-            results = ee.ImageCollection.fromImages(
-                year_months.map(calculate_monthly_r20)
-            )
-            return results
-
-        elif temporal_resolution in ['climatology_mean', 'climatology_median', 'climatology_min', 'climatology_max']:
+        if temporal_resolution in ['climatology_mean', 'climatology_median', 'climatology_min', 'climatology_max']:
             # Climatology mode: Return YEARLY collection for time series plotting
-            # The export function will aggregate to single image based on metadata
             def calculate_annual_r20_clim(year):
                 year = ee.Number(year)
-
-                # Get year data
                 yearly = filtered.filter(
                     ee.Filter.calendarRange(year, year, 'year')
                 )
-
-                # Count heavy rain days
-                heavy_rain_days = yearly.map(lambda img: img.gte(threshold))
+                heavy_rain_days = yearly.map(lambda img: img.gte(raw_threshold))
                 heavy_rain_count = heavy_rain_days.sum()
-
                 return heavy_rain_count.set({
                     'year': year,
                     'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
@@ -1678,7 +1740,6 @@ class ClimateIndicesCalculator:
                 years.map(calculate_annual_r20_clim)
             )
 
-            # Set metadata for climatology mode
             if temporal_resolution == 'climatology_median':
                 climatology_type = 'median'
             elif temporal_resolution == 'climatology_min':
@@ -1695,35 +1756,6 @@ class ClimateIndicesCalculator:
                 'start_year': start_year,
                 'end_year': end_year
             })
-
-        else:
-            # Yearly aggregation (default)
-            def calculate_annual_r20(year):
-                year = ee.Number(year)
-
-                # Get year data
-                yearly = filtered.filter(
-                    ee.Filter.calendarRange(year, year, 'year')
-                )
-
-                # Count heavy rain days
-                heavy_rain_days = yearly.map(lambda img: img.gte(threshold))
-                heavy_rain_count = heavy_rain_days.sum()
-
-                return heavy_rain_count.set({
-                    'year': year,
-                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
-                    'index_name': 'R20mm',
-                    'unit': 'days'
-                })
-
-            years = ee.List.sequence(start_year, end_year)
-
-            results = ee.ImageCollection.fromImages(
-                years.map(calculate_annual_r20)
-            )
-
-            return results
 
     def calculate_mann_kendall_trend(self, time_series_collection: ee.ImageCollection) -> ee.Image:
         """
@@ -2165,22 +2197,39 @@ class ClimateIndicesCalculator:
         Note: This is a simplified implementation counting days above threshold°C instead of identifying specific spans
         Default threshold: 5°C
         """
-        # Filter to analysis period
-        filtered = tmean_collection.filterDate(start_date, end_date)
+        # Get scaling info for threshold conversion
+        # Try temperature_mean first, fallback to temperature_max or temperature_min
+        scaling_factor, offset = 1.0, 0.0
+        if self.dataset_id:
+            band_info = None
+            for band_type in ['temperature_mean', 'temperature_max', 'temperature_min']:
+                try:
+                    band_info = self.dataset_config.get_band_scaling_info(
+                        self.dataset_id, band_type)
+                    break
+                except (KeyError, AttributeError, ValueError):
+                    continue
+            if band_info:
+                scaling_factor = band_info.get('scaling_factor', 1.0)
+                offset         = band_info.get('offset', 0.0)
+
+        # Convert threshold from user units (e.g., °C) to raw units
+        raw_threshold = (threshold - offset) / scaling_factor if scaling_factor else threshold
+
+        filtered = tmean_collection.filterDate(start_date, end_date).filterBounds(self.geometry)
         
         def calculate_annual_gsl(year):
             annual = filtered.filter(
                 ee.Filter.calendarRange(year, year, 'year')
             )
-            
-            # Count days above threshold (convert Celsius to Kelvin)
-            threshold_kelvin = threshold + 273.15
-            growing_days = annual.map(lambda img: img.gt(threshold_kelvin))
+            # Count days above threshold using raw threshold
+            growing_days = annual.map(lambda img: img.gt(raw_threshold))
             growing_day_count = growing_days.sum()
-            
             return growing_day_count.set({
                 'year': year,
-                'system:time_start': ee.Date.fromYMD(year, 1, 1).millis()
+                'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                'index_name': 'GSL',
+                'unit': 'days'
             })
         
         years = ee.List.sequence(
@@ -2191,7 +2240,6 @@ class ClimateIndicesCalculator:
         results = ee.ImageCollection.fromImages(
             years.map(calculate_annual_gsl)
         )
-        
         return results
 
     def calculate_mann_kendall_trend(self, time_series_collection: ee.ImageCollection) -> ee.Image:
@@ -2397,20 +2445,30 @@ class ClimateIndicesCalculator:
         Formula: FD = count(TN < threshold°C)
         Default threshold: 0°C
         """
-        filtered = tmin_collection.filterDate(start_date, end_date)
+        # Get scaling info for threshold conversion
+        scaling_factor, offset = 1.0, 0.0
+        if self.dataset_id:
+            band_info = self.dataset_config.get_band_scaling_info(
+                self.dataset_id, 'temperature_min')
+            scaling_factor = band_info.get('scaling_factor', 1.0)
+            offset         = band_info.get('offset', 0.0)
+
+        # Convert threshold from user units (e.g., °C) to raw units
+        raw_threshold = (threshold - offset) / scaling_factor if scaling_factor else threshold
+
+        filtered = tmin_collection.filterDate(start_date, end_date).filterBounds(self.geometry)
         
         def calculate_annual_fd(year):
             annual = filtered.filter(
                 ee.Filter.calendarRange(year, year, 'year')
             )
-            
-            # Count days below threshold (convert Celsius to Kelvin)
-            threshold_kelvin = threshold + 273.15
-            frost_days = annual.map(lambda img: img.lt(threshold_kelvin)).sum()
-            
+            # Count days below threshold using raw threshold
+            frost_days = annual.map(lambda img: img.lt(raw_threshold)).sum()
             return frost_days.set({
                 'year': year,
-                'system:time_start': ee.Date.fromYMD(year, 1, 1).millis()
+                'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                'index_name': 'FD',
+                'unit': 'days'
             })
         
         years = ee.List.sequence(
@@ -2421,7 +2479,6 @@ class ClimateIndicesCalculator:
         results = ee.ImageCollection.fromImages(
             years.map(calculate_annual_fd)
         )
-        
         return results
 
     def calculate_mann_kendall_trend(self, time_series_collection: ee.ImageCollection) -> ee.Image:
@@ -3479,20 +3536,31 @@ class ClimateIndicesCalculator:
         Formula: CDD = max(consecutive days with RR < threshold)
         Note: This is simplified to count total dry days instead of consecutive runs
         """
-        filtered = precip_collection.filterDate(start_date, end_date)
+        # Get scaling info for threshold conversion
+        scaling_factor, offset = 1.0, 0.0
+        if self.dataset_id:
+            band_info = self.dataset_config.get_band_scaling_info(
+                self.dataset_id, 'precipitation')
+            scaling_factor = band_info.get('scaling_factor', 1.0)
+            offset         = band_info.get('offset', 0.0)
+
+        # Convert threshold from mm to raw units (e.g., meters for ERA5)
+        raw_threshold = (threshold - offset) / scaling_factor if scaling_factor else threshold
+
+        filtered = precip_collection.filterDate(start_date, end_date).filterBounds(self.geometry)
         
         def calculate_annual_cdd(year):
             annual = filtered.filter(
                 ee.Filter.calendarRange(year, year, 'year')
             )
-            
-            # Count dry days (simplified approach)
-            dry_days = annual.map(lambda img: img.lt(threshold))
+            # Count dry days using raw threshold
+            dry_days = annual.map(lambda img: img.lt(raw_threshold))
             total_dry = dry_days.sum()
-            
             return total_dry.set({
                 'year': year,
-                'system:time_start': ee.Date.fromYMD(year, 1, 1).millis()
+                'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                'index_name': 'CDD',
+                'unit': 'days'
             })
         
         years = ee.List.sequence(
@@ -3503,7 +3571,6 @@ class ClimateIndicesCalculator:
         results = ee.ImageCollection.fromImages(
             years.map(calculate_annual_cdd)
         )
-        
         return results
 
     def calculate_mann_kendall_trend(self, time_series_collection: ee.ImageCollection) -> ee.Image:
@@ -3713,56 +3780,117 @@ class ClimateIndicesCalculator:
             precip_collection: Daily precipitation collection
             start_date: Start date string
             end_date: End date string
-            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', 'climatology_median', 'climatology_min', or 'climatology_max' aggregation
-            climatology_reducer: 'mean', 'median', 'min', or 'max' for climatology calculations
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', etc.
+            climatology_reducer: 'mean', 'median', 'min', or 'max'
         """
-        filtered = precip_collection.filterDate(start_date, end_date)
+        threshold_mm = 10.0  # Fixed threshold for R10mm
+        
+        # ── YEARLY PATH: handle before collection-level .map() ───────────────
+        if temporal_resolution == 'yearly':
+            from datetime import datetime as _dt
+            _start = _dt.strptime(str(start_date)[:10], '%Y-%m-%d')
+            _end   = _dt.strptime(str(end_date)[:10],   '%Y-%m-%d')
+
+            scaling_factor, offset = 1.0, 0.0
+            if self.dataset_id:
+                band_info = self.dataset_config.get_band_scaling_info(
+                    self.dataset_id, 'precipitation')
+                scaling_factor = band_info.get('scaling_factor', 1.0)
+                offset         = band_info.get('offset', 0.0)
+
+            # Convert threshold from mm to raw units (e.g., meters for ERA5)
+            raw_threshold = (threshold_mm - offset) / scaling_factor if scaling_factor else threshold_mm
+
+            raw_filtered = (precip_collection
+                            .filterDate(start_date, end_date)
+                            .filterBounds(self.geometry))
+
+            yearly_images = []
+            for year in range(_start.year, _end.year + 1):
+                year_coll = raw_filtered.filterDate(f'{year}-01-01', f'{year + 1}-01-01')
+                heavy_days = year_coll.map(lambda img: img.gte(raw_threshold))
+                total_heavy = heavy_days.sum()
+                yearly_images.append(total_heavy.set({
+                    'year': year,
+                    'system:time_start': ee.Date(f'{year}-01-01').millis(),
+                    'index_name': 'R10mm',
+                    'unit': 'days'
+                }))
+
+            return (ee.ImageCollection(yearly_images)
+                    if yearly_images else ee.ImageCollection([]))
+
+        # ── MONTHLY PATH: handle before collection-level .map() ───────────────
+        if temporal_resolution == 'monthly':
+            from datetime import datetime as _dt
+            _start = _dt.strptime(str(start_date)[:10], '%Y-%m-%d')
+            _end   = _dt.strptime(str(end_date)[:10],   '%Y-%m-%d')
+
+            scaling_factor, offset = 1.0, 0.0
+            if self.dataset_id:
+                band_info = self.dataset_config.get_band_scaling_info(
+                    self.dataset_id, 'precipitation')
+                scaling_factor = band_info.get('scaling_factor', 1.0)
+                offset         = band_info.get('offset', 0.0)
+
+            raw_threshold = (threshold_mm - offset) / scaling_factor if scaling_factor else threshold_mm
+
+            raw_filtered = (precip_collection
+                            .filterDate(start_date, end_date)
+                            .filterBounds(self.geometry))
+
+            monthly_images = []
+            for year in range(_start.year, _end.year + 1):
+                for month in range(1, 13):
+                    if year == _start.year and month < _start.month:
+                        continue
+                    if year == _end.year and month > _end.month:
+                        continue
+                    
+                    if month == 12:
+                        month_start = f'{year}-12-01'
+                        month_end = f'{year+1}-01-01'
+                    else:
+                        month_start = f'{year}-{month:02d}-01'
+                        month_end = f'{year}-{month+1:02d}-01'
+                    
+                    month_coll = raw_filtered.filterDate(month_start, month_end)
+                    heavy_days = month_coll.map(lambda img: img.gte(raw_threshold))
+                    total_heavy = heavy_days.sum()
+                    monthly_images.append(total_heavy.set({
+                        'month': month,
+                        'year': year,
+                        'system:time_start': ee.Date.fromYMD(year, month, 1).millis(),
+                        'index_name': 'R10mm',
+                        'unit': 'days'
+                    }))
+
+            return (ee.ImageCollection(monthly_images)
+                    if monthly_images else ee.ImageCollection([]))
+
+        # ── Other temporal resolutions (climatology, etc.) ───────────────────────
+        filtered = precip_collection.filterDate(start_date, end_date).filterBounds(self.geometry)
+
+        # Get scaling info for threshold conversion
+        scaling_factor, offset = 1.0, 0.0
+        if self.dataset_id:
+            band_info = self.dataset_config.get_band_scaling_info(
+                self.dataset_id, 'precipitation')
+            scaling_factor = band_info.get('scaling_factor', 1.0)
+            offset         = band_info.get('offset', 0.0)
+
+        raw_threshold = (threshold_mm - offset) / scaling_factor if scaling_factor else threshold_mm
 
         start_year = ee.Date(start_date).get('year')
         end_year = ee.Date(end_date).get('year')
 
-        if temporal_resolution == 'monthly':
-            # Monthly aggregation
-            def calculate_monthly_r10(year_month):
-                year = ee.Number(year_month).divide(100).int()
-                month = ee.Number(year_month).mod(100).int()
-
-                monthly = filtered.filter(
-                    ee.Filter.calendarRange(year, year, 'year')
-                ).filter(
-                    ee.Filter.calendarRange(month, month, 'month')
-                )
-
-                # Count days >= 10mm
-                heavy_days = monthly.map(lambda img: img.gte(10)).sum()
-
-                return heavy_days.set({
-                    'month': month,
-                    'year': year,
-                    'system:time_start': ee.Date.fromYMD(year, month, 1).millis(),
-                    'index_name': 'R10mm',
-                    'unit': 'days'
-                })
-
-            years = ee.List.sequence(start_year, end_year)
-            months = ee.List.sequence(1, 12)
-
-            year_months = years.map(
-                lambda y: months.map(lambda m: ee.Number(y).multiply(100).add(m))
-            ).flatten()
-
-            results = ee.ImageCollection.fromImages(
-                year_months.map(calculate_monthly_r10)
-            )
-            return results
-
-        elif temporal_resolution in ['climatology_mean', 'climatology_median', 'climatology_min', 'climatology_max']:
+        if temporal_resolution in ['climatology_mean', 'climatology_median', 'climatology_min', 'climatology_max']:
             # Climatology mode: Return YEARLY collection for time series plotting
             def calculate_annual_r10(year):
                 annual = filtered.filter(
                     ee.Filter.calendarRange(year, year, 'year')
                 )
-                heavy_days = annual.map(lambda img: img.gte(10)).sum()
+                heavy_days = annual.map(lambda img: img.gte(raw_threshold)).sum()
                 return heavy_days.set({
                     'year': year,
                     'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
@@ -3791,31 +3919,6 @@ class ClimateIndicesCalculator:
                 'start_year': start_year,
                 'end_year': end_year
             })
-
-        else:
-            # Yearly aggregation (default)
-            def calculate_annual_r10(year):
-                annual = filtered.filter(
-                    ee.Filter.calendarRange(year, year, 'year')
-                )
-
-                # Count days >= 10mm
-                heavy_days = annual.map(lambda img: img.gte(10)).sum()
-
-                return heavy_days.set({
-                    'year': year,
-                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
-                    'index_name': 'R10mm',
-                    'unit': 'days'
-                })
-
-            years = ee.List.sequence(start_year, end_year)
-
-            results = ee.ImageCollection.fromImages(
-                years.map(calculate_annual_r10)
-            )
-
-            return results
 
     def calculate_mann_kendall_trend(self, time_series_collection: ee.ImageCollection) -> ee.Image:
         """
@@ -4026,10 +4129,21 @@ class ClimateIndicesCalculator:
             start_date: Start date string
             end_date: End date string
             wet_threshold: Threshold for wet day (default 1.0 mm)
-            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', 'climatology_median', 'climatology_min', or 'climatology_max' aggregation
-            climatology_reducer: 'mean', 'median', 'min', or 'max' for climatology calculations
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', etc.
+            climatology_reducer: 'mean', 'median', 'min', or 'max'
         """
-        filtered = precip_collection.filterDate(start_date, end_date)
+        # Get scaling info for threshold conversion
+        scaling_factor, offset = 1.0, 0.0
+        if self.dataset_id:
+            band_info = self.dataset_config.get_band_scaling_info(
+                self.dataset_id, 'precipitation')
+            scaling_factor = band_info.get('scaling_factor', 1.0)
+            offset         = band_info.get('offset', 0.0)
+
+        # Convert threshold from mm to raw units (e.g., meters for ERA5)
+        raw_threshold = (wet_threshold - offset) / scaling_factor if scaling_factor else wet_threshold
+
+        filtered = precip_collection.filterDate(start_date, end_date).filterBounds(self.geometry)
 
         start_year = ee.Date(start_date).get('year')
         end_year = ee.Date(end_date).get('year')
@@ -4046,13 +4160,13 @@ class ClimateIndicesCalculator:
                     ee.Filter.calendarRange(month, month, 'month')
                 )
 
-                # Sum precipitation on wet days
+                # Sum precipitation on wet days (using raw threshold)
                 wet_precip = monthly.map(
-                    lambda img: img.updateMask(img.gte(wet_threshold))
+                    lambda img: img.updateMask(img.gte(raw_threshold))
                 ).sum()
 
-                # Count wet days
-                wet_days = monthly.map(lambda img: img.gte(wet_threshold)).sum()
+                # Count wet days (using raw threshold)
+                wet_days = monthly.map(lambda img: img.gte(raw_threshold)).sum()
 
                 # Calculate SDII
                 sdii = wet_precip.divide(wet_days)
@@ -4086,13 +4200,13 @@ class ClimateIndicesCalculator:
                     ee.Filter.calendarRange(year, year, 'year')
                 )
 
-                # Sum precipitation on wet days
+                # Sum precipitation on wet days (using raw threshold)
                 wet_precip = annual.map(
-                    lambda img: img.updateMask(img.gte(wet_threshold))
+                    lambda img: img.updateMask(img.gte(raw_threshold))
                 ).sum()
 
-                # Count wet days
-                wet_days = annual.map(lambda img: img.gte(wet_threshold)).sum()
+                # Count wet days (using raw threshold)
+                wet_days = annual.map(lambda img: img.gte(raw_threshold)).sum()
 
                 # Calculate SDII
                 sdii = wet_precip.divide(wet_days)
@@ -4134,13 +4248,13 @@ class ClimateIndicesCalculator:
                     ee.Filter.calendarRange(year, year, 'year')
                 )
 
-                # Sum precipitation on wet days
+                # Sum precipitation on wet days (using raw threshold)
                 wet_precip = annual.map(
-                    lambda img: img.updateMask(img.gte(wet_threshold))
+                    lambda img: img.updateMask(img.gte(raw_threshold))
                 ).sum()
 
-                # Count wet days
-                wet_days = annual.map(lambda img: img.gte(wet_threshold)).sum()
+                # Count wet days (using raw threshold)
+                wet_days = annual.map(lambda img: img.gte(raw_threshold)).sum()
 
                 # Calculate SDII
                 sdii = wet_precip.divide(wet_days)
@@ -4794,21 +4908,32 @@ class ClimateIndicesCalculator:
         
         Formula: PRCPTOT = sum(RR on days where RR ≥ wet_threshold)
         """
-        filtered = precip_collection.filterDate(start_date, end_date)
+        # Get scaling info for threshold conversion
+        scaling_factor, offset = 1.0, 0.0
+        if self.dataset_id:
+            band_info = self.dataset_config.get_band_scaling_info(
+                self.dataset_id, 'precipitation')
+            scaling_factor = band_info.get('scaling_factor', 1.0)
+            offset         = band_info.get('offset', 0.0)
+
+        # Convert threshold from mm to raw units (e.g., meters for ERA5)
+        raw_threshold = (wet_threshold - offset) / scaling_factor if scaling_factor else wet_threshold
+
+        filtered = precip_collection.filterDate(start_date, end_date).filterBounds(self.geometry)
         
         def calculate_annual_prcptot(year):
             annual = filtered.filter(
                 ee.Filter.calendarRange(year, year, 'year')
             )
-            
-            # Sum precipitation on wet days only
+            # Sum precipitation on wet days only (using raw threshold)
             wet_total = annual.map(
-                lambda img: img.updateMask(img.gte(wet_threshold))
+                lambda img: img.updateMask(img.gte(raw_threshold))
             ).sum()
-            
             return wet_total.set({
                 'year': year,
-                'system:time_start': ee.Date.fromYMD(year, 1, 1).millis()
+                'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
+                'index_name': 'PRCPTOT',
+                'unit': 'mm'
             })
         
         years = ee.List.sequence(
@@ -4819,7 +4944,6 @@ class ClimateIndicesCalculator:
         results = ee.ImageCollection.fromImages(
             years.map(calculate_annual_prcptot)
         )
-        
         return results
 
     def calculate_mann_kendall_trend(self, time_series_collection: ee.ImageCollection) -> ee.Image:
@@ -5063,85 +5187,138 @@ class ClimateIndicesCalculator:
         return df
     
     def extract_time_series_optimized(self, image_collection: ee.ImageCollection,
-                                    scale: int = 5000, max_pixels: int = 1e6) -> pd.DataFrame:
+                                    scale: int = 5000, max_pixels: int = 1e9) -> pd.DataFrame:
+        """Extract time series using getDownloadURL — the same approach that works in
+        GeoData Explorer.
+
+        WHY getDownloadURL instead of getInfo():
+        ─────────────────────────────────────────
+        getInfo() routes through GEE's *interactive* API, which evaluates the full
+        computation graph for ALL images simultaneously in a single worker.  For
+        complex climate-index expressions (e.g. RX1day = yearly max of 365 daily
+        images) mapped over 30 years, this exhausts the interactive memory budget
+        and raises "User memory limit exceeded".
+
+        getDownloadURL() routes through GEE's *batch/export* API.  The computation
+        is queued and executed with higher memory limits and proper server-side
+        streaming, exactly as in GeoData Explorer's get_time_series_average().
+
+        Falls back to a sequential per-image approach if getDownloadURL also fails.
         """
-        Extract time series data ensuring ALL data points are processed
-        
-        Args:
-            image_collection: Collection with calculated indices
-            scale: Scale in meters for reduction
-            max_pixels: Maximum pixels to process
-            
-        Returns:
-            pandas DataFrame with time series
-        """
+        import requests
+        import io as _io
+
+        # ── Primary: server-side CSV via getDownloadURL ──────────────────────
         try:
-            # Get collection size 
-            collection_size = image_collection.size().getInfo()
-            print(f"Processing ALL {collection_size} images in climate index extraction...")
-            
-            def reduce_image(image):
-                """Extract date and average values from an image."""
-                # Get the timestamp
-                date = ee.Date(image.get('system:time_start'))
-                date_string = date.format('YYYY-MM-dd')
-                
-                # Get the average value 
+            def to_feature(image):
+                date_str = ee.Date(image.get('system:time_start')).format('YYYY-MM-dd')
+                # Flatten reduced values directly into feature properties
+                # (do NOT nest inside 'value' — getDownloadURL needs flat columns)
                 reduced = image.reduceRegion(
                     reducer=ee.Reducer.mean(),
                     geometry=self.geometry,
                     scale=scale,
                     maxPixels=max_pixels,
                     bestEffort=True,
-                    tileScale=2
+                    tileScale=4
                 )
-                
-                return ee.Feature(None, {'date': date_string, 'value': reduced})
-            
-            # Map over the entire collection
-            features = image_collection.map(reduce_image)
-            
-            print("Extracting ALL time series data...")
-            
-            # Get the data from Earth Engine
-            feature_collection_data = features.getInfo()
-            
-            # Process the results
-            records = []
-            for feature in feature_collection_data['features']:
-                props = feature['properties']
-                
-                # Extract the value (it might be nested in the 'value' dict)
-                value_dict = props.get('value', {})
-                
-                # Get the first non-null numeric value
-                actual_value = None
-                for key, val in value_dict.items():
-                    if val is not None and isinstance(val, (int, float)):
-                        actual_value = val
-                        break
-                
-                if actual_value is not None:
-                    records.append({
-                        'date': props['date'],
-                        'value': actual_value
-                    })
-            
-            # Convert to DataFrame
+                return ee.Feature(None, reduced.set('date', date_str))
+
+            fc  = ee.FeatureCollection(image_collection.map(to_feature))
+            url = fc.getDownloadURL(filetype='csv')
+            resp = requests.get(url, timeout=300)
+            resp.raise_for_status()
+
+            df = pd.read_csv(_io.StringIO(resp.text))
+            if df.empty:
+                return pd.DataFrame(columns=['date', 'value'])
+
+            # Normalise date column name
+            if 'date' not in df.columns:
+                date_cols = [c for c in df.columns
+                             if 'date' in c.lower() or 'time' in c.lower()]
+                if date_cols:
+                    df = df.rename(columns={date_cols[0]: 'date'})
+
+            # Pick the first real numeric column as the value
+            skip = {'date', 'system:index', '.geo'}
+            value_col = next(
+                (c for c in df.columns
+                 if c not in skip and pd.api.types.is_numeric_dtype(df[c])),
+                None
+            )
+            if value_col is None:
+                return pd.DataFrame(columns=['date', 'value'])
+
+            result = df[['date', value_col]].rename(columns={value_col: 'value'}).copy()
+            result['date'] = pd.to_datetime(result['date'], errors='coerce')
+            result = (result.dropna(subset=['date', 'value'])
+                           .sort_values('date')
+                           .reset_index(drop=True))
+            print(f"Successfully extracted {len(result)} points via getDownloadURL")
+            return result
+
+        except Exception as primary_err:
+            print(f"getDownloadURL extraction failed: {primary_err}. "
+                  f"Falling back to sequential per-image extraction…")
+
+        # ── Fallback: one image at a time (slow but avoids OOM) ─────────────
+        return self._extract_time_series_sequential(image_collection, scale, max_pixels)
+
+    def _extract_time_series_sequential(self, image_collection: ee.ImageCollection,
+                                        scale: int = 10000,
+                                        max_pixels: float = 1e9) -> pd.DataFrame:
+        """Process one image at a time to avoid GEE expression-graph memory limits.
+
+        Slower than getDownloadURL but robust for any collection size because each
+        reduceRegion call is an independent, lightweight GEE computation.
+        """
+        try:
+            collection_size = image_collection.size().getInfo()
+            images_list     = image_collection.toList(min(collection_size, 500))
+            records         = []
+
+            print(f"Sequential extraction: {collection_size} images at {scale}m…")
+            for i in range(min(collection_size, 500)):
+                try:
+                    img      = ee.Image(images_list.get(i))
+                    date_str = img.date().format('YYYY-MM-dd').getInfo()
+                    stats    = img.reduceRegion(
+                        reducer=ee.Reducer.mean(),
+                        geometry=self.geometry,
+                        scale=scale,
+                        maxPixels=max_pixels,
+                        bestEffort=True,
+                        tileScale=4
+                    ).getInfo()
+
+                    # First valid numeric value across all bands
+                    value = next(
+                        (v for v in stats.values()
+                         if v is not None and isinstance(v, (int, float))),
+                        None
+                    )
+                    if date_str and value is not None:
+                        records.append({'date': date_str, 'value': value})
+
+                except Exception as img_err:
+                    print(f"Sequential: image {i + 1} failed: {img_err}")
+                    continue
+
             if records:
                 df = pd.DataFrame(records)
-                df['date'] = pd.to_datetime(df['date'])
-                df = df.sort_values('date').reset_index(drop=True)
-                print(f"Successfully extracted {len(df)} data points")
+                df['date'] = pd.to_datetime(df['date'], errors='coerce')
+                df = (df.dropna(subset=['date', 'value'])
+                        .sort_values('date')
+                        .reset_index(drop=True))
+                print(f"Sequential extraction: {len(df)} points retrieved")
                 return df
-            else:
-                print("No valid data points extracted")
-                return pd.DataFrame(columns=['date', 'value'])
-                
-        except Exception as e:
-            print(f"Error in optimized extraction: {str(e)}")
-            # Fallback to regular extraction
-            return self.extract_time_series(image_collection, scale)
+
+            return pd.DataFrame(columns=['date', 'value'])
+
+        except Exception as seq_err:
+            print(f"Sequential extraction also failed: {seq_err}")
+            return pd.DataFrame(columns=['date', 'value'])
 
     def apply_unit_conversion(self, collection: ee.ImageCollection,
                             band_type: str) -> ee.ImageCollection:
@@ -5179,6 +5356,93 @@ class ClimateIndicesCalculator:
         """
         Calculate monthly maximum of daily maximum temperature (simplified implementation)
         """
+        # ── YEARLY PATH: handle before collection-level .map() ───────────────
+        if temporal_resolution == 'yearly':
+            from datetime import datetime as _dt
+            _start = _dt.strptime(str(start_date)[:10], '%Y-%m-%d')
+            _end   = _dt.strptime(str(end_date)[:10],   '%Y-%m-%d')
+
+            scaling_factor, offset = 1.0, 0.0
+            if self.dataset_id:
+                band_info = self.dataset_config.get_band_scaling_info(
+                    self.dataset_id, 'temperature_max')
+                scaling_factor = band_info.get('scaling_factor', 1.0)
+                offset         = band_info.get('offset', 0.0)
+
+            raw_filtered = (tmax_collection
+                            .filterDate(start_date, end_date)
+                            .filterBounds(self.geometry))
+
+            yearly_images = []
+            for year in range(_start.year, _end.year + 1):
+                year_max = (raw_filtered
+                            .filterDate(f'{year}-01-01', f'{year + 1}-01-01')
+                            .max())
+                if scaling_factor != 1.0 or offset != 0.0:
+                    year_max = year_max.multiply(scaling_factor).add(offset)
+                yearly_images.append(year_max.set({
+                    'year': year,
+                    'system:time_start': ee.Date(f'{year}-01-01').millis(),
+                    'index_name': 'TXx',
+                    'unit': '°C'
+                }))
+
+            return (ee.ImageCollection(yearly_images)
+                    if yearly_images else ee.ImageCollection([]))
+
+        # ── MONTHLY PATH: handle before collection-level .map() ───────────────────
+        # Same memory optimization as yearly: use raw collection, Python loops,
+        # apply scaling to individual monthly result images.
+        if temporal_resolution == 'monthly':
+            from datetime import datetime as _dt
+            _start = _dt.strptime(str(start_date)[:10], '%Y-%m-%d')
+            _end   = _dt.strptime(str(end_date)[:10],   '%Y-%m-%d')
+
+            scaling_factor, offset = 1.0, 0.0
+            if self.dataset_id:
+                band_info = self.dataset_config.get_band_scaling_info(
+                    self.dataset_id, 'temperature_max')
+                scaling_factor = band_info.get('scaling_factor', 1.0)
+                offset         = band_info.get('offset', 0.0)
+
+            raw_filtered = (tmax_collection
+                            .filterDate(start_date, end_date)
+                            .filterBounds(self.geometry))
+
+            monthly_images = []
+            for year in range(_start.year, _end.year + 1):
+                for month in range(1, 13):
+                    # Skip months before start or after end
+                    if year == _start.year and month < _start.month:
+                        continue
+                    if year == _end.year and month > _end.month:
+                        continue
+                    
+                    # Calculate next month for date range
+                    if month == 12:
+                        month_start = f'{year}-12-01'
+                        month_end = f'{year+1}-01-01'
+                    else:
+                        month_start = f'{year}-{month:02d}-01'
+                        month_end = f'{year}-{month+1:02d}-01'
+                    
+                    month_max = (raw_filtered
+                                 .filterDate(month_start, month_end)
+                                 .max())
+                    if scaling_factor != 1.0 or offset != 0.0:
+                        month_max = month_max.multiply(scaling_factor).add(offset)
+                    monthly_images.append(month_max.set({
+                        'month': month,
+                        'year': year,
+                        'system:time_start': ee.Date.fromYMD(year, month, 1).millis(),
+                        'index_name': 'TXx',
+                        'unit': '°C'
+                    }))
+
+            return (ee.ImageCollection(monthly_images)
+                    if monthly_images else ee.ImageCollection([]))
+
+        # ── Other temporal resolutions (climatology, etc.) ───────────────────────
         # Apply unit conversion if dataset is specified
         if self.dataset_id:
             tmax_collection = self.apply_unit_conversion(tmax_collection, 'temperature_max')
@@ -5186,20 +5450,27 @@ class ClimateIndicesCalculator:
         # Filter collection to date range
         filtered = tmax_collection.filterDate(start_date, end_date).filterBounds(self.geometry)
 
+        # Handle temporal resolution
+        start_year = ee.Date(start_date).get('year')
+        end_year = ee.Date(end_date).get('year')
+        
+        # Default to monthly if not yearly (already handled above)
+        years = ee.List.sequence(start_year, end_year)
+        months = ee.List.sequence(1, 12)
+
+        year_months = years.map(
+            lambda y: months.map(lambda m: ee.Number(y).multiply(100).add(m))
+        ).flatten()
+
         def calculate_monthly_max(year_month):
             year = ee.Number(year_month).divide(100).int()
             month = ee.Number(year_month).mod(100).int()
-
-            # Filter to specific month and year
             monthly_data = filtered.filter(
                 ee.Filter.calendarRange(year, year, 'year')
             ).filter(
                 ee.Filter.calendarRange(month, month, 'month')
             )
-
-            # Get monthly maximum
             max_img = monthly_data.max().clip(self.geometry)
-
             return max_img.set({
                 'month': month,
                 'year': year,
@@ -5208,47 +5479,10 @@ class ClimateIndicesCalculator:
                 'unit': '°C'
             })
 
-        # Handle temporal resolution
-        start_year = ee.Date(start_date).get('year')
-        end_year = ee.Date(end_date).get('year')
-
-        if temporal_resolution == 'yearly':
-            # Yearly aggregation: calculate annual maximum
-            def calculate_yearly_max(year):
-                # Filter to specific year
-                yearly_data = filtered.filter(
-                    ee.Filter.calendarRange(year, year, 'year')
-                )
-
-                # Get yearly maximum
-                max_img = yearly_data.max().clip(self.geometry)
-
-                return max_img.set({
-                    'year': year,
-                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
-                    'index_name': 'TXx',
-                    'unit': '°C'
-                })
-
-            years = ee.List.sequence(start_year, end_year)
-            yearly_results = ee.ImageCollection.fromImages(
-                years.map(calculate_yearly_max)
-            )
-            return yearly_results
-
-        else:
-            # Monthly aggregation (default)
-            years = ee.List.sequence(start_year, end_year)
-            months = ee.List.sequence(1, 12)
-
-            year_months = years.map(
-                lambda y: months.map(lambda m: ee.Number(y).multiply(100).add(m))
-            ).flatten()
-
-            monthly_results = ee.ImageCollection.fromImages(
-                year_months.map(calculate_monthly_max)
-            )
-            return monthly_results
+        monthly_results = ee.ImageCollection.fromImages(
+            year_months.map(calculate_monthly_max)
+        )
+        return monthly_results
 
     def calculate_simple_TNn(self, tmin_collection: ee.ImageCollection,
                            start_date: str, end_date: str,
@@ -5256,6 +5490,89 @@ class ClimateIndicesCalculator:
         """
         Calculate monthly minimum of daily minimum temperature (simplified implementation)
         """
+        # ── YEARLY PATH: handle before collection-level .map() ───────────────
+        if temporal_resolution == 'yearly':
+            from datetime import datetime as _dt
+            _start = _dt.strptime(str(start_date)[:10], '%Y-%m-%d')
+            _end   = _dt.strptime(str(end_date)[:10],   '%Y-%m-%d')
+
+            scaling_factor, offset = 1.0, 0.0
+            if self.dataset_id:
+                band_info = self.dataset_config.get_band_scaling_info(
+                    self.dataset_id, 'temperature_min')
+                scaling_factor = band_info.get('scaling_factor', 1.0)
+                offset         = band_info.get('offset', 0.0)
+
+            raw_filtered = (tmin_collection
+                            .filterDate(start_date, end_date)
+                            .filterBounds(self.geometry))
+
+            yearly_images = []
+            for year in range(_start.year, _end.year + 1):
+                year_min = (raw_filtered
+                            .filterDate(f'{year}-01-01', f'{year + 1}-01-01')
+                            .min())
+                if scaling_factor != 1.0 or offset != 0.0:
+                    year_min = year_min.multiply(scaling_factor).add(offset)
+                yearly_images.append(year_min.set({
+                    'year': year,
+                    'system:time_start': ee.Date(f'{year}-01-01').millis(),
+                    'index_name': 'TNn',
+                    'unit': '°C'
+                }))
+
+            return (ee.ImageCollection(yearly_images)
+                    if yearly_images else ee.ImageCollection([]))
+
+        # ── MONTHLY PATH: handle before collection-level .map() ───────────────────
+        if temporal_resolution == 'monthly':
+            from datetime import datetime as _dt
+            _start = _dt.strptime(str(start_date)[:10], '%Y-%m-%d')
+            _end   = _dt.strptime(str(end_date)[:10],   '%Y-%m-%d')
+
+            scaling_factor, offset = 1.0, 0.0
+            if self.dataset_id:
+                band_info = self.dataset_config.get_band_scaling_info(
+                    self.dataset_id, 'temperature_min')
+                scaling_factor = band_info.get('scaling_factor', 1.0)
+                offset         = band_info.get('offset', 0.0)
+
+            raw_filtered = (tmin_collection
+                            .filterDate(start_date, end_date)
+                            .filterBounds(self.geometry))
+
+            monthly_images = []
+            for year in range(_start.year, _end.year + 1):
+                for month in range(1, 13):
+                    if year == _start.year and month < _start.month:
+                        continue
+                    if year == _end.year and month > _end.month:
+                        continue
+                    
+                    if month == 12:
+                        month_start = f'{year}-12-01'
+                        month_end = f'{year+1}-01-01'
+                    else:
+                        month_start = f'{year}-{month:02d}-01'
+                        month_end = f'{year}-{month+1:02d}-01'
+                    
+                    month_min = (raw_filtered
+                                 .filterDate(month_start, month_end)
+                                 .min())
+                    if scaling_factor != 1.0 or offset != 0.0:
+                        month_min = month_min.multiply(scaling_factor).add(offset)
+                    monthly_images.append(month_min.set({
+                        'month': month,
+                        'year': year,
+                        'system:time_start': ee.Date.fromYMD(year, month, 1).millis(),
+                        'index_name': 'TNn',
+                        'unit': '°C'
+                    }))
+
+            return (ee.ImageCollection(monthly_images)
+                    if monthly_images else ee.ImageCollection([]))
+
+        # ── Other temporal resolutions (climatology, etc.) ───────────────────────
         # Apply unit conversion if dataset is specified
         if self.dataset_id:
             tmin_collection = self.apply_unit_conversion(tmin_collection, 'temperature_min')
@@ -5263,20 +5580,25 @@ class ClimateIndicesCalculator:
         # Filter collection to date range
         filtered = tmin_collection.filterDate(start_date, end_date).filterBounds(self.geometry)
 
+        # Handle temporal resolution
+        start_year = ee.Date(start_date).get('year')
+        end_year = ee.Date(end_date).get('year')
+        
+        years = ee.List.sequence(start_year, end_year)
+        months = ee.List.sequence(1, 12)
+        year_months = years.map(
+            lambda y: months.map(lambda m: ee.Number(y).multiply(100).add(m))
+        ).flatten()
+
         def calculate_monthly_min(year_month):
             year = ee.Number(year_month).divide(100).int()
             month = ee.Number(year_month).mod(100).int()
-
-            # Filter to specific month and year
             monthly_data = filtered.filter(
                 ee.Filter.calendarRange(year, year, 'year')
             ).filter(
                 ee.Filter.calendarRange(month, month, 'month')
             )
-
-            # Get monthly minimum
             min_img = monthly_data.min().clip(self.geometry)
-
             return min_img.set({
                 'month': month,
                 'year': year,
@@ -5285,47 +5607,10 @@ class ClimateIndicesCalculator:
                 'unit': '°C'
             })
 
-        # Handle temporal resolution
-        start_year = ee.Date(start_date).get('year')
-        end_year = ee.Date(end_date).get('year')
-
-        if temporal_resolution == 'yearly':
-            # Yearly aggregation: calculate annual minimum
-            def calculate_yearly_min(year):
-                # Filter to specific year
-                yearly_data = filtered.filter(
-                    ee.Filter.calendarRange(year, year, 'year')
-                )
-
-                # Get yearly minimum
-                min_img = yearly_data.min().clip(self.geometry)
-
-                return min_img.set({
-                    'year': year,
-                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
-                    'index_name': 'TNn',
-                    'unit': '°C'
-                })
-
-            years = ee.List.sequence(start_year, end_year)
-            yearly_results = ee.ImageCollection.fromImages(
-                years.map(calculate_yearly_min)
-            )
-            return yearly_results
-
-        else:
-            # Monthly aggregation (default)
-            years = ee.List.sequence(start_year, end_year)
-            months = ee.List.sequence(1, 12)
-
-            year_months = years.map(
-                lambda y: months.map(lambda m: ee.Number(y).multiply(100).add(m))
-            ).flatten()
-
-            monthly_results = ee.ImageCollection.fromImages(
-                year_months.map(calculate_monthly_min)
-            )
-            return monthly_results
+        monthly_results = ee.ImageCollection.fromImages(
+            year_months.map(calculate_monthly_min)
+        )
+        return monthly_results
 
     def calculate_simple_DTR(self, tmax_collection: ee.ImageCollection,
                            tmin_collection: ee.ImageCollection,
@@ -5334,6 +5619,118 @@ class ClimateIndicesCalculator:
         """
         Calculate monthly mean diurnal temperature range (simplified implementation)
         """
+        # ── YEARLY PATH: handle before collection-level .map() ───────────────
+        if temporal_resolution == 'yearly':
+            from datetime import datetime as _dt
+            _start = _dt.strptime(str(start_date)[:10], '%Y-%m-%d')
+            _end   = _dt.strptime(str(end_date)[:10],   '%Y-%m-%d')
+
+            tmax_scaling, tmax_offset = 1.0, 0.0
+            tmin_scaling, tmin_offset = 1.0, 0.0
+            if self.dataset_id:
+                tmax_info = self.dataset_config.get_band_scaling_info(
+                    self.dataset_id, 'temperature_max')
+                tmax_scaling = tmax_info.get('scaling_factor', 1.0)
+                tmax_offset  = tmax_info.get('offset', 0.0)
+                tmin_info = self.dataset_config.get_band_scaling_info(
+                    self.dataset_id, 'temperature_min')
+                tmin_scaling = tmin_info.get('scaling_factor', 1.0)
+                tmin_offset  = tmin_info.get('offset', 0.0)
+
+            raw_tmax_filtered = (tmax_collection
+                                 .filterDate(start_date, end_date)
+                                 .filterBounds(self.geometry))
+            raw_tmin_filtered = (tmin_collection
+                                 .filterDate(start_date, end_date)
+                                 .filterBounds(self.geometry))
+
+            yearly_images = []
+            for year in range(_start.year, _end.year + 1):
+                year_tmax = (raw_tmax_filtered
+                             .filterDate(f'{year}-01-01', f'{year + 1}-01-01')
+                             .mean())
+                year_tmin = (raw_tmin_filtered
+                             .filterDate(f'{year}-01-01', f'{year + 1}-01-01')
+                             .mean())
+                # Apply scaling to each temperature, then compute DTR
+                if tmax_scaling != 1.0 or tmax_offset != 0.0:
+                    year_tmax = year_tmax.multiply(tmax_scaling).add(tmax_offset)
+                if tmin_scaling != 1.0 or tmin_offset != 0.0:
+                    year_tmin = year_tmin.multiply(tmin_scaling).add(tmin_offset)
+                dtr = year_tmax.subtract(year_tmin)
+                yearly_images.append(dtr.set({
+                    'year': year,
+                    'system:time_start': ee.Date(f'{year}-01-01').millis(),
+                    'index_name': 'DTR',
+                    'unit': '°C'
+                }))
+
+            return (ee.ImageCollection(yearly_images)
+                    if yearly_images else ee.ImageCollection([]))
+
+        # ── MONTHLY PATH: handle before collection-level .map() ───────────────────
+        if temporal_resolution == 'monthly':
+            from datetime import datetime as _dt
+            _start = _dt.strptime(str(start_date)[:10], '%Y-%m-%d')
+            _end   = _dt.strptime(str(end_date)[:10],   '%Y-%m-%d')
+
+            tmax_scaling, tmax_offset = 1.0, 0.0
+            tmin_scaling, tmin_offset = 1.0, 0.0
+            if self.dataset_id:
+                tmax_info = self.dataset_config.get_band_scaling_info(
+                    self.dataset_id, 'temperature_max')
+                tmax_scaling = tmax_info.get('scaling_factor', 1.0)
+                tmax_offset  = tmax_info.get('offset', 0.0)
+                tmin_info = self.dataset_config.get_band_scaling_info(
+                    self.dataset_id, 'temperature_min')
+                tmin_scaling = tmin_info.get('scaling_factor', 1.0)
+                tmin_offset  = tmin_info.get('offset', 0.0)
+
+            raw_tmax_filtered = (tmax_collection
+                                 .filterDate(start_date, end_date)
+                                 .filterBounds(self.geometry))
+            raw_tmin_filtered = (tmin_collection
+                                 .filterDate(start_date, end_date)
+                                 .filterBounds(self.geometry))
+
+            monthly_images = []
+            for year in range(_start.year, _end.year + 1):
+                for month in range(1, 13):
+                    if year == _start.year and month < _start.month:
+                        continue
+                    if year == _end.year and month > _end.month:
+                        continue
+                    
+                    if month == 12:
+                        month_start = f'{year}-12-01'
+                        month_end = f'{year+1}-01-01'
+                    else:
+                        month_start = f'{year}-{month:02d}-01'
+                        month_end = f'{year}-{month+1:02d}-01'
+                    
+                    month_tmax = (raw_tmax_filtered
+                                   .filterDate(month_start, month_end)
+                                   .mean())
+                    month_tmin = (raw_tmin_filtered
+                                   .filterDate(month_start, month_end)
+                                   .mean())
+                    if tmax_scaling != 1.0 or tmax_offset != 0.0:
+                        month_tmax = month_tmax.multiply(tmax_scaling).add(tmax_offset)
+                    if tmin_scaling != 1.0 or tmin_offset != 0.0:
+                        month_tmin = month_tmin.multiply(tmin_scaling).add(tmin_offset)
+                    dtr = month_tmax.subtract(month_tmin)
+                    monthly_images.append(dtr.set({
+                        'month': month,
+                        'year': year,
+                        'system:time_start': ee.Date.fromYMD(year, month, 1).millis(),
+                        'index_name': 'DTR',
+                        'unit': '°C'
+                    }))
+
+            return (ee.ImageCollection(monthly_images)
+                    if monthly_images else ee.ImageCollection([]))
+
+        # ── Other temporal resolutions (climatology, etc.) ───────────────────────
         # Apply unit conversions if dataset is specified
         if self.dataset_id:
             tmax_collection = self.apply_unit_conversion(tmax_collection, 'temperature_max')
@@ -5343,30 +5740,32 @@ class ClimateIndicesCalculator:
         tmax_filtered = tmax_collection.filterDate(start_date, end_date).filterBounds(self.geometry)
         tmin_filtered = tmin_collection.filterDate(start_date, end_date).filterBounds(self.geometry)
 
+        # Handle temporal resolution
+        start_year = ee.Date(start_date).get('year')
+        end_year = ee.Date(end_date).get('year')
+        
+        years = ee.List.sequence(start_year, end_year)
+        months = ee.List.sequence(1, 12)
+        year_months = years.map(
+            lambda y: months.map(lambda m: ee.Number(y).multiply(100).add(m))
+        ).flatten()
+
         def calculate_monthly_dtr(year_month):
             year = ee.Number(year_month).divide(100).int()
             month = ee.Number(year_month).mod(100).int()
-
-            # Get monthly data
             monthly_tmax = tmax_filtered.filter(
                 ee.Filter.calendarRange(year, year, 'year')
             ).filter(
                 ee.Filter.calendarRange(month, month, 'month')
             )
-
             monthly_tmin = tmin_filtered.filter(
                 ee.Filter.calendarRange(year, year, 'year')
             ).filter(
                 ee.Filter.calendarRange(month, month, 'month')
             )
-
-            # Calculate mean temperatures for the month
             mean_tmax = monthly_tmax.mean().clip(self.geometry)
             mean_tmin = monthly_tmin.mean().clip(self.geometry)
-
-            # Calculate DTR
             dtr = mean_tmax.subtract(mean_tmin)
-
             return dtr.set({
                 'month': month,
                 'year': year,
@@ -5375,54 +5774,10 @@ class ClimateIndicesCalculator:
                 'unit': '°C'
             })
 
-        # Handle temporal resolution
-        start_year = ee.Date(start_date).get('year')
-        end_year = ee.Date(end_date).get('year')
-
-        if temporal_resolution == 'yearly':
-            # Yearly aggregation: calculate annual mean DTR
-            def calculate_yearly_dtr(year):
-                # Filter to specific year
-                yearly_tmax = tmax_filtered.filter(
-                    ee.Filter.calendarRange(year, year, 'year')
-                )
-                yearly_tmin = tmin_filtered.filter(
-                    ee.Filter.calendarRange(year, year, 'year')
-                )
-
-                # Calculate mean temperatures for the year
-                mean_tmax = yearly_tmax.mean().clip(self.geometry)
-                mean_tmin = yearly_tmin.mean().clip(self.geometry)
-
-                # Calculate DTR
-                dtr = mean_tmax.subtract(mean_tmin)
-
-                return dtr.set({
-                    'year': year,
-                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
-                    'index_name': 'DTR',
-                    'unit': '°C'
-                })
-
-            years = ee.List.sequence(start_year, end_year)
-            yearly_results = ee.ImageCollection.fromImages(
-                years.map(calculate_yearly_dtr)
-            )
-            return yearly_results
-
-        else:
-            # Monthly aggregation (default)
-            years = ee.List.sequence(start_year, end_year)
-            months = ee.List.sequence(1, 12)
-
-            year_months = years.map(
-                lambda y: months.map(lambda m: ee.Number(y).multiply(100).add(m))
-            ).flatten()
-
-            results = ee.ImageCollection.fromImages(
-                year_months.map(calculate_monthly_dtr)
-            )
-            return results
+        results = ee.ImageCollection.fromImages(
+            year_months.map(calculate_monthly_dtr)
+        )
+        return results
 
     def calculate_mann_kendall_trend(self, time_series_collection: ee.ImageCollection) -> ee.Image:
         """
@@ -5632,61 +5987,111 @@ class ClimateIndicesCalculator:
             temporal_resolution: 'monthly', 'yearly', 'climatology_mean', 'climatology_median', 'climatology_min', or 'climatology_max' aggregation
             climatology_reducer: 'mean', 'median', 'min', or 'max' for climatology calculations
         """
+        # ── YEARLY PATH: handle before any collection-level .map() ──────────
+        # apply_unit_conversion() maps a multiply/add over the ENTIRE raw collection
+        # (e.g. 10 958 images).  ee.ImageCollection([img0..img29]) where every img
+        # references that mapped collection creates a JSON expression so large that
+        # GEE rejects even lightweight metadata calls (aggregate_array, getInfo).
+        #
+        # Fix: filter the RAW collection per year with concrete string dates, then
+        # apply the scaling factor to the single result image.  This is exactly
+        # what the GEE Code Editor does and it is trivially light for GEE.
+        if temporal_resolution == 'yearly':
+            from datetime import datetime as _dt
+            _start = _dt.strptime(str(start_date)[:10], '%Y-%m-%d')
+            _end   = _dt.strptime(str(end_date)[:10],   '%Y-%m-%d')
+
+            # Get scaling without mapping over the full collection
+            scaling_factor, offset = 1.0, 0.0
+            if self.dataset_id:
+                band_info = self.dataset_config.get_band_scaling_info(
+                    self.dataset_id, 'precipitation')
+                scaling_factor = band_info.get('scaling_factor', 1.0)
+                offset         = band_info.get('offset', 0.0)
+
+            raw_filtered = (precip_collection
+                            .filterDate(start_date, end_date)
+                            .filterBounds(self.geometry))
+
+            yearly_images = []
+            for year in range(_start.year, _end.year + 1):
+                year_max = (raw_filtered
+                            .filterDate(f'{year}-01-01', f'{year + 1}-01-01')
+                            .max())
+                # Apply unit conversion to the single aggregated image, not the
+                # full collection — keeps the expression tree tiny and fast.
+                if scaling_factor != 1.0 or offset != 0.0:
+                    year_max = year_max.multiply(scaling_factor).add(offset)
+                yearly_images.append(year_max.set({
+                    'year': year,
+                    'system:time_start': ee.Date(f'{year}-01-01').millis(),
+                    'index_name': 'RX1day',
+                    'unit': 'mm'
+                }))
+
+            return (ee.ImageCollection(yearly_images)
+                    if yearly_images else ee.ImageCollection([]))
+
+        # ── MONTHLY PATH: handle before collection-level .map() ───────────────────
+        if temporal_resolution == 'monthly':
+            from datetime import datetime as _dt
+            _start = _dt.strptime(str(start_date)[:10], '%Y-%m-%d')
+            _end   = _dt.strptime(str(end_date)[:10],   '%Y-%m-%d')
+
+            scaling_factor, offset = 1.0, 0.0
+            if self.dataset_id:
+                band_info = self.dataset_config.get_band_scaling_info(
+                    self.dataset_id, 'precipitation')
+                scaling_factor = band_info.get('scaling_factor', 1.0)
+                offset         = band_info.get('offset', 0.0)
+
+            raw_filtered = (precip_collection
+                            .filterDate(start_date, end_date)
+                            .filterBounds(self.geometry))
+
+            monthly_images = []
+            for year in range(_start.year, _end.year + 1):
+                for month in range(1, 13):
+                    if year == _start.year and month < _start.month:
+                        continue
+                    if year == _end.year and month > _end.month:
+                        continue
+                    
+                    if month == 12:
+                        month_start = f'{year}-12-01'
+                        month_end = f'{year+1}-01-01'
+                    else:
+                        month_start = f'{year}-{month:02d}-01'
+                        month_end = f'{year}-{month+1:02d}-01'
+                    
+                    month_max = (raw_filtered
+                                 .filterDate(month_start, month_end)
+                                 .max())
+                    if scaling_factor != 1.0 or offset != 0.0:
+                        month_max = month_max.multiply(scaling_factor).add(offset)
+                    monthly_images.append(month_max.set({
+                        'month': month,
+                        'year': year,
+                        'system:time_start': ee.Date.fromYMD(year, month, 1).millis(),
+                        'index_name': 'RX1day',
+                        'unit': 'mm'
+                    }))
+
+            return (ee.ImageCollection(monthly_images)
+                    if monthly_images else ee.ImageCollection([]))
+
+        # ── Other temporal resolutions (climatology, etc.) ───────────────────────
         # Apply unit conversion if dataset is specified
         if self.dataset_id:
             precip_collection = self.apply_unit_conversion(precip_collection, 'precipitation')
 
         filtered = precip_collection.filterDate(start_date, end_date).filterBounds(self.geometry)
 
-        def monthly_max_precip(year_month):
-            year = ee.Number(year_month).divide(100).int()
-            month = ee.Number(year_month).mod(100).int()
-
-            monthly = filtered.filter(
-                ee.Filter.calendarRange(year, year, 'year')
-            ).filter(
-                ee.Filter.calendarRange(month, month, 'month')
-            )
-
-            max_precip = monthly.max().clip(self.geometry)
-
-            return max_precip.set({
-                'month': month,
-                'year': year,
-                'system:time_start': ee.Date.fromYMD(year, month, 1).millis(),
-                'index_name': 'RX1day',
-                'unit': 'mm'
-            })
-
         # Handle temporal resolution
         start_year = ee.Date(start_date).get('year')
         end_year = ee.Date(end_date).get('year')
 
-        if temporal_resolution == 'yearly':
-            # Yearly aggregation: calculate annual maximum 1-day precipitation
-            def calculate_yearly_max(year):
-                # Filter to specific year
-                yearly_data = filtered.filter(
-                    ee.Filter.calendarRange(year, year, 'year')
-                )
-
-                # Get yearly maximum 1-day precipitation
-                max_precip = yearly_data.max().clip(self.geometry)
-
-                return max_precip.set({
-                    'year': year,
-                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
-                    'index_name': 'RX1day',
-                    'unit': 'mm'
-                })
-
-            years = ee.List.sequence(start_year, end_year)
-            yearly_results = ee.ImageCollection.fromImages(
-                years.map(calculate_yearly_max)
-            )
-            return yearly_results
-
-        elif temporal_resolution in ['climatology_mean', 'climatology_median', 'climatology_min', 'climatology_max']:
+        if temporal_resolution in ['climatology_mean', 'climatology_median', 'climatology_min', 'climatology_max']:
             # Climatology mode: Return YEARLY collection for time series plotting
             # The spatial export will aggregate to single image based on metadata
             def calculate_yearly_max(year):
@@ -5951,9 +6356,98 @@ class ClimateIndicesCalculator:
             start_date: Start date string
             end_date: End date string
             threshold: Precipitation threshold for dry day (default 1.0 mm)
-            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', 'climatology_median', 'climatology_min', or 'climatology_max' aggregation
-            climatology_reducer: 'mean', 'median', 'min', or 'max' for climatology calculations
+            temporal_resolution: 'monthly', 'yearly', 'climatology_mean', etc.
+            climatology_reducer: 'mean', 'median', 'min', or 'max'
         """
+        # ── YEARLY PATH: bypass collection-level .map() (same reason as RX1day) ─
+        # For CDD, the threshold must be expressed in the SAME units as the raw
+        # collection band (e.g. meters for ERA5-Land total_precipitation_sum).
+        # scaling_factor converts raw→user units:  user_value = raw * factor + offset
+        # Therefore: raw_threshold = (threshold - offset) / factor
+        if temporal_resolution == 'yearly':
+            from datetime import datetime as _dt
+            _start = _dt.strptime(str(start_date)[:10], '%Y-%m-%d')
+            _end   = _dt.strptime(str(end_date)[:10],   '%Y-%m-%d')
+
+            scaling_factor, offset = 1.0, 0.0
+            if self.dataset_id:
+                band_info = self.dataset_config.get_band_scaling_info(
+                    self.dataset_id, 'precipitation')
+                scaling_factor = band_info.get('scaling_factor', 1.0)
+                offset         = band_info.get('offset', 0.0)
+
+            # Convert the user-facing threshold (mm) to raw collection units
+            raw_threshold = (threshold - offset) / scaling_factor if scaling_factor else threshold
+
+            raw_filtered = (precip_collection
+                            .filterDate(start_date, end_date)
+                            .filterBounds(self.geometry))
+
+            yearly_images = []
+            for year in range(_start.year, _end.year + 1):
+                year_coll = raw_filtered.filterDate(f'{year}-01-01', f'{year + 1}-01-01')
+                dry_days  = year_coll.map(lambda img: img.lt(raw_threshold))
+                total_dry = dry_days.sum()
+                yearly_images.append(total_dry.set({
+                    'year': year,
+                    'system:time_start': ee.Date(f'{year}-01-01').millis(),
+                    'index_name': 'CDD',
+                    'unit': 'days'
+                }))
+
+            return (ee.ImageCollection(yearly_images)
+                    if yearly_images else ee.ImageCollection([]))
+
+        # ── MONTHLY PATH: handle before collection-level .map() ───────────────────
+        if temporal_resolution == 'monthly':
+            from datetime import datetime as _dt
+            _start = _dt.strptime(str(start_date)[:10], '%Y-%m-%d')
+            _end   = _dt.strptime(str(end_date)[:10],   '%Y-%m-%d')
+
+            scaling_factor, offset = 1.0, 0.0
+            if self.dataset_id:
+                band_info = self.dataset_config.get_band_scaling_info(
+                    self.dataset_id, 'precipitation')
+                scaling_factor = band_info.get('scaling_factor', 1.0)
+                offset         = band_info.get('offset', 0.0)
+
+            # Convert threshold to raw units
+            raw_threshold = (threshold - offset) / scaling_factor if scaling_factor else threshold
+
+            raw_filtered = (precip_collection
+                            .filterDate(start_date, end_date)
+                            .filterBounds(self.geometry))
+
+            monthly_images = []
+            for year in range(_start.year, _end.year + 1):
+                for month in range(1, 13):
+                    if year == _start.year and month < _start.month:
+                        continue
+                    if year == _end.year and month > _end.month:
+                        continue
+                    
+                    if month == 12:
+                        month_start = f'{year}-12-01'
+                        month_end = f'{year+1}-01-01'
+                    else:
+                        month_start = f'{year}-{month:02d}-01'
+                        month_end = f'{year}-{month+1:02d}-01'
+                    
+                    month_coll = raw_filtered.filterDate(month_start, month_end)
+                    dry_days = month_coll.map(lambda img: img.lt(raw_threshold))
+                    total_dry = dry_days.sum()
+                    monthly_images.append(total_dry.set({
+                        'month': month,
+                        'year': year,
+                        'system:time_start': ee.Date.fromYMD(year, month, 1).millis(),
+                        'index_name': 'CDD',
+                        'unit': 'days'
+                    }))
+
+            return (ee.ImageCollection(monthly_images)
+                    if monthly_images else ee.ImageCollection([]))
+
+        # ── Other temporal resolutions (climatology, etc.) ───────────────────────
         # Apply unit conversion if dataset is specified
         if self.dataset_id:
             precip_collection = self.apply_unit_conversion(precip_collection, 'precipitation')
@@ -5963,43 +6457,7 @@ class ClimateIndicesCalculator:
         start_year = ee.Date(start_date).get('year')
         end_year = ee.Date(end_date).get('year')
 
-        if temporal_resolution == 'monthly':
-            # Monthly aggregation
-            def calculate_monthly_cdd(year_month):
-                year = ee.Number(year_month).divide(100).int()
-                month = ee.Number(year_month).mod(100).int()
-
-                monthly = filtered.filter(
-                    ee.Filter.calendarRange(year, year, 'year')
-                ).filter(
-                    ee.Filter.calendarRange(month, month, 'month')
-                )
-
-                # Count dry days (simplified approach)
-                dry_days = monthly.map(lambda img: img.lt(threshold).clip(self.geometry))
-                total_dry = dry_days.sum()
-
-                return total_dry.set({
-                    'month': month,
-                    'year': year,
-                    'system:time_start': ee.Date.fromYMD(year, month, 1).millis(),
-                    'index_name': 'CDD',
-                    'unit': 'days'
-                })
-
-            years = ee.List.sequence(start_year, end_year)
-            months = ee.List.sequence(1, 12)
-
-            year_months = years.map(
-                lambda y: months.map(lambda m: ee.Number(y).multiply(100).add(m))
-            ).flatten()
-
-            results = ee.ImageCollection.fromImages(
-                year_months.map(calculate_monthly_cdd)
-            )
-            return results
-
-        elif temporal_resolution in ['climatology_mean', 'climatology_median', 'climatology_min', 'climatology_max']:
+        if temporal_resolution in ['climatology_mean', 'climatology_median', 'climatology_min', 'climatology_max']:
             # Climatology mode: Return YEARLY collection for time series plotting
             def calculate_annual_cdd(year):
                 annual = filtered.filter(
@@ -6039,30 +6497,29 @@ class ClimateIndicesCalculator:
             })
 
         else:
-            # Yearly aggregation (default)
-            def calculate_annual_cdd(year):
-                annual = filtered.filter(
-                    ee.Filter.calendarRange(year, year, 'year')
+            # Yearly aggregation — Python loop with concrete dates (see RX1day comment).
+            from datetime import datetime as _dt
+            _start = _dt.strptime(str(start_date)[:10], '%Y-%m-%d')
+            _end   = _dt.strptime(str(end_date)[:10],   '%Y-%m-%d')
+
+            yearly_images = []
+            for year in range(_start.year, _end.year + 1):
+                year_coll = filtered.filterDate(f'{year}-01-01', f'{year + 1}-01-01')
+                # Dry day = precipitation below threshold (binary 0/1 image per day)
+                dry_days  = year_coll.map(lambda img: img.lt(threshold))
+                total_dry = dry_days.sum()
+                yearly_images.append(
+                    total_dry.set({
+                        'year': year,
+                        'system:time_start': ee.Date(f'{year}-01-01').millis(),
+                        'index_name': 'CDD',
+                        'unit': 'days'
+                    })
                 )
 
-                # Count dry days (simplified approach)
-                dry_days = annual.map(lambda img: img.lt(threshold).clip(self.geometry))
-                total_dry = dry_days.sum()
-
-                return total_dry.set({
-                    'year': year,
-                    'system:time_start': ee.Date.fromYMD(year, 1, 1).millis(),
-                    'index_name': 'CDD',
-                    'unit': 'days'
-                })
-
-            years = ee.List.sequence(start_year, end_year)
-
-            results = ee.ImageCollection.fromImages(
-                years.map(calculate_annual_cdd)
-            )
-
-            return results
+            if not yearly_images:
+                return ee.ImageCollection([])
+            return ee.ImageCollection(yearly_images)
 
     def calculate_mann_kendall_trend(self, time_series_collection: ee.ImageCollection) -> ee.Image:
         """

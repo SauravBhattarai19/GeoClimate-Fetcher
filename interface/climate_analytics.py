@@ -8,7 +8,7 @@ import pandas as pd
 import json
 import time
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 # Use compatibility wrapper for geemap to avoid BoxKeyError
 from geemap_compat import geemap
 
@@ -188,25 +188,41 @@ def _render_climate_geometry_selection():
     """Render geometry selection for climate analytics"""
     # Add back button
     if st.button("← Back to Analysis Type"):
+        _clear_analysis_results()
         st.session_state.climate_analysis_type = None
         st.session_state.climate_step = 1
         st.rerun()
-    
+
     def on_geometry_selected(geometry):
         """Callback when geometry is selected"""
         st.session_state.climate_geometry_handler._current_geometry = geometry
         st.session_state.climate_geometry_handler._current_geometry_name = "climate_selected_aoi"
         st.session_state.climate_geometry_complete = True
         st.session_state.climate_step = 3
+        # Cache area once so downstream steps never need a blocking GEE .getInfo() call
+        try:
+            area_km2 = geometry.area().divide(1e6).getInfo()
+            st.session_state.climate_cached_area_km2 = round(area_km2, 2)
+        except Exception:
+            st.session_state.climate_cached_area_km2 = None
+        # A new geometry invalidates any previously computed results
+        _clear_analysis_results()
         st.success("✅ Study area selected successfully!")
-    
+
     # Use the unified geometry selection widget
     geometry_widget = GeometrySelectionWidget(
         session_prefix="climate_",
         title="🗺️ Step 2: Select Study Area"
     )
-    
-    if geometry_widget.render_complete_interface(on_geometry_selected=on_geometry_selected):
+
+    result = geometry_widget.render_complete_interface(on_geometry_selected=on_geometry_selected)
+    if result:
+        # Widget returned True via "Continue" on already-selected area.
+        # The on_geometry_selected callback was NOT called in that path,
+        # so restore geometry_complete manually to avoid an infinite loop.
+        existing_geom = st.session_state.get('climate_geometry')
+        if existing_geom and not st.session_state.get('climate_geometry_complete', False):
+            on_geometry_selected(existing_geom)
         st.rerun()
 
 
@@ -216,18 +232,17 @@ def _render_climate_dataset_selection():
     
     # Add back button
     if st.button("← Back to Study Area"):
+        _clear_analysis_results()
         st.session_state.climate_geometry_complete = False
         st.session_state.climate_step = 2
         st.rerun()
-    
-    # Show current geometry info
-    try:
-        handler = st.session_state.climate_geometry_handler
-        if handler.current_geometry:
-            area = handler.get_geometry_area()
-            name = handler.current_geometry_name
-            st.success(f"✅ Study Area: {name} ({area:.2f} km²)")
-    except Exception:
+
+    # Show current geometry info — use cached area, never call GEE on render
+    cached_area = st.session_state.get('climate_cached_area_km2')
+    if cached_area is not None:
+        name = st.session_state.climate_geometry_handler.current_geometry_name or "Custom area"
+        st.success(f"✅ Study Area: {name} ({cached_area:.2f} km²)")
+    else:
         st.info("✅ Study area selected")
     
     # Load appropriate datasets based on analysis type
@@ -241,6 +256,7 @@ def _render_climate_date_selection():
 
     # Add back button
     if st.button("← Back to Dataset Selection"):
+        _clear_analysis_results()
         st.session_state.climate_dataset_selected = False
         st.session_state.climate_step = 3
         st.rerun()
@@ -302,16 +318,21 @@ def _render_climate_date_selection():
     )
 
     if date_option == "Last 5 years":
-        start_date = max(today.replace(year=today.year - 5), dataset_start)
+        # Use complete years: start from January 1st of the start year
+        start_year = today.year - 5
+        start_date = max(date(start_year, 1, 1), dataset_start)
         end_date = today
     elif date_option == "Last 10 years":
-        start_date = max(today.replace(year=today.year - 10), dataset_start)
+        start_year = today.year - 10
+        start_date = max(date(start_year, 1, 1), dataset_start)
         end_date = today
     elif date_option == "Last 20 years":
-        start_date = max(today.replace(year=today.year - 20), dataset_start)
+        start_year = today.year - 20
+        start_date = max(date(start_year, 1, 1), dataset_start)
         end_date = today
     elif date_option == "Last 30 years":
-        start_date = max(today.replace(year=today.year - 30), dataset_start)
+        start_year = today.year - 30
+        start_date = max(date(start_year, 1, 1), dataset_start)
         end_date = today
     else:  # Custom range
         col1, col2 = st.columns(2)
@@ -388,6 +409,7 @@ def _render_climate_indices_selection():
     
     # Add back button
     if st.button("← Back to Date Selection"):
+        _clear_analysis_results()
         st.session_state.climate_date_range_set = False
         st.session_state.climate_step = 4
         st.rerun()
@@ -406,9 +428,24 @@ def _render_climate_results():
 
     # Add back button to return to Export Configuration (Step 6)
     if st.button("← Back to Export Configuration"):
-        st.session_state.climate_export_configured = False
+        _clear_analysis_results()
         st.rerun()
-    
+
+    # ── Stale-result detection ──────────────────────────────────────────────
+    # If the user changed dataset / dates / indices / scale after the last run,
+    # the cached results are no longer valid → clear them and show the Run button.
+    if st.session_state.get('climate_analysis_complete', False) and st.session_state.get('climate_results'):
+        stored_fp  = st.session_state.get('climate_results_fingerprint')
+        current_fp = _get_config_fingerprint()
+        if stored_fp and stored_fp != current_fp:
+            st.warning(
+                "⚠️ Analysis parameters have changed since the last run "
+                "(different dataset, date range, indices, or resolution). "
+                "Previous results have been cleared — please re-run."
+            )
+            _clear_analysis_results()
+            st.rerun()
+
     # Show analysis summary
     _show_analysis_summary()
 
@@ -428,19 +465,9 @@ def _render_climate_results():
         st.markdown("---")
         if 'image_collections' in results and results['image_collections']:
             st.markdown("### 🗺️ Spatial Data Preview")
-            show_map = st.checkbox(
-                "Show interactive map visualization",
-                value=False,
-                help="Enable to see spatial visualization on the map. Disable for faster loading or if experiencing issues.",
-                key="climate_show_map_existing_results"
-            )
-
-            if show_map:
-                _display_geemap_visualization(results)
-            else:
-                st.info("💡 Interactive map visualization is disabled. Enable the checkbox above to view spatial data on the map.")
+            _display_geemap_visualization(results)
         else:
-            st.info("💡 Spatial visualization requires image collection data. This is available when analysis is run with spatial data generation.")
+            st.info("💡 Spatial visualization requires image collection data.")
 
         # IMPROVED UX: Show analysis options immediately after results
         st.markdown("---")
@@ -1045,6 +1072,7 @@ def _render_export_configuration():
 
     # Add back button
     if st.button("← Back to Index Selection"):
+        _clear_analysis_results()
         st.session_state.climate_indices_selected = False
         st.rerun()
 
@@ -1229,13 +1257,13 @@ def _show_analysis_summary():
         st.info(f"Type: {st.session_state.climate_analysis_type.title()}")
         st.info(f"Dataset: {selected_dataset.get('name', 'Unknown')}")
 
-        # Show study area
+        # Show study area — use cached value; never call GEE on render
         st.markdown("**🗺️ Study Area:**")
-        try:
-            area = st.session_state.climate_geometry_handler.get_geometry_area()
-            st.info(f"Area: {area:.2f} km²")
-        except:
-            st.info("Custom area defined")
+        cached_area = st.session_state.get('climate_cached_area_km2')
+        if cached_area is not None:
+            st.info(f"Area: {cached_area:.2f} km²")
+        else:
+            st.info("Study area defined")
 
     with col2:
         st.markdown("**📅 Time Configuration**")
@@ -1328,6 +1356,8 @@ def _run_climate_analysis():
                 # Store results in session state for persistence
                 st.session_state.climate_results = results
                 st.session_state.climate_analysis_complete = True
+                # Record which config these results belong to so staleness can be detected
+                st.session_state.climate_results_fingerprint = _get_config_fingerprint()
 
                 st.success("✅ Climate analysis completed successfully!")
 
@@ -1342,19 +1372,9 @@ def _run_climate_analysis():
                 st.markdown("---")
                 if 'image_collections' in results and results['image_collections']:
                     st.markdown("### 🗺️ Spatial Data Preview")
-                    show_map = st.checkbox(
-                        "Show interactive map visualization",
-                        value=False,
-                        help="Enable to see spatial visualization on the map. Disable for faster loading or if experiencing issues.",
-                        key="climate_show_map_new_results"
-                    )
-
-                    if show_map:
-                        _display_geemap_visualization(results)
-                    else:
-                        st.info("💡 Interactive map visualization is disabled. Enable the checkbox above to view spatial data on the map.")
+                    _display_geemap_visualization(results)
                 else:
-                    st.info("💡 Spatial visualization requires image collection data. This is available when analysis is run with spatial data generation.")
+                    st.info("💡 Spatial visualization requires image collection data.")
 
                 # IMPROVED UX: Show temporal CSV download immediately (with stable keys)
                 st.markdown("---")
@@ -1814,8 +1834,13 @@ def _display_climate_results(time_series_data):
         st.info(f"📅 Resolution: {temporal_res}")
 
     if isinstance(time_series_data, dict):
-        # Add toggle option to switch between indices
+        # Guard: nothing to plot if extraction failed
         index_names = list(time_series_data.keys())
+        if not index_names:
+            st.warning("⚠️ No time series data available. Time series extraction may have failed — check the Processing Log above.")
+            return
+
+        # Add toggle option to switch between indices
         if len(index_names) > 1:
             st.markdown("##### 🔄 Index Selection")
             view_options = ["All Indices (Subplots)"] + index_names
@@ -1833,7 +1858,7 @@ def _display_climate_results(time_series_data):
                 return
         else:
             selected_view = "All Indices (Subplots)"
-        # Multiple indices
+        # Multiple indices — guaranteed n_indices >= 1 here
         n_indices = len(time_series_data)
         fig = make_subplots(
             rows=n_indices, cols=1,
@@ -2163,18 +2188,23 @@ def _display_trend_statistics_panel(trend_stats):
 
 
 def _display_geemap_visualization(results):
-    """Display climate indices on an interactive geemap with layer toggles"""
-    st.markdown("### 🗺️ Interactive Spatial Visualization")
-    st.info("💡 Use the layer control to toggle between different time periods and indices. You can take screenshots directly from the map.")
+    """Lazy spatial preview — only the selected time period is fetched from GEE.
 
-    # Check if we have image collections to display
+    Old approach: loop over ALL years → 2 blocking GEE calls per year → 60+
+    sequential network calls for a 30-year dataset before any map appears.
+
+    New approach:
+      1. ONE call to get all timestamps (fast metadata).
+      2. User picks index + year/month in the UI (zero GEE calls).
+      3. Only when "Show Map" is clicked: load that single image, compute its
+         5th–95th percentile range, render the map  (2 GEE calls total).
+    """
     if 'image_collections' not in results or not results['image_collections']:
-        st.warning("⚠️ No spatial data available for visualization. Image collections were not generated.")
+        st.warning("⚠️ No spatial data available.")
         return
 
-    # Ensure Earth Engine is initialized with proper project ID
     if not st.session_state.get('auth_complete', False):
-        st.error("❌ Earth Engine not authenticated. Please authenticate first.")
+        st.error("❌ Earth Engine not authenticated.")
         return
 
     project_id = st.session_state.get('project_id')
@@ -2182,289 +2212,217 @@ def _display_geemap_visualization(results):
         st.error("❌ No project ID found. Please re-authenticate.")
         return
 
-    # Verify Earth Engine is initialized
     try:
         ee.Number(1).getInfo()
-    except Exception as e:
+    except Exception:
         try:
-            # Use geemap.ee_initialize() instead of ee.Initialize() for Streamlit Cloud compatibility
             geemap.ee_initialize(project=project_id)
-        except Exception as init_error:
-            st.error(f"❌ Earth Engine initialization failed: {str(init_error)}")
-            st.info("💡 Please try re-authenticating with your Earth Engine credentials.")
+        except Exception as init_err:
+            st.error(f"❌ Earth Engine initialisation failed: {init_err}")
             return
 
     image_collections = results['image_collections']
-    geometry = results.get('geometry')
+    geometry          = results.get('geometry')
+    temporal_res      = st.session_state.get('climate_temporal_resolution', 'yearly')
 
-    # Get temporal resolution for labeling
-    temporal_resolution = st.session_state.get('climate_temporal_resolution', 'yearly')
-
-    # Create geemap Map
-    try:
-        Map = geemap.Map()
-    except Exception as e:
-        st.error(f"❌ Error creating geemap: {str(e)}")
-        st.warning("⚠️ This may be a version compatibility issue. Ensure geemap is up to date.")
-        return
-
-    # Center map on geometry if available
-    if geometry:
-        try:
-            centroid = geometry.centroid().getInfo()['coordinates']
-            Map.setCenter(centroid[0], centroid[1], 8)
-        except:
-            pass
-
-    # Define color palettes for different index types
+    # ── Color palettes ──────────────────────────────────────────────────────
     color_palettes = {
-        # Temperature indices (warm colors)
-        'TXx': ['blue', 'white', 'red'],
-        'TNn': ['blue', 'white', 'red'],
-        'TXn': ['blue', 'white', 'red'],
-        'TNx': ['blue', 'white', 'red'],
+        'TXx': ['blue', 'white', 'red'],   'TNn': ['blue', 'white', 'red'],
+        'TXn': ['blue', 'white', 'red'],   'TNx': ['blue', 'white', 'red'],
         'TX90p': ['white', 'yellow', 'orange', 'red'],
         'TX10p': ['blue', 'cyan', 'white'],
         'TN90p': ['white', 'yellow', 'orange', 'red'],
         'TN10p': ['blue', 'cyan', 'white'],
-        'DTR': ['purple', 'white', 'orange'],
-        'SU': ['white', 'yellow', 'orange', 'red'],
-        'FD': ['blue', 'cyan', 'white'],
+        'DTR':  ['purple', 'white', 'orange'],
+        'SU':   ['white', 'yellow', 'orange', 'red'],
+        'FD':   ['blue', 'cyan', 'white'],
         'WSDI': ['white', 'yellow', 'orange', 'red'],
         'CSDI': ['blue', 'cyan', 'white'],
-        'GSL': ['brown', 'yellow', 'green'],
-
-        # Precipitation indices (blue colors)
-        'RX1day': ['white', 'lightblue', 'blue', 'darkblue'],
-        'RX5day': ['white', 'lightblue', 'blue', 'darkblue'],
-        'R10mm': ['white', 'lightblue', 'blue'],
-        'R20mm': ['white', 'cyan', 'blue', 'darkblue'],
-        'CDD': ['green', 'yellow', 'orange', 'red'],
+        'GSL':  ['brown', 'yellow', 'green'],
+        'RX1day':  ['white', 'lightblue', 'blue', 'darkblue'],
+        'RX5day':  ['white', 'lightblue', 'blue', 'darkblue'],
+        'R10mm':   ['white', 'lightblue', 'blue'],
+        'R20mm':   ['white', 'cyan', 'blue', 'darkblue'],
+        'CDD':     ['green', 'yellow', 'orange', 'red'],
         'PRCPTOT': ['white', 'lightblue', 'blue', 'darkblue'],
-        'R95p': ['white', 'cyan', 'blue', 'darkblue'],
-        'R99p': ['white', 'cyan', 'blue', 'darkblue'],
-        'R75p': ['white', 'lightblue', 'blue'],
-        'SDII': ['white', 'lightblue', 'blue', 'darkblue']
+        'R95p':    ['white', 'cyan', 'blue', 'darkblue'],
+        'R99p':    ['white', 'cyan', 'blue', 'darkblue'],
+        'R75p':    ['white', 'lightblue', 'blue'],
+        'SDII':    ['white', 'lightblue', 'blue', 'darkblue'],
     }
 
-    # Define units and descriptions for each index
-    index_metadata = {
-        # Temperature indices
-        'TXx': {'unit': '°C', 'description': 'Maximum of Daily Max Temperature', 'type': 'temperature'},
-        'TNn': {'unit': '°C', 'description': 'Minimum of Daily Min Temperature', 'type': 'temperature'},
-        'TXn': {'unit': '°C', 'description': 'Minimum of Daily Max Temperature', 'type': 'temperature'},
-        'TNx': {'unit': '°C', 'description': 'Maximum of Daily Min Temperature', 'type': 'temperature'},
-        'TX90p': {'unit': 'days', 'description': 'Warm Days (Tmax > 90th percentile)', 'type': 'temperature'},
-        'TX10p': {'unit': 'days', 'description': 'Cool Days (Tmax < 10th percentile)', 'type': 'temperature'},
-        'TN90p': {'unit': 'days', 'description': 'Warm Nights (Tmin > 90th percentile)', 'type': 'temperature'},
-        'TN10p': {'unit': 'days', 'description': 'Cool Nights (Tmin < 10th percentile)', 'type': 'temperature'},
-        'DTR': {'unit': '°C', 'description': 'Diurnal Temperature Range', 'type': 'temperature'},
-        'SU': {'unit': 'days', 'description': 'Summer Days (Tmax > 25°C)', 'type': 'temperature'},
-        'FD': {'unit': 'days', 'description': 'Frost Days (Tmin < 0°C)', 'type': 'temperature'},
-        'WSDI': {'unit': 'days', 'description': 'Warm Spell Duration Index', 'type': 'temperature'},
-        'CSDI': {'unit': 'days', 'description': 'Cold Spell Duration Index', 'type': 'temperature'},
-        'GSL': {'unit': 'days', 'description': 'Growing Season Length', 'type': 'temperature'},
-
-        # Precipitation indices
-        'RX1day': {'unit': 'mm', 'description': 'Max 1-day Precipitation', 'type': 'precipitation'},
-        'RX5day': {'unit': 'mm', 'description': 'Max 5-day Precipitation', 'type': 'precipitation'},
-        'R10mm': {'unit': 'days', 'description': 'Heavy Precipitation Days (≥10mm)', 'type': 'precipitation'},
-        'R20mm': {'unit': 'days', 'description': 'Very Heavy Precipitation Days (≥20mm)', 'type': 'precipitation'},
-        'CDD': {'unit': 'days', 'description': 'Consecutive Dry Days', 'type': 'precipitation'},
-        'PRCPTOT': {'unit': 'mm', 'description': 'Total Wet-day Precipitation', 'type': 'precipitation'},
-        'R95p': {'unit': 'mm', 'description': 'Very Wet Days (>95th percentile)', 'type': 'precipitation'},
-        'R99p': {'unit': 'mm', 'description': 'Extremely Wet Days (>99th percentile)', 'type': 'precipitation'},
-        'R75p': {'unit': 'mm', 'description': 'Moderately Wet Days (>75th percentile)', 'type': 'precipitation'},
-        'SDII': {'unit': 'mm/day', 'description': 'Simple Daily Intensity Index', 'type': 'precipitation'}
+    # ── Index metadata ───────────────────────────────────────────────────────
+    index_meta = {
+        'TXx':  {'unit': '°C',     'desc': 'Max of Daily Tmax'},
+        'TNn':  {'unit': '°C',     'desc': 'Min of Daily Tmin'},
+        'TXn':  {'unit': '°C',     'desc': 'Min of Daily Tmax'},
+        'TNx':  {'unit': '°C',     'desc': 'Max of Daily Tmin'},
+        'TX90p':{'unit': 'days',   'desc': 'Warm Days (Tmax > 90th pct)'},
+        'TX10p':{'unit': 'days',   'desc': 'Cool Days (Tmax < 10th pct)'},
+        'TN90p':{'unit': 'days',   'desc': 'Warm Nights (Tmin > 90th pct)'},
+        'TN10p':{'unit': 'days',   'desc': 'Cool Nights (Tmin < 10th pct)'},
+        'DTR':  {'unit': '°C',     'desc': 'Diurnal Temperature Range'},
+        'SU':   {'unit': 'days',   'desc': 'Summer Days (Tmax > 25°C)'},
+        'FD':   {'unit': 'days',   'desc': 'Frost Days (Tmin < 0°C)'},
+        'WSDI': {'unit': 'days',   'desc': 'Warm Spell Duration Index'},
+        'CSDI': {'unit': 'days',   'desc': 'Cold Spell Duration Index'},
+        'GSL':  {'unit': 'days',   'desc': 'Growing Season Length'},
+        'RX1day': {'unit': 'mm',      'desc': 'Max 1-day Precipitation'},
+        'RX5day': {'unit': 'mm',      'desc': 'Max 5-day Precipitation'},
+        'R10mm':  {'unit': 'days',    'desc': 'Heavy Rain Days (≥10 mm)'},
+        'R20mm':  {'unit': 'days',    'desc': 'Very Heavy Rain Days (≥20 mm)'},
+        'CDD':    {'unit': 'days',    'desc': 'Consecutive Dry Days'},
+        'PRCPTOT':{'unit': 'mm',      'desc': 'Total Wet-day Precipitation'},
+        'R95p':   {'unit': 'mm',      'desc': 'Very Wet Days (>95th pct)'},
+        'R99p':   {'unit': 'mm',      'desc': 'Extremely Wet Days (>99th pct)'},
+        'R75p':   {'unit': 'mm',      'desc': 'Moderately Wet Days (>75th pct)'},
+        'SDII':   {'unit': 'mm/day',  'desc': 'Simple Daily Intensity Index'},
     }
 
-    # Selection for which index to visualize
     index_names = list(image_collections.keys())
-
-    if len(index_names) == 0:
-        st.warning("No climate indices available for visualization.")
+    if not index_names:
+        st.warning("No climate indices available.")
         return
 
-    # User selects which index to visualize
-    col1, col2 = st.columns([2, 1])
-    with col1:
+    # ── Step 1: index selector (zero GEE calls) ──────────────────────────────
+    col_idx, col_info = st.columns([2, 2])
+    with col_idx:
         selected_index = st.selectbox(
-            "Select Climate Index to Display:",
-            index_names,
-            key="geemap_index_selector"
+            "Climate Index:", index_names, key="geemap_index_selector"
         )
+    meta    = index_meta.get(selected_index, {'unit': 'value', 'desc': selected_index})
+    palette = color_palettes.get(selected_index, ['blue', 'white', 'red'])
+    with col_info:
+        st.info(f"**{selected_index}** — {meta['desc']}  |  unit: {meta['unit']}")
 
-    with col2:
-        show_all_layers = st.checkbox(
-            "Show All Time Periods",
-            value=False,
-            help="Toggle to show/hide all temporal layers at once"
-        )
+    collection = image_collections[selected_index]
 
-    if selected_index:
-        collection = image_collections[selected_index]
-        palette = color_palettes.get(selected_index, ['blue', 'white', 'red'])
-
-        # Get metadata for selected index
-        metadata = index_metadata.get(selected_index, {
-            'unit': 'value',
-            'description': selected_index,
-            'type': 'unknown'
-        })
-
-        # Display index information prominently
-        st.markdown(f"#### 📍 Selected: **{selected_index}** - {metadata['description']}")
-
-        # Get collection size (number of images/time periods)
-        try:
-            collection_size = collection.size().getInfo()
-            st.info(f"📊 {selected_index} has {collection_size} time periods available")
-        except Exception as e:
-            st.error(f"Error getting collection size: {str(e)}")
-            return
-
-        # Get list of all images with dates — cap at the display limit (100)
-        # to avoid GEE's 5000-element toList() failure on large collections.
-        try:
-            display_limit = min(collection_size, 100)
-            collection_list = collection.toList(display_limit)
-
-            # Create layers for each time period
-            layers_added = []
-            all_min_values = []  # Collect all min values for percentile calculation
-            all_max_values = []  # Collect all max values for percentile calculation
-
-            for i in range(min(collection_size, 100)):  # Limit to 100 layers for performance
-                try:
-                    image = ee.Image(collection_list.get(i))
-
-                    # Get the date from the image
-                    date_millis = image.get('system:time_start').getInfo()
-                    date_obj = datetime.fromtimestamp(date_millis / 1000)
-
-                    # Format date based on temporal resolution
-                    if temporal_resolution == 'monthly':
-                        date_label = date_obj.strftime('%Y-%m')
-                    else:  # yearly
-                        date_label = date_obj.strftime('%Y')
-
-                    # Create layer name
-                    layer_name = f"{selected_index} - {date_label}"
-
-                    # Calculate min/max for visualization
-                    # Use reduce for the specific region if geometry available
-                    if geometry:
-                        stats = image.reduceRegion(
-                            reducer=ee.Reducer.minMax(),
-                            geometry=geometry,
-                            scale=5000,
-                            maxPixels=1e8
-                        ).getInfo()
-
-                        # Get min/max values
-                        band_name = image.bandNames().getInfo()[0]
-                        vmin = stats.get(f'{band_name}_min', 0)
-                        vmax = stats.get(f'{band_name}_max', 100)
-                    else:
-                        # Use default range if no geometry
-                        vmin = 0
-                        vmax = 100
-
-                    # Collect values for percentile calculation
-                    all_min_values.append(vmin)
-                    all_max_values.append(vmax)
-
-                    # Add layer to map (using per-layer min/max for now)
-                    vis_params = {
-                        'min': vmin,
-                        'max': vmax,
-                        'palette': palette
-                    }
-
-                    Map.addLayer(
-                        image,
-                        vis_params,
-                        layer_name,
-                        shown=(i == collection_size - 1) or show_all_layers  # Show only the last layer by default, or all if checkbox selected
-                    )
-
-                    layers_added.append(layer_name)
-
-                except Exception as layer_error:
-                    st.warning(f"Could not add layer {i}: {str(layer_error)}")
-                    continue
-
-            # Calculate percentile-based min/max for colorbar (removes outliers)
-            import numpy as np
-            if all_min_values and all_max_values:
-                # Use 5th percentile of minimums and 95th percentile of maximums
-                # This removes extreme outliers while preserving most data range
-                overall_min = float(np.percentile(all_min_values, 5))
-                overall_max = float(np.percentile(all_max_values, 95))
-
-                # Ensure min < max
-                if overall_min >= overall_max:
-                    overall_min = min(all_min_values)
-                    overall_max = max(all_max_values)
-            else:
-                # Fallback to absolute min/max
-                overall_min = min(all_min_values) if all_min_values else 0
-                overall_max = max(all_max_values) if all_max_values else 100
-
-            st.success(f"✅ Added {len(layers_added)} layers to the map. Use the layer control (top right) to toggle visibility.")
-
-            # Add geometry outline if available
-            if geometry:
-                Map.addLayer(geometry, {'color': 'black'}, 'Study Area', True)
-
-            # Add colorbar to the map
+    # ── Step 2: get timestamps with ONE GEE call ─────────────────────────────
+    cache_key = f"_geemap_ts_{selected_index}"
+    if cache_key not in st.session_state:
+        with st.spinner("📅 Loading available time periods…"):
             try:
-                colorbar_vis_params = {
-                    'min': overall_min,
-                    'max': overall_max,
-                    'palette': palette
-                }
+                raw_ts = collection.aggregate_array('system:time_start').getInfo()
+                st.session_state[cache_key] = sorted(raw_ts)
+            except Exception as ts_err:
+                st.error(f"❌ Could not load time periods: {ts_err}")
+                return
+
+    timestamps     = st.session_state[cache_key]
+    available_dates = [datetime.fromtimestamp(ts / 1000) for ts in timestamps]
+    n_periods       = len(available_dates)
+
+    if n_periods == 0:
+        st.warning("No time periods found in this collection.")
+        return
+
+    st.caption(f"{n_periods} time periods available — pick one and click **Show Map**.")
+
+    # ── Step 3: period selector (zero GEE calls) ─────────────────────────────
+    if temporal_res == 'monthly':
+        period_labels = [d.strftime('%Y-%m') for d in available_dates]
+    else:
+        period_labels = [d.strftime('%Y') for d in available_dates]
+
+    col_sel, col_btn = st.columns([3, 1])
+    with col_sel:
+        selected_label = st.selectbox(
+            "Time period:", period_labels,
+            index=len(period_labels) - 1,   # default → most recent
+            key="geemap_period_selector"
+        )
+    selected_dt = available_dates[period_labels.index(selected_label)]
+
+    # ── Step 4: lazy map load — only when button is pressed ──────────────────
+    with col_btn:
+        st.markdown("<br>", unsafe_allow_html=True)   # vertical align
+        show_clicked = st.button(
+            f"🗺️ Show Map",
+            type="primary",
+            key="geemap_show_btn",
+            use_container_width=True
+        )
+
+    if not show_clicked:
+        st.info("👆 Select an index and time period above, then click **Show Map**.")
+        return
+
+    with st.spinner(f"🔄 Loading {selected_index} — {selected_label}…"):
+        try:
+            # Filter to the exact timestamp
+            selected_ts = int(selected_dt.timestamp() * 1000)
+            img = collection.filter(
+                ee.Filter.eq('system:time_start', selected_ts)
+            ).first()
+
+            # Fallback: filter by calendar date window if exact TS doesn't match
+            if img is None:
+                d_start = selected_dt.strftime('%Y-%m-%d')
+                d_end   = (selected_dt + timedelta(days=32)).strftime('%Y-%m-%d')
+                img = collection.filterDate(d_start, d_end).first()
+
+            if img is None:
+                st.error("❌ Could not retrieve image for this time period.")
+                return
+
+            # Clip to study area
+            if geometry:
+                img = img.clip(geometry)
+
+            # 5th–95th percentile range for the colorbar (one GEE call)
+            try:
+                band_name = img.bandNames().getInfo()[0]
+                stats = img.select(band_name).reduceRegion(
+                    reducer=ee.Reducer.percentile([5, 95]),
+                    geometry=geometry if geometry else img.geometry(),
+                    scale=5000,
+                    maxPixels=1e8
+                ).getInfo()
+                vmin = stats.get(f'{band_name}_p5') or 0
+                vmax = stats.get(f'{band_name}_p95') or 100
+                if vmin == vmax:        # flat image fallback
+                    vmin, vmax = 0, max(vmax, 1)
+            except Exception:
+                vmin, vmax = 0, 100
+                band_name  = selected_index
+
+            # Build map
+            Map = geemap.Map()
+            if geometry:
+                try:
+                    c = geometry.centroid().getInfo()['coordinates']
+                    Map.setCenter(c[0], c[1], 7)
+                except Exception:
+                    pass
+
+            if geometry:
+                Map.addLayer(geometry, {'color': 'black'}, 'Study Area', True, 0.5)
+
+            Map.addLayer(
+                img,
+                {'min': vmin, 'max': vmax, 'palette': palette},
+                f"{selected_index} — {selected_label}",
+                True
+            )
+
+            try:
                 Map.add_colorbar(
-                    vis_params=colorbar_vis_params,
-                    label=f"{selected_index} ({metadata['unit']})",
+                    vis_params={'min': vmin, 'max': vmax, 'palette': palette},
+                    label=f"{selected_index} ({meta['unit']})",
                     position='bottomright'
                 )
-            except Exception as colorbar_error:
-                st.warning(f"Could not add colorbar to map: {str(colorbar_error)}")
+            except Exception:
+                pass
 
-            # Display the map
-            Map.to_streamlit(height=600)
+            Map.to_streamlit(height=560)
+            st.caption(
+                f"**{selected_index}** | {meta['desc']} | {selected_label} | "
+                f"Range: {vmin:.2f}–{vmax:.2f} {meta['unit']} (5th–95th pct)"
+            )
 
-            # Compact info below map
-            st.markdown("---")
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                st.markdown(f"**📍 {selected_index}:** {metadata['description']}")
-                st.markdown(f"**📊 Colorbar Range:** {overall_min:.2f} to {overall_max:.2f} {metadata['unit']} (5th-95th percentile)")
-            with col2:
-                st.markdown(f"**🎨 Colormap:** Built-in on map →")
-                st.markdown(f"**📅 Layers:** {len(layers_added)} time periods")
-
-            # Detailed info in expander
-            with st.expander("📋 View Detailed Layer Information", expanded=False):
-                st.markdown(f"**Climate Index:** {selected_index}")
-                st.markdown(f"**Description:** {metadata['description']}")
-                st.markdown(f"**Unit:** {metadata['unit']}")
-                st.markdown(f"**Temporal Resolution:** {temporal_resolution}")
-                st.markdown(f"**Number of Layers:** {len(layers_added)}")
-                st.markdown(f"**Colorbar Range (5th-95th percentile):** {overall_min:.2f} to {overall_max:.2f} {metadata['unit']}")
-                st.markdown(f"**Absolute Range (all data):** {min(all_min_values):.2f} to {max(all_max_values):.2f} {metadata['unit']}")
-                st.markdown(f"**Scaling Method:** Percentile-based (removes extreme outliers)")
-                st.markdown(f"**Color Palette:** {', '.join(palette)}")
-                st.markdown("**Available Layers:**")
-                for layer in layers_added[:10]:  # Show first 10
-                    st.markdown(f"- {layer}")
-                if len(layers_added) > 10:
-                    st.markdown(f"... and {len(layers_added) - 10} more")
-
-        except Exception as e:
-            st.error(f"❌ Error creating visualization: {str(e)}")
-            st.info("This may be due to large data size or computation limits. Try selecting a smaller time range.")
+        except Exception as map_err:
+            st.error(f"❌ Map load failed: {map_err}")
+            st.info("Try a different time period or re-run the analysis.")
 
 
 def _show_download_options(results):
@@ -2477,21 +2435,25 @@ def _show_download_options(results):
     col1, col2 = st.columns(2)
 
     with col1:
-        if 'time_series_csv' in results:
+        csv_data = results.get('time_series_csv')
+        if csv_data:
             st.download_button(
                 label="📊 Download Time Series (CSV)",
-                data=results['time_series_csv'],
+                data=csv_data,
                 file_name=f"climate_timeseries_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv",
                 help="Area-averaged yearly climate index values",
                 use_container_width=True
             )
+        else:
+            st.info("ℹ️ Time series CSV not available (extraction may have failed).")
 
     with col2:
-        if 'analysis_report' in results:
+        report_data = results.get('analysis_report')
+        if report_data:
             st.download_button(
                 label="📋 Download Analysis Report",
-                data=results['analysis_report'],
+                data=report_data,
                 file_name=f"climate_analysis_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
                 mime="text/plain",
                 help="Comprehensive analysis report with configuration and results",
@@ -3151,12 +3113,59 @@ def _reset_climate_analysis():
         'climate_selected_dataset', 'climate_selected_indices', 'climate_start_date', 'climate_end_date',
         'climate_results', 'climate_summary', 'climate_export_configured', 'climate_analysis_complete',
         'climate_export_method', 'climate_spatial_scale', 'climate_temporal_resolution',
-        'climate_spatial_export_complete', 'climate_spatial_results', 'climate_index_toggle'
+        'climate_spatial_export_complete', 'climate_spatial_results', 'climate_index_toggle',
+        'climate_results_fingerprint', 'climate_cached_area_km2',
+        # Geometry widget keys (GeometrySelectionWidget uses "climate_" prefix)
+        'climate_geometry', 'climate_geometry_complete', 'climate_method_selection',
     ]
 
     for key in keys_to_reset:
         if key in st.session_state:
             del st.session_state[key]
+
+    # Also reset geometry handler
+    if 'climate_geometry_handler' in st.session_state:
+        try:
+            st.session_state.climate_geometry_handler._current_geometry = None
+            st.session_state.climate_geometry_handler._current_geometry_name = None
+        except Exception:
+            pass
+
+
+def _clear_analysis_results():
+    """Clear only the stored analysis results so Step 7 re-runs with the current config.
+
+    Deliberately preserves geometry, dataset, date-range, indices, and export
+    configuration so the user does not have to redo those steps.
+    """
+    for key in (
+        'climate_analysis_complete', 'climate_results', 'climate_summary',
+        'climate_export_configured', 'climate_results_fingerprint',
+        'climate_spatial_export_complete', 'climate_spatial_results',
+    ):
+        if key in st.session_state:
+            del st.session_state[key]
+
+
+def _get_config_fingerprint():
+    """Return an MD5 of the current analysis configuration.
+
+    Used to detect when the user changes parameters after results have been
+    cached — in that case, the cached results must be discarded.
+    """
+    import hashlib
+    import json
+
+    key = {
+        'analysis_type': str(st.session_state.get('climate_analysis_type', '')),
+        'dataset_id':    str(st.session_state.get('climate_selected_dataset', {}).get('id', '')),
+        'start_date':    str(st.session_state.get('climate_start_date', '')),
+        'end_date':      str(st.session_state.get('climate_end_date', '')),
+        'indices':       sorted(st.session_state.get('climate_selected_indices', [])),
+        'temporal_res':  str(st.session_state.get('climate_temporal_resolution', '')),
+        'spatial_scale': str(st.session_state.get('climate_spatial_scale', '')),
+    }
+    return hashlib.md5(json.dumps(key, sort_keys=True).encode()).hexdigest()
 
 
 def _render_smart_spatial_download_section():
