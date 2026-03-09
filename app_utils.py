@@ -197,7 +197,9 @@ def download_ee_data_simple(dataset, bands, geometry, start_date, end_date, expo
     """
     try:
         ee_id = dataset.get('ee_id')
-        snippet_type = dataset.get('snippet_type', 'Image')
+
+        # Use robust asset type detection - SAFE fallback to ImageCollection for 1042 datasets
+        snippet_type = dataset.get('snippet_type', 'ImageCollection')
 
         # Create temporary file
         with tempfile.NamedTemporaryFile(delete=False, suffix='.tif') as temp_file:
