@@ -18,6 +18,30 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
+
+def get_gee_asset_type(dataset):
+    """
+    Robust asset type detection using snippet_type from STAC metadata.
+
+    Args:
+        dataset: Dataset dictionary containing STAC metadata
+
+    Returns:
+        str: 'static_image', 'image_collection', or 'table'
+    """
+    snippet_type = dataset.get('snippet_type', 'ImageCollection')
+
+    if snippet_type == 'Image':
+        return 'static_image'
+    elif snippet_type == 'ImageCollection':
+        return 'image_collection'
+    elif snippet_type in ['Table', 'BigQueryTable', 'TableCollection']:
+        return 'table'
+    else:
+        # Safe fallback for unknown types
+        return 'image_collection'
+
+
 # Import core components
 from geoclimate_fetcher.core import (
     authenticate,
@@ -762,7 +786,7 @@ def _get_vis_params_for_band(band_name, image, geometry):
     }
 
 
-def _determine_preview_strategy(collection, temporal_resolution, num_images, days_span):
+def _determine_preview_strategy(collection, temporal_resolution, num_images, days_span, dataset=None):
     """
     Determine the best preview strategy based on temporal resolution and image count
 
@@ -771,6 +795,7 @@ def _determine_preview_strategy(collection, temporal_resolution, num_images, day
         temporal_resolution: String like 'Hourly', 'Daily', 'Monthly', 'Yearly', 'Static'
         num_images: Number of images in collection
         days_span: Number of days in date range
+        dataset: Dataset metadata dictionary for robust asset type detection
 
     Returns:
         Dictionary with strategy details:
@@ -781,8 +806,16 @@ def _determine_preview_strategy(collection, temporal_resolution, num_images, day
             'description': user-facing description
         }
     """
-    # Static data - show directly
-    if temporal_resolution == 'Static' or num_images == 1:
+    # Static data - use robust asset type detection
+    is_static = False
+    if dataset:
+        asset_type = get_gee_asset_type(dataset)
+        is_static = asset_type == 'static_image'
+    else:
+        # Fallback to old logic if no dataset provided
+        is_static = temporal_resolution == 'Static' or num_images == 1
+
+    if is_static:
         return {
             'type': 'direct',
             'method': 'single_image',
@@ -1030,8 +1063,9 @@ def _render_geemap_preview():
     end_date = st.session_state.end_date
     temporal_resolution = selected_dataset.get('temporal_resolution', 'Daily')
 
-    # Check if static or temporal dataset
-    is_static = temporal_resolution == 'Static'
+    # Check if static or temporal dataset using robust asset type detection
+    asset_type = get_gee_asset_type(selected_dataset)
+    is_static = asset_type == 'static_image'
 
     try:
         # Fetch the image or image collection
@@ -1081,9 +1115,9 @@ def _render_geemap_preview():
 
         # Determine preview strategy
         if is_static:
-            strategy = _determine_preview_strategy(None, 'Static', 1, 0)
+            strategy = _determine_preview_strategy(None, 'Static', 1, 0, selected_dataset)
         else:
-            strategy = _determine_preview_strategy(collection, temporal_resolution, num_images, days_span)
+            strategy = _determine_preview_strategy(collection, temporal_resolution, num_images, days_span, selected_dataset)
 
         # Show strategy to user
         st.info(f"📋 **Preview Strategy:** {strategy['description']}")
@@ -1404,7 +1438,10 @@ def _render_geemap_preview_lazy(start_date, end_date):
     selected_bands = st.session_state.selected_bands
     geometry = st.session_state.geometry_handler.current_geometry
     temporal_resolution = selected_dataset.get('temporal_resolution', 'Daily')
-    is_static = temporal_resolution == 'Static'
+
+    # Use robust asset type detection instead of unreliable temporal_resolution
+    asset_type = get_gee_asset_type(selected_dataset)
+    is_static = asset_type == 'static_image'
 
     # Band selector — pure UI, zero GEE calls
     if len(selected_bands) > 1:
@@ -2264,7 +2301,8 @@ def _process_download(export_format, scale):
             return False
 
         ee_id = dataset.get('ee_id')
-        snippet_type = dataset.get('snippet_type', 'Image')
+        # Use safe fallback to ImageCollection for 1042 datasets compatibility
+        snippet_type = dataset.get('snippet_type', 'ImageCollection')
 
         st.info(f"""
         **Processing Request:**
@@ -2787,8 +2825,14 @@ def _process_smart_download(export_format, scale, export_preference):
         st.info("⏳ Processing your Earth Engine data request...")
 
         with st.spinner("🌍 Fetching Earth Engine data..."):
-            # Handle different dataset types
-            if dataset.get('snippet_type') == 'ImageCollection':
+            # DEBUG: Check what dataset contains
+            print(f"🐛 DEBUG: dataset object = {dataset}")
+            print(f"🐛 DEBUG: dataset.get('snippet_type') = {repr(dataset.get('snippet_type'))}")
+            print(f"🐛 DEBUG: dataset.get('ee_id') = {repr(dataset.get('ee_id'))}")
+
+            # Handle different dataset types - robust check for ImageCollection (case insensitive)
+            snippet_type = dataset.get('snippet_type', 'ImageCollection')
+            if snippet_type and snippet_type.lower() in ['imagecollection'] or snippet_type in [None, '']:
                 # Get ImageCollection
                 fetcher = ImageCollectionFetcher(
                     ee_id=dataset['ee_id'],
