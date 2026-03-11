@@ -28,13 +28,13 @@ class MeteostatHandler:
         try:
             if self.stations_csv_path and Path(self.stations_csv_path).exists():
                 self.stations_df = pd.read_csv(self.stations_csv_path)
-                logging.info(f"Loaded {len(self.stations_df)} stations from {self.stations_csv_path}")
+                pass  # Stations loaded quietly
             else:
                 # Default path
                 default_path = Path(__file__).parent.parent / "data" / "meteostat_stations.csv"
                 if default_path.exists():
                     self.stations_df = pd.read_csv(default_path)
-                    logging.info(f"Loaded {len(self.stations_df)} stations from default path")
+                    pass  # Stations loaded quietly
                 else:
                     self.stations_df = pd.DataFrame()
                     logging.warning("No meteostat stations file found")
@@ -95,120 +95,81 @@ class MeteostatHandler:
     
     def get_station_data(self, station_id: str, variable: str, start_date: date, end_date: date) -> pd.DataFrame:
         """Get station data from meteostat using direct station ID approach
-        
+
         Args:
             station_id: Station identifier
             variable: Variable to fetch (prcp, tmax, tmin)
             start_date: Start date
             end_date: End date
-            
+
         Returns:
             DataFrame with station data
+
+        Raises:
+            ImportError: If meteostat library is not available
+            ValueError: If variable is not supported or data not found
         """
         try:
             from meteostat import Daily
             from datetime import datetime
-            
+
             # Convert date objects to datetime objects for meteostat
             if isinstance(start_date, date) and not isinstance(start_date, datetime):
                 start_datetime = datetime.combine(start_date, datetime.min.time())
             else:
                 start_datetime = start_date
-                
+
             if isinstance(end_date, date) and not isinstance(end_date, datetime):
                 end_datetime = datetime.combine(end_date, datetime.min.time())
             else:
                 end_datetime = end_date
-            
+
             # Use the simple direct approach as shown in your working example
             data = Daily(station_id, start_datetime, end_datetime)
             df = data.fetch()
-            
+
             if df.empty:
-                logging.warning(f"No data found for station {station_id}")
-                return pd.DataFrame()
-            
+                raise ValueError(f"No meteostat data found for station {station_id} between {start_date} and {end_date}")
+
             # Extract requested variable
             variable_map = {
                 'prcp': 'prcp',  # precipitation
                 'tmax': 'tmax',  # maximum temperature
                 'tmin': 'tmin'   # minimum temperature
             }
-            
+
             if variable not in variable_map:
-                logging.error(f"Variable {variable} not supported")
-                return pd.DataFrame()
-            
+                raise ValueError(f"Variable {variable} not supported. Supported variables: {list(variable_map.keys())}")
+
             meteostat_var = variable_map[variable]
-            
+
             if meteostat_var not in df.columns:
-                logging.error(f"Variable {meteostat_var} not found in data")
-                return pd.DataFrame()
-            
+                raise ValueError(f"Variable {meteostat_var} not available for station {station_id}")
+
             # Prepare output DataFrame in expected format
             result_df = pd.DataFrame({
                 'date': df.index,
                 'station_id': station_id,
                 'value': df[meteostat_var]
             })
-            
+
             # Remove NaN values
             result_df = result_df.dropna(subset=['value'])
-            
+
             # Reset index to ensure proper DataFrame structure
             result_df = result_df.reset_index(drop=True)
-            
-            logging.info(f"Retrieved {len(result_df)} records for station {station_id}")
+
+            if result_df.empty:
+                raise ValueError(f"No valid data records found for station {station_id} and variable {variable}")
+
+            logging.info(f"📍 Retrieved {len(result_df)} records from Meteostat station {station_id}")
             return result_df
-            
-        except ImportError:
-            logging.error("Meteostat library not available. Please install it: pip install meteostat")
-            # Fallback: create sample data for testing
-            logging.info(f"Creating sample data for testing station {station_id}")
-            return self._create_sample_station_data(station_id, variable, start_date, end_date)
+
+        except ImportError as e:
+            raise ImportError("❌ Meteostat library not available. Please install it: pip install meteostat") from e
         except Exception as e:
-            logging.error(f"Error fetching station data: {str(e)}")
-            # Fallback: create sample data for testing
-            logging.info(f"Creating sample data for testing station {station_id}")
-            return self._create_sample_station_data(station_id, variable, start_date, end_date)
+            raise RuntimeError(f"❌ Error fetching station data for {station_id}: {str(e)}") from e
     
-    def _create_sample_station_data(self, station_id: str, variable: str, start_date: date, end_date: date) -> pd.DataFrame:
-        """Create sample station data for testing purposes"""
-        try:
-            import numpy as np
-            
-            # Generate date range
-            date_range = pd.date_range(start=start_date, end=end_date, freq='D')
-            
-            # Generate sample values based on variable type
-            np.random.seed(hash(station_id) % 2**32)  # Consistent random data per station
-            
-            if variable == 'prcp':
-                # Precipitation: mostly zeros with occasional rain events
-                values = np.random.exponential(0.5, len(date_range))
-                values = np.where(np.random.random(len(date_range)) < 0.7, 0, values)  # 70% dry days
-            elif variable == 'tmax':
-                # Maximum temperature: seasonal variation
-                day_of_year = date_range.dayofyear
-                base_temp = 15 + 10 * np.sin(2 * np.pi * (day_of_year - 80) / 365)  # Seasonal cycle
-                values = base_temp + np.random.normal(0, 3, len(date_range))  # Add noise
-            elif variable == 'tmin':
-                # Minimum temperature: cooler than tmax
-                day_of_year = date_range.dayofyear
-                base_temp = 5 + 8 * np.sin(2 * np.pi * (day_of_year - 80) / 365)  # Seasonal cycle
-                values = base_temp + np.random.normal(0, 2.5, len(date_range))  # Add noise
-            else:
-                values = np.random.normal(0, 1, len(date_range))
-            
-            return pd.DataFrame({
-                'date': date_range,
-                'station_id': station_id,
-                'value': values
-            })
-            
-        except Exception as e:
-            logging.error(f"Error creating sample data: {str(e)}")
-            return pd.DataFrame()
     
     def validate_custom_data(self, metadata_df: pd.DataFrame, data_df: pd.DataFrame) -> Tuple[bool, str]:
         """Validate custom station data format
@@ -354,7 +315,6 @@ class GriddedDataHandler:
                 df_converted['original_units'] = json_conversion["original_unit"]
                 df_converted['converted_units'] = json_conversion["unit"]
 
-                logging.info(f"Converted {dataset_id} using JSON: {json_conversion['original_unit']} -> {json_conversion['unit']}")
                 return df_converted
 
             except Exception as e:
@@ -385,9 +345,11 @@ class GriddedDataHandler:
 
                 # Find dataset and get conversion info
                 for ee_id, dataset_info in datasets_config["datasets"].items():
+                    # Get dataset name - handle both JSON format ("name") and UI format ("Dataset Name")
+                    dataset_name = dataset_info.get("name", dataset_info.get("Dataset Name", ""))
                     if dataset_id == ee_id or \
-                       (dataset_id == "daymet" and "daymet" in dataset_info["name"].lower()) or \
-                       (dataset_id == "era5" and "era5" in dataset_info["name"].lower()):
+                       (dataset_id == "daymet" and "daymet" in dataset_name.lower()) or \
+                       (dataset_id == "era5" and "era5" in dataset_name.lower()):
 
                         if json_variable in dataset_info["bands"]:
                             band_info = dataset_info["bands"][json_variable]
@@ -448,8 +410,6 @@ class GriddedDataHandler:
             # Add unit information to the DataFrame
             df_converted['original_units'] = source_units
             df_converted['converted_units'] = conversion_config['target']
-
-            logging.info(f"Converted {dataset_id} from {source_units} to {conversion_config['target']}")
 
             return df_converted
 
@@ -757,11 +717,11 @@ class GriddedDataHandler:
 
             # Check collection size first
             collection_size = collection.size().getInfo()
-            logging.info(f"Collection size for {ee_id}: {collection_size} images")
-
             if collection_size > 1000:
-                logging.warning(f"Large collection detected ({collection_size} images). Using chunked processing.")
+                logging.info(f"📊 Large dataset detected ({collection_size:,} images). Using chunked processing for optimal performance...")
                 return self._get_point_data_chunked(ee_id, bands, point_coords, start_date, end_date, variable)
+            else:
+                logging.info(f"📊 Processing {collection_size} images from Google Earth Engine...")
 
             # Select bands
             if bands and bands != ['auto-detect']:
@@ -823,12 +783,11 @@ class GriddedDataHandler:
             # Apply unit conversions
             df = self.apply_unit_conversion(df, ee_id, variable)
             
-            logging.info(f"Retrieved {len(df)} records from {ee_id}")
+            logging.info(f"✅ Retrieved {len(df)} records from {dataset_id} ({ee_id})")
             return df
             
         except Exception as e:
-            logging.error(f"Error extracting gridded data: {str(e)}")
-            return pd.DataFrame()
+            raise RuntimeError(f"❌ Error extracting gridded data from Google Earth Engine: {str(e)}") from e
     
     def _get_point_data_chunked(self, ee_id: str, bands: List[str], point_coords: Tuple[float, float], 
                                start_date: date, end_date: date, variable: str) -> pd.DataFrame:
@@ -841,19 +800,35 @@ class GriddedDataHandler:
             chunk_size_days = 90
             current_date = start_date
             all_results = []
-            
+
+            total_days = (end_date - start_date).days
+            total_chunks = (total_days // chunk_size_days) + 1
+            chunk_num = 0
+
+            print(f"📦 Processing large dataset in {total_chunks} chunks of ~{chunk_size_days} days each...")
+            logging.info(f"📦 Processing large dataset in {total_chunks} chunks of ~{chunk_size_days} days each...")
+
             while current_date <= end_date:
                 chunk_end = min(current_date + timedelta(days=chunk_size_days), end_date)
-                
+                chunk_num += 1
+
                 try:
+                    if chunk_num % 10 == 1:  # Print every 10th chunk to avoid spam
+                        print(f"  📦 Processing chunk {chunk_num}/{total_chunks}: {current_date} to {chunk_end}")
+                    logging.info(f"  📦 Processing chunk {chunk_num}/{total_chunks}: {current_date} to {chunk_end}")
                     # Process chunk
                     chunk_data = self._process_chunk(ee_id, bands, point_coords, current_date, chunk_end)
                     if not chunk_data.empty:
                         all_results.append(chunk_data)
-                        
+                        if chunk_num % 10 == 0:  # Print every 10th completion
+                            print(f"    ✅ Chunk {chunk_num} completed: {len(chunk_data)} records")
+                        logging.info(f"    ✅ Chunk {chunk_num} completed: {len(chunk_data)} records")
+                    else:
+                        logging.info(f"    ⚠️ Chunk {chunk_num}: No data found")
+
                 except Exception as e:
-                    logging.warning(f"Error processing chunk {current_date} to {chunk_end}: {str(e)}")
-                
+                    logging.warning(f"    ❌ Error processing chunk {chunk_num}: {str(e)}")
+
                 current_date = chunk_end + timedelta(days=1)
             
             # Combine all chunks
@@ -864,15 +839,15 @@ class GriddedDataHandler:
                 # Apply unit conversions
                 final_df = self.apply_unit_conversion(final_df, ee_id, variable)
                 
-                logging.info(f"Retrieved {len(final_df)} records from {ee_id} using chunked processing")
+                print(f"✅ Retrieved {len(final_df)} total records using chunked processing")
+                logging.info(f"✅ Retrieved {len(final_df)} records using chunked processing")
                 return final_df
             else:
                 logging.warning(f"No data retrieved from {ee_id}")
                 return pd.DataFrame()
                 
         except Exception as e:
-            logging.error(f"Error in chunked processing: {str(e)}")
-            return pd.DataFrame()
+            raise RuntimeError(f"❌ Error in chunked processing of Google Earth Engine data: {str(e)}") from e
     
     def _process_chunk(self, ee_id: str, bands: List[str], point_coords: Tuple[float, float],
                       start_date: date, end_date: date) -> pd.DataFrame:
@@ -956,13 +931,12 @@ class GriddedDataHandler:
             return pd.DataFrame(results)
             
         except Exception as e:
-            logging.error(f"Error processing chunk: {str(e)}")
-            return pd.DataFrame()
+            raise RuntimeError(f"❌ Error processing chunk from Google Earth Engine: {str(e)}") from e
     
     def get_gridded_data(self, dataset_id: str, variable: str, latitude: float, longitude: float,
                         start_date: date, end_date: date) -> pd.DataFrame:
-        """Get gridded data for a specific location and time period
-        
+        """Get gridded data for a specific location and time period from Google Earth Engine
+
         Args:
             dataset_id: Dataset identifier
             variable: Variable to fetch (prcp, tmax, tmin)
@@ -970,103 +944,56 @@ class GriddedDataHandler:
             longitude: Longitude coordinate
             start_date: Start date
             end_date: End date
-            
+
         Returns:
             DataFrame with gridded data
+
+        Raises:
+            FileNotFoundError: If datasets.json configuration file is not found
+            ValueError: If dataset or variable is not supported
+            RuntimeError: If data extraction fails
         """
+        # Load datasets.json (required - no fallback)
+        datasets_path = Path(__file__).parent.parent / "data" / "datasets.json"
+
+        if not datasets_path.exists():
+            raise FileNotFoundError("❌ datasets.json configuration file not found! Cannot proceed without dataset configuration.")
+
         try:
-            # Load datasets.json (required - no fallback)
-            datasets_path = Path(__file__).parent.parent / "data" / "datasets.json"
-
-            if not datasets_path.exists():
-                logging.error("datasets.json not found! Cannot proceed without dataset configuration.")
-                return self._create_sample_gridded_data(dataset_id, variable, start_date, end_date)
-
-            try:
-                with open(datasets_path, 'r') as f:
-                    datasets_config = json.load(f)
-
-                # Map dataset_id to Earth Engine ID and get band info
-                ee_mapping = self._get_ee_mapping_from_json(datasets_config["datasets"], dataset_id, variable)
-
-                if ee_mapping:
-                    return self.get_point_data(
-                        ee_id=ee_mapping["ee_id"],
-                        bands=[ee_mapping["band_name"]],
-                        point_coords=(longitude, latitude),
-                        start_date=start_date,
-                        end_date=end_date,
-                        variable=variable
-                    )
-                else:
-                    logging.warning(f"Dataset {dataset_id} with variable {variable} not found in datasets.json")
-                    return self._create_sample_gridded_data(dataset_id, variable, start_date, end_date)
-
-            except Exception as e:
-                logging.error(f"Error loading datasets.json: {str(e)}")
-                return self._create_sample_gridded_data(dataset_id, variable, start_date, end_date)
-            
+            with open(datasets_path, 'r') as f:
+                datasets_config = json.load(f)
         except Exception as e:
-            logging.error(f"Error getting gridded data: {str(e)}")
-            # Fallback: create sample gridded data for testing
-            logging.info(f"Creating sample gridded data for testing dataset {dataset_id}")
-            return self._create_sample_gridded_data(dataset_id, variable, start_date, end_date)
+            raise RuntimeError(f"❌ Error loading datasets.json configuration: {str(e)}") from e
+
+        # Map dataset_id to Earth Engine ID and get band info
+        # Note: datasets_config["datasets"] has the JSON format, but we need to use it properly
+        ee_mapping = self._get_ee_mapping_from_json(datasets_config["datasets"], dataset_id, variable)
+
+        if not ee_mapping:
+            raise ValueError(f"❌ Dataset '{dataset_id}' with variable '{variable}' not found in datasets.json configuration")
+
+        try:
+            result_df = self.get_point_data(
+                ee_id=ee_mapping["ee_id"],
+                bands=[ee_mapping["band_name"]],
+                point_coords=(longitude, latitude),
+                start_date=start_date,
+                end_date=end_date,
+                variable=variable
+            )
+
+            if result_df.empty:
+                raise ValueError(f"❌ No data retrieved from Google Earth Engine for dataset '{dataset_id}' at coordinates [{latitude}, {longitude}]")
+
+            return result_df
+
+        except Exception as e:
+            raise RuntimeError(f"❌ Error extracting data from Google Earth Engine for dataset '{dataset_id}': {str(e)}") from e
     
-    def _create_sample_gridded_data(self, dataset_id: str, variable: str, start_date: date, end_date: date) -> pd.DataFrame:
-        """Create sample gridded data for testing purposes"""
-        try:
-            import numpy as np
-            
-            # Generate date range
-            date_range = pd.date_range(start=start_date, end=end_date, freq='D')
-            
-            # Generate sample values based on variable type and dataset
-            np.random.seed(hash(dataset_id) % 2**32)  # Consistent random data per dataset
-            
-            if variable == 'prcp':
-                # Precipitation: mostly zeros with occasional rain events
-                values = np.random.exponential(0.4, len(date_range))
-                values = np.where(np.random.random(len(date_range)) < 0.75, 0, values)  # 75% dry days
-                # Add dataset-specific bias
-                if dataset_id == 'daymet':
-                    values *= 1.1  # Slightly higher
-                elif dataset_id == 'chirps':
-                    values *= 0.9  # Slightly lower
-            elif variable == 'tmax':
-                # Maximum temperature: seasonal variation
-                day_of_year = date_range.dayofyear
-                base_temp = 18 + 12 * np.sin(2 * np.pi * (day_of_year - 80) / 365)  # Seasonal cycle
-                values = base_temp + np.random.normal(0, 2.5, len(date_range))  # Add noise
-                # Add dataset-specific bias
-                if dataset_id == 'era5':
-                    values += 1.0  # Warmer bias
-                elif dataset_id == 'gridmet':
-                    values -= 0.5  # Cooler bias
-            elif variable == 'tmin':
-                # Minimum temperature: cooler than tmax
-                day_of_year = date_range.dayofyear
-                base_temp = 8 + 10 * np.sin(2 * np.pi * (day_of_year - 80) / 365)  # Seasonal cycle
-                values = base_temp + np.random.normal(0, 2, len(date_range))  # Add noise
-                # Add dataset-specific bias
-                if dataset_id == 'era5':
-                    values += 0.8  # Warmer bias
-                elif dataset_id == 'gridmet':
-                    values -= 0.3  # Cooler bias
-            else:
-                values = np.random.normal(0, 1, len(date_range))
-            
-            return pd.DataFrame({
-                'date': date_range,
-                'dataset': dataset_id,
-                'value': values
-            })
-            
-        except Exception as e:
-            logging.error(f"Error creating sample gridded data: {str(e)}")
-            return pd.DataFrame()
 
     def _get_ee_mapping_from_json(self, datasets_dict, dataset_id, variable):
         """Map dataset_id to Earth Engine collection and band from JSON"""
+
 
         # Variable mapping: Product Selector -> JSON
         variable_map = {
@@ -1094,7 +1021,9 @@ class GriddedDataHandler:
 
         # Try to find dataset by name patterns
         for ee_id, dataset_info in datasets_dict.items():
-            dataset_name_lower = dataset_info["name"].lower()
+            # Get dataset name - handle both JSON format ("name") and UI format ("Dataset Name")
+            dataset_name = dataset_info.get("name", dataset_info.get("Dataset Name", ""))
+            dataset_name_lower = dataset_name.lower()
             dataset_id_lower = dataset_id.lower()
 
             # Match by common name patterns
@@ -1107,7 +1036,7 @@ class GriddedDataHandler:
                (dataset_id_lower == "imerg" and "imerg" in dataset_name_lower) or \
                (dataset_id_lower == "cpc" and "cpc" in dataset_name_lower) or \
                (dataset_id_lower in dataset_name_lower) or \
-               (dataset_id == dataset_info["name"]):
+               (dataset_id == dataset_name):
 
                 if json_variable in dataset_info["bands"]:
                     band_info = dataset_info["bands"][json_variable]
