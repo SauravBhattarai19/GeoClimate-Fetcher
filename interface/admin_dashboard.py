@@ -59,7 +59,7 @@ def render_admin_dashboard():
                 height=400,
                 xaxis_tickangle=-45
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
             st.info("No country data yet")
 
@@ -72,7 +72,7 @@ def render_admin_dashboard():
                 color_discrete_sequence=px.colors.sequential.Teal
             )
             fig.update_layout(height=400)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
             st.info("No purpose data yet")
 
@@ -98,7 +98,7 @@ def render_admin_dashboard():
                 height=400,
                 xaxis_tickangle=-45
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
         with col2:
             # Table
@@ -121,7 +121,7 @@ def render_admin_dashboard():
                 list(stats['countries'].items()),
                 columns=['Country', 'Users']
             ).sort_values('Users', ascending=False)
-            st.dataframe(df, use_container_width=True)
+            st.dataframe(df, width="stretch")
         else:
             st.info("No data")
 
@@ -132,7 +132,7 @@ def render_admin_dashboard():
                 list(stats['purposes'].items()),
                 columns=['Use Case', 'Users']
             ).sort_values('Users', ascending=False)
-            st.dataframe(df, use_container_width=True)
+            st.dataframe(df, width="stretch")
         else:
             st.info("No data")
 
@@ -143,7 +143,7 @@ def render_admin_dashboard():
                 list(stats['institutions'].items()),
                 columns=['Institution', 'Users']
             ).sort_values('Users', ascending=False)
-            st.dataframe(df, use_container_width=True)
+            st.dataframe(df, width="stretch")
         else:
             st.info("No data")
 
@@ -155,7 +155,7 @@ def render_admin_dashboard():
     st.markdown("---")
     st.markdown("### 💾 Export Data")
 
-    if st.button("📥 Download Full Report (JSON)", use_container_width=True):
+    if st.button("📥 Download Full Report (JSON)", width="stretch"):
         import json
         json_str = json.dumps(stats, indent=2)
         st.download_button(

@@ -226,7 +226,7 @@ def _render_direct_csv_preview(file_data: Dict):
 
     # Show data preview
     st.markdown("**Data Preview:**")
-    st.dataframe(data.head(5), use_container_width=True)
+    st.dataframe(data.head(5), width="stretch")
 
     # Show column information
     numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
@@ -380,7 +380,7 @@ def process_csv_file(uploaded_file, format_info: Dict) -> Dict:
 
         # Show data preview
         st.markdown("**Data Preview:**")
-        st.dataframe(df.head(10), use_container_width=True)
+        st.dataframe(df.head(10), width="stretch")
 
         # Show column information
         st.markdown("**Column Information:**")
@@ -948,7 +948,7 @@ def render_time_series_viz(df: pd.DataFrame, column_suggestions: Dict):
             x_title=date_col,
             y_title="Values"
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
         # Pattern detection
         if len(value_cols) == 1:
@@ -1020,12 +1020,12 @@ def render_distribution_viz(df: pd.DataFrame, column_suggestions: Dict):
     if selected_col:
         # Create distribution plot
         fig = create_distribution_plot(df, selected_col, plot_type)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
         # Show statistics
         st.markdown("#### 📊 Statistical Summary")
         stats = create_statistical_summary(df, [selected_col])
-        st.dataframe(stats, use_container_width=True)
+        st.dataframe(stats, width="stretch")
 
 
 def render_correlation_viz(df: pd.DataFrame, column_suggestions: Dict):
@@ -1046,12 +1046,12 @@ def render_correlation_viz(df: pd.DataFrame, column_suggestions: Dict):
     if len(selected_cols) >= 2:
         # Create correlation heatmap
         fig = create_correlation_heatmap(df, selected_cols)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
         # Show correlation table
         st.markdown("#### 📊 Correlation Coefficients")
         corr_matrix = df[selected_cols].corr()
-        st.dataframe(corr_matrix, use_container_width=True)
+        st.dataframe(corr_matrix, width="stretch")
 
 
 def render_summary_viz(df: pd.DataFrame, file_data: Dict):
@@ -1100,7 +1100,7 @@ def render_summary_viz(df: pd.DataFrame, file_data: Dict):
             'Missing Count': missing_data.values,
             'Missing %': (missing_data.values / len(df)) * 100
         }).round(2)
-        st.dataframe(missing_df, use_container_width=True)
+        st.dataframe(missing_df, width="stretch")
     else:
         st.success("✅ No missing values detected!")
 
@@ -1108,7 +1108,7 @@ def render_summary_viz(df: pd.DataFrame, file_data: Dict):
     st.markdown("#### 📊 Statistical Summary")
     full_stats = create_statistical_summary(df, df.select_dtypes(include=[np.number]).columns.tolist())
     if not full_stats.empty:
-        st.dataframe(full_stats, use_container_width=True)
+        st.dataframe(full_stats, width="stretch")
 
 
 def render_comprehensive_time_series_viz(df: pd.DataFrame, column_suggestions: Dict):
@@ -1148,7 +1148,7 @@ def render_comprehensive_time_series_viz(df: pd.DataFrame, column_suggestions: D
             x_title=date_col,
             y_title="Values"
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
         # Pattern detection and basic trend
         if len(value_cols) == 1:
@@ -1276,7 +1276,7 @@ def render_enhanced_correlation_viz(df: pd.DataFrame, column_suggestions: Dict):
     if len(selected_cols) >= 2:
         # Create correlation heatmap
         fig = create_correlation_heatmap(df, selected_cols)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
         # Show correlation table with highlighting
         st.markdown("#### 📊 Correlation Matrix")
@@ -1294,7 +1294,7 @@ def render_enhanced_correlation_viz(df: pd.DataFrame, column_suggestions: Dict):
                 return ''
 
         styled_corr = corr_matrix.style.map(highlight_correlations)
-        st.dataframe(styled_corr, use_container_width=True)
+        st.dataframe(styled_corr, width="stretch")
 
         # Correlation insights
         st.markdown("#### 🔍 Correlation Insights")
@@ -1434,7 +1434,7 @@ def render_trend_analysis_viz(df: pd.DataFrame, column_suggestions: Dict):
         xaxis_title=date_col, yaxis_title=value_col,
         height=350, template='plotly_white', margin=dict(t=20)
     )
-    st.plotly_chart(fig_preview, use_container_width=True)
+    st.plotly_chart(fig_preview, width="stretch")
 
     # ── Mann-Kendall — opt-in only ──────────────────────────────────────────
     st.markdown("---")
@@ -1528,7 +1528,7 @@ def render_trend_analysis_viz(df: pd.DataFrame, column_suggestions: Dict):
             xaxis_title=date_col, yaxis_title=value_col,
             height=380, template='plotly_white', margin=dict(t=20)
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
 
 # Removed complex band naming and categorization functions to keep it simple
@@ -1659,7 +1659,7 @@ def render_csv_visualization(file_data: Dict, file_name: str):
                 render_comprehensive_time_series_viz(df, column_suggestions)
             except Exception as e:
                 st.error(f"❌ Error in Time Series visualization: {str(e)}")
-                st.dataframe(df.head(10), use_container_width=True)
+                st.dataframe(df.head(10), width="stretch")
         tab_idx += 1
 
         # Spatial Map Tab (if spatial data exists)
@@ -1669,7 +1669,7 @@ def render_csv_visualization(file_data: Dict, file_name: str):
                     render_spatial_csv_viz(df, spatial_cols, column_suggestions)
                 except Exception as e:
                     st.error(f"❌ Error in Spatial Map visualization: {str(e)}")
-                    st.dataframe(df.head(10), use_container_width=True)
+                    st.dataframe(df.head(10), width="stretch")
             tab_idx += 1
 
         # Distribution Tab
@@ -1678,7 +1678,7 @@ def render_csv_visualization(file_data: Dict, file_name: str):
                 render_distribution_viz(df, column_suggestions)
             except Exception as e:
                 st.error(f"❌ Error in Distribution visualization: {str(e)}")
-                st.dataframe(df.head(10), use_container_width=True)
+                st.dataframe(df.head(10), width="stretch")
         tab_idx += 1
 
         # Correlation Tab
@@ -1687,7 +1687,7 @@ def render_csv_visualization(file_data: Dict, file_name: str):
                 render_enhanced_correlation_viz(df, column_suggestions)
             except Exception as e:
                 st.error(f"❌ Error in Correlation visualization: {str(e)}")
-                st.dataframe(df.head(10), use_container_width=True)
+                st.dataframe(df.head(10), width="stretch")
         tab_idx += 1
 
         # Trend Analysis Tab
@@ -1697,7 +1697,7 @@ def render_csv_visualization(file_data: Dict, file_name: str):
             except Exception as e:
                 st.error(f"❌ Error in Trend Analysis visualization: {str(e)}")
                 st.info("💡 This is likely due to date format issues. The trend analysis has been updated with better error handling.")
-                st.dataframe(df.head(10), use_container_width=True)
+                st.dataframe(df.head(10), width="stretch")
         tab_idx += 1
 
         # Summary Tab
@@ -1706,13 +1706,13 @@ def render_csv_visualization(file_data: Dict, file_name: str):
                 render_summary_viz(df, file_data)
             except Exception as e:
                 st.error(f"❌ Error in Summary visualization: {str(e)}")
-                st.dataframe(df.head(10), use_container_width=True)
+                st.dataframe(df.head(10), width="stretch")
 
     except Exception as e:
         st.error(f"❌ Error displaying CSV data: {str(e)}")
         # Show basic info as fallback
         st.markdown("#### 📋 Data Preview")
-        st.dataframe(df.head(10), use_container_width=True)
+        st.dataframe(df.head(10), width="stretch")
 
 
 def _extract_temporal_info(filename: str) -> Dict:

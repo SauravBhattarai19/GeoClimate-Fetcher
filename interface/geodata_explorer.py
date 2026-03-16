@@ -152,14 +152,14 @@ def render_geodata_explorer():
         st.markdown("---")
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("🔄 Start New Download", type="secondary", use_container_width=True):
+            if st.button("🔄 Start New Download", type="secondary", width="stretch"):
                 # Clear post-download state and reset workflow
                 st.session_state.post_download_active = False
                 st.session_state.post_download_results = []
                 _reset_all_selections()
                 st.rerun()
         with col2:
-            if st.button("❌ Dismiss Results", type="secondary", use_container_width=True):
+            if st.button("❌ Dismiss Results", type="secondary", width="stretch"):
                 # Just clear post-download state, keep workflow state
                 st.session_state.post_download_active = False
                 st.session_state.post_download_results = []
@@ -370,9 +370,9 @@ def _render_band_selection():
             # Quick select all/none
             col_a, col_b = st.columns(2)
             with col_a:
-                select_all = st.button("✅ All", help="Select all visible bands", use_container_width=True)
+                select_all = st.button("✅ All", help="Select all visible bands", width="stretch")
             with col_b:
-                select_none = st.button("❌ None", help="Deselect all", use_container_width=True)
+                select_none = st.button("❌ None", help="Deselect all", width="stretch")
 
         # Filter bands based on search
         if band_search:
@@ -454,7 +454,7 @@ def _render_band_selection():
             # Load more button
             if len(filtered_bands) > show_count:
                 remaining = len(filtered_bands) - show_count
-                if st.button(f"⬇️ Load {min(15, remaining)} more bands", use_container_width=True):
+                if st.button(f"⬇️ Load {min(15, remaining)} more bands", width="stretch"):
                     st.session_state.band_show_count += 15
                     st.rerun()
 
@@ -1839,7 +1839,7 @@ def _render_download_interface():
     col1, col2, col3 = st.columns([1, 2, 1])
 
     with col2:
-        if st.button("🚀 Start Smart Download", type="primary", use_container_width=True):
+        if st.button("🚀 Start Smart Download", type="primary", width="stretch"):
             # Route CSV downloads through optimized path
             if export_format == 'CSV':
                 if export_preference == 'drive':
@@ -1912,12 +1912,12 @@ def _render_download_results_interface():
             file_name=results['filename'],
             mime=results['mime_type'],
             type="primary",
-            use_container_width=True,
+            width="stretch",
             help="Download the same file again"
         )
 
     with col2:
-        if st.button("📊 Go to Visualization", use_container_width=True, type="primary"):
+        if st.button("📊 Go to Visualization", width="stretch", type="primary"):
             try:
                 _launch_visualization_from_results()
             except Exception as e:
@@ -1933,21 +1933,21 @@ def _render_download_results_interface():
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        if st.button("🔄 Change Format / Resolution", use_container_width=True):
+        if st.button("🔄 Change Format / Resolution", width="stretch"):
             # Back to download config — keep all selections, just redo the download
             st.session_state.download_complete = False
             st.session_state.download_results = None
             st.rerun()
 
     with col2:
-        if st.button("🎛️ Change Bands", use_container_width=True):
+        if st.button("🎛️ Change Bands", width="stretch"):
             # Go back to band selection
             st.session_state.download_complete = False
             st.session_state.download_results = None
             go_back_to_step("bands")
 
     with col3:
-        if st.button("🆕 Start New Download", use_container_width=True):
+        if st.button("🆕 Start New Download", width="stretch"):
             # Reset everything for a brand-new study
             st.session_state.download_complete = False
             st.session_state.download_results = None
@@ -2349,7 +2349,7 @@ def _process_download(export_format, scale):
                 col1, col2 = st.columns(2)
 
                 with col1:
-                    if st.button("📊 Visualize Data", type="primary", use_container_width=True):
+                    if st.button("📊 Visualize Data", type="primary", width="stretch"):
                         # Prepare data for immediate visualization
                         try:
                             _launch_early_visualization(result, dataset, export_format, scale)
@@ -2945,7 +2945,7 @@ def _process_smart_download(export_format, scale, export_preference):
                         st.markdown("### 🎯 Quick Actions")
                         col1, col2 = st.columns(2)
                         with col1:
-                            if st.button("📊 Visualize Data", type="primary", use_container_width=True):
+                            if st.button("📊 Visualize Data", type="primary", width="stretch"):
                                 try:
                                     _launch_early_visualization(download_results, dataset, export_format, scale)
                                 except Exception as viz_error:
@@ -2957,7 +2957,7 @@ def _process_smart_download(export_format, scale, export_preference):
                                 file_name=filename,
                                 mime="text/csv",
                                 type="secondary",
-                                use_container_width=True
+                                width="stretch"
                             )
                         return
 
@@ -3056,7 +3056,7 @@ def _process_smart_download(export_format, scale, export_preference):
                     col1, col2 = st.columns(2)
 
                     with col1:
-                        if st.button("📊 Visualize Smart Download", type="primary", use_container_width=True):
+                        if st.button("📊 Visualize Smart Download", type="primary", width="stretch"):
                             # Prepare data for immediate visualization
                             try:
                                 _launch_visualization_from_results()

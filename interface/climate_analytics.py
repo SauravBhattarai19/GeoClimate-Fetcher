@@ -161,7 +161,7 @@ def _render_analysis_type_selection():
         </div>
         """, unsafe_allow_html=True)
         
-        if st.button("🌧️ Analyze Precipitation", use_container_width=True, type="primary"):
+        if st.button("🌧️ Analyze Precipitation", width="stretch", type="primary"):
             st.session_state.climate_analysis_type = "precipitation"
             st.session_state.climate_step = 2
             st.rerun()
@@ -178,7 +178,7 @@ def _render_analysis_type_selection():
         </div>
         """, unsafe_allow_html=True)
         
-        if st.button("🌡️ Analyze Temperature", use_container_width=True, type="primary"):
+        if st.button("🌡️ Analyze Temperature", width="stretch", type="primary"):
             st.session_state.climate_analysis_type = "temperature"
             st.session_state.climate_step = 2
             st.rerun()
@@ -476,19 +476,19 @@ def _render_climate_results():
 
         col1, col2, col3 = st.columns(3)
         with col1:
-            if st.button("🗺️ Visualize Spatial Data", use_container_width=True, type="primary",
+            if st.button("🗺️ Visualize Spatial Data", width="stretch", type="primary",
                         help="Create interactive maps and spatial visualizations"):
                 # Launch visualization with climate results
                 _launch_climate_visualization(results)
 
         with col2:
-            if st.button("📁 Download Files", use_container_width=True,
+            if st.button("📁 Download Files", width="stretch",
                         help="Download data files for offline analysis"):
                 # Scroll to download section
                 st.markdown('<div id="download-section"></div>', unsafe_allow_html=True)
 
         with col3:
-            if st.button("🔄 Re-run Analysis", use_container_width=True,
+            if st.button("🔄 Re-run Analysis", width="stretch",
                         help="Start over with different parameters"):
                 # Clear existing results and re-run with current selections
                 st.session_state.climate_analysis_complete = False
@@ -510,13 +510,13 @@ def _render_climate_results():
         _show_download_options(results)
 
         with col3:
-            if st.button("🆕 Start New Analysis", use_container_width=True):
+            if st.button("🆕 Start New Analysis", width="stretch"):
                 _reset_climate_analysis()
                 st.rerun()
 
     else:
         # Analysis not yet run - show run button
-        if st.button("🚀 Start Analysis", type="primary", use_container_width=True):
+        if st.button("🚀 Start Analysis", type="primary", width="stretch"):
             _run_climate_analysis()
 
         # Reset button
@@ -608,7 +608,7 @@ def _load_and_display_climate_datasets(analysis_type):
 
         # Continue button
         if selected_dataset_id:
-            if st.button("Continue to Time Period Selection", type="primary", use_container_width=True):
+            if st.button("Continue to Time Period Selection", type="primary", width="stretch"):
                 # Store the selected dataset configuration
                 selected_dataset_config = {
                     'id': selected_dataset_id,
@@ -652,7 +652,7 @@ def _render_precipitation_indices():
     # Quick selection buttons
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("🔄 Clear All", use_container_width=True):
+        if st.button("🔄 Clear All", width="stretch"):
             for idx_key in all_indices.keys():
                 st.session_state[f"idx_{idx_key}"] = False
             st.rerun()
@@ -837,7 +837,7 @@ def _render_precipitation_indices():
 
         st.success(f"✅ **{len(selected_indices)} precipitation indices selected**")
 
-        if st.button("Continue to Export Configuration", type="primary", use_container_width=True):
+        if st.button("Continue to Export Configuration", type="primary", width="stretch"):
             st.session_state.climate_selected_indices = selected_indices
             st.session_state.climate_indices_selected = True
             st.rerun()
@@ -863,7 +863,7 @@ def _render_temperature_indices():
     # Quick selection buttons
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("🔄 Clear All", use_container_width=True):
+        if st.button("🔄 Clear All", width="stretch"):
             for idx_key in all_indices.keys():
                 st.session_state[f"idx_{idx_key}"] = False
             st.rerun()
@@ -1058,7 +1058,7 @@ def _render_temperature_indices():
 
         st.success(f"✅ **{len(selected_indices)} temperature indices selected**")
 
-        if st.button("Continue to Export Configuration", type="primary", use_container_width=True):
+        if st.button("Continue to Export Configuration", type="primary", width="stretch"):
             st.session_state.climate_selected_indices = selected_indices
             st.session_state.climate_indices_selected = True
             st.rerun()
@@ -1234,7 +1234,7 @@ def _render_export_configuration():
         st.markdown(f"**Ready:** {method_names[export_method]} • {current_res} spatial • {temporal_res} temporal")
 
     with col2:
-        if st.button("🚀 Start Analysis", type="primary", use_container_width=True):
+        if st.button("🚀 Start Analysis", type="primary", width="stretch"):
             # Store export configuration
             st.session_state.climate_export_method = export_method
             st.session_state.climate_spatial_scale = selected_scale
@@ -1390,7 +1390,7 @@ def _run_climate_analysis():
                             file_name=f"climate_timeseries_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                             mime="text/csv",
                             help="Download temporal data for all indices",
-                            use_container_width=True,
+                            width="stretch",
                             key="climate_temporal_csv_download"
                         )
 
@@ -1402,7 +1402,7 @@ def _run_climate_analysis():
                             file_name=f"climate_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
                             mime="text/plain",
                             help="Download comprehensive analysis report",
-                            use_container_width=True,
+                            width="stretch",
                             key="climate_analysis_report_download"
                         )
 
@@ -1430,7 +1430,7 @@ def _run_climate_analysis():
                         st.session_state.climate_spatial_export_complete = False
 
                     if not st.session_state.climate_spatial_export_complete:
-                        if st.button("📥 Download GeoTIFF Files", type="primary", use_container_width=True,
+                        if st.button("📥 Download GeoTIFF Files", type="primary", width="stretch",
                                     help="Download spatial GeoTIFF files for offline analysis in GIS software",
                                     key="proceed_spatial_export"):
                             # Execute spatial export with 50MB error learning
@@ -1441,7 +1441,7 @@ def _run_climate_analysis():
                         if 'climate_spatial_results' in st.session_state:
                             _display_spatial_export_results(st.session_state.climate_spatial_results)
 
-                        if st.button("🔄 Re-run Spatial Export", use_container_width=True,
+                        if st.button("🔄 Re-run Spatial Export", width="stretch",
                                     key="rerun_spatial_export"):
                             st.session_state.climate_spatial_export_complete = False
                             if 'climate_spatial_results' in st.session_state:
@@ -1454,13 +1454,13 @@ def _run_climate_analysis():
 
                 col1, col2 = st.columns(2)
                 with col1:
-                    if st.button("📥 Download Spatial Data (Advanced)", use_container_width=True,
+                    if st.button("📥 Download Spatial Data (Advanced)", width="stretch",
                                 help="Export spatial data to Data Visualizer tool for advanced analysis", key="viz_new_results"):
                         # Launch visualization tool with climate results (for advanced visualizations)
                         _launch_climate_visualization(results)
 
                 with col2:
-                    if st.button("🔄 Re-run Analysis", use_container_width=True,
+                    if st.button("🔄 Re-run Analysis", width="stretch",
                                 help="Start over with different parameters", key="rerun_new_results"):
                         # Clear existing results and re-run with current selections
                         st.session_state.climate_analysis_complete = False
@@ -1782,7 +1782,7 @@ def _display_single_index_plot(df, index_name, show_trends=True, show_statistics
         )
     )
 
-    st.plotly_chart(fig, use_container_width=True, key=f"single_plot_{index_name}")
+    st.plotly_chart(fig, width="stretch", key=f"single_plot_{index_name}")
 
     # Show statistics panel
     if show_statistics and trend_data:
@@ -1933,7 +1933,7 @@ def _display_climate_results(time_series_data):
             fig.update_xaxes(title_text="Date", row=i, col=1)
             fig.update_yaxes(title_text="Index Value", row=i, col=1)
 
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
         # Display trend statistics if requested
         if show_statistics and trend_stats:
@@ -2001,7 +2001,7 @@ def _display_climate_results(time_series_data):
             showlegend=True
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
         # Display trend statistics for single series
         if show_statistics and trend_data:
@@ -2340,7 +2340,7 @@ def _display_geemap_visualization(results):
             f"🗺️ Show Map",
             type="primary",
             key="geemap_show_btn",
-            use_container_width=True
+            width="stretch"
         )
 
     if not show_clicked:
@@ -2443,7 +2443,7 @@ def _show_download_options(results):
                 file_name=f"climate_timeseries_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv",
                 help="Area-averaged yearly climate index values",
-                use_container_width=True
+                width="stretch"
             )
         else:
             st.info("ℹ️ Time series CSV not available (extraction may have failed).")
@@ -2457,7 +2457,7 @@ def _show_download_options(results):
                 file_name=f"climate_analysis_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
                 mime="text/plain",
                 help="Comprehensive analysis report with configuration and results",
-                use_container_width=True
+                width="stretch"
             )
 
     st.markdown("---")
@@ -2480,14 +2480,14 @@ def _show_download_options(results):
             if 'climate_spatial_results' in st.session_state:
                 _display_spatial_export_results(st.session_state.climate_spatial_results)
 
-            if st.button("🔄 Re-run Spatial Export", use_container_width=True,
+            if st.button("🔄 Re-run Spatial Export", width="stretch",
                         key="rerun_spatial_export_main"):
                 st.session_state.climate_spatial_export_complete = False
                 if 'climate_spatial_results' in st.session_state:
                     del st.session_state.climate_spatial_results
                 st.rerun()
         else:
-            if st.button("🚀 Proceed to Spatial Export", type="primary", use_container_width=True,
+            if st.button("🚀 Proceed to Spatial Export", type="primary", width="stretch",
                         help="Download spatial GeoTIFF files for each climate index",
                         key="proceed_spatial_export_main"):
                 # Execute spatial export with 50MB error learning
@@ -2628,7 +2628,7 @@ def _show_smart_download_results(results):
                     file_name=file_info['filename'],
                     mime=mime_type,
                     help=f"Download {file_info['index']} ({file_info['size_mb']:.1f} MB)",
-                    use_container_width=True
+                    width="stretch"
                 )
 
     # Show drive exports
@@ -2643,9 +2643,9 @@ def _show_smart_download_results(results):
                     st.code(f"Task ID: {export_info['task_id']}")
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.link_button("⚙️ Monitor Tasks", "https://code.earthengine.google.com/tasks", use_container_width=True)
+                    st.link_button("⚙️ Monitor Tasks", "https://code.earthengine.google.com/tasks", width="stretch")
                 with col2:
-                    st.link_button("📁 Open Drive", export_info.get('url', 'https://drive.google.com/drive/'), use_container_width=True)
+                    st.link_button("📁 Open Drive", export_info.get('url', 'https://drive.google.com/drive/'), width="stretch")
 
     # Show preview files
     if preview_files:
@@ -2659,7 +2659,7 @@ def _show_smart_download_results(results):
                     data=preview_info['file_data'],
                     file_name=preview_info['filename'],
                     mime="image/tiff",
-                    use_container_width=True
+                    width="stretch"
                 )
 
     # Show pending exports (temporal_only mode)
@@ -2739,7 +2739,7 @@ def _show_google_drive_results(results):
                     st.link_button(
                         "🔗 Open Google Drive",
                         folder_info['url'],
-                        use_container_width=True
+                        width="stretch"
                     )
 
         # Show status information
@@ -2797,7 +2797,7 @@ def _show_preview_results(results):
                     file_name=preview['filename'],
                     mime="image/tiff",
                     help="Sample GeoTIFF file for preview",
-                    use_container_width=True
+                    width="stretch"
                 )
 
         st.info("""
@@ -2829,7 +2829,7 @@ def _show_local_download_results(results):
                 file_name=f"climate_spatial_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
                 mime="application/zip",
                 help="ZIP archive with all GeoTIFF files",
-                use_container_width=True
+                width="stretch"
             )
     else:
         st.warning("⚠️ Spatial data not available for local download.")
@@ -3082,7 +3082,7 @@ def _display_spatial_export_results(spatial_results):
                     data=result['file_data'],
                     file_name=result.get('filename', f'{index_name}_spatial.zip'),
                     mime='application/zip',
-                    use_container_width=True,
+                    width="stretch",
                     key=button_key
                 )
 
@@ -3239,7 +3239,7 @@ def _render_smart_spatial_download_section():
     col1, col2, col3 = st.columns([1, 2, 1])
 
     with col2:
-        if st.button("🚀 Start Smart Download", type="primary", use_container_width=True):
+        if st.button("🚀 Start Smart Download", type="primary", width="stretch"):
             _execute_climate_smart_download(
                 download_approach=download_approach,
                 export_preference=export_preference,
@@ -3324,12 +3324,12 @@ def _execute_time_series_download():
         data=csv_data,
         file_name=f"climate_indices_timeseries_{timestamp}.csv",
         mime="text/csv",
-        use_container_width=True
+        width="stretch"
     )
 
     # Show preview
     st.markdown("#### 📋 Data Preview")
-    st.dataframe(df.head(10), use_container_width=True)
+    st.dataframe(df.head(10), width="stretch")
 
     # Add visualization module integration for time series data
     _integrate_climate_visualization_links(df, 'time_series')
@@ -3572,7 +3572,7 @@ def _render_time_series_visualization_links(df):
                 }
             )
 
-            if st.button("🔍 Quick Visualizer", use_container_width=True, help="Instant charts and statistics"):
+            if st.button("🔍 Quick Visualizer", width="stretch", help="Instant charts and statistics"):
                 st.session_state.visualization_data = df
                 st.session_state.show_quick_viz = True
                 st.rerun()
@@ -3585,7 +3585,7 @@ def _render_time_series_visualization_links(df):
 
         # Enhanced trend analysis for yearly data
         if temporal_resolution == 'yearly' and len(df) >= 5:
-            if st.button("📈 Advanced Trends", use_container_width=True, help="Mann-Kendall, Sen's slope, seasonal analysis"):
+            if st.button("📈 Advanced Trends", width="stretch", help="Mann-Kendall, Sen's slope, seasonal analysis"):
                 st.session_state.trend_analysis_data = df
                 st.session_state.show_trend_analysis = True
                 st.rerun()
@@ -3596,7 +3596,7 @@ def _render_time_series_visualization_links(df):
         st.markdown("**🌍 Climate Intelligence**")
 
         # Climate-specific analysis
-        if st.button("🧠 Climate Insights", use_container_width=True, help="Climate patterns, extremes, variability"):
+        if st.button("🧠 Climate Insights", width="stretch", help="Climate patterns, extremes, variability"):
             st.session_state.climate_insights_data = df
             st.session_state.show_climate_insights = True
             st.rerun()
@@ -3630,14 +3630,14 @@ def _render_spatial_visualization_links(download_results):
 
     with col1:
         st.markdown("**🗺️ Interactive Maps**")
-        if st.button("🌐 Map Viewer", use_container_width=True, help="Interactive spatial visualization"):
+        if st.button("🌐 Map Viewer", width="stretch", help="Interactive spatial visualization"):
             st.session_state.spatial_map_data = download_results
             st.session_state.show_spatial_maps = True
             st.rerun()
 
     with col2:
         st.markdown("**📊 Spatial Statistics**")
-        if st.button("📈 Spatial Analysis", use_container_width=True, help="Spatial patterns and statistics"):
+        if st.button("📈 Spatial Analysis", width="stretch", help="Spatial patterns and statistics"):
             st.session_state.spatial_stats_data = download_results
             st.session_state.show_spatial_stats = True
             st.rerun()
@@ -3645,7 +3645,7 @@ def _render_spatial_visualization_links(download_results):
     with col3:
         st.markdown("**🔄 Compare Indices**")
         if len(local_files) > 1:
-            if st.button("⚖️ Compare Climate Indices", use_container_width=True, help="Side-by-side comparison"):
+            if st.button("⚖️ Compare Climate Indices", width="stretch", help="Side-by-side comparison"):
                 st.session_state.compare_indices_data = download_results
                 st.session_state.show_compare_indices = True
                 st.rerun()
@@ -3729,7 +3729,7 @@ def _render_quick_climate_visualization(df):
                 hovermode='x unified'
             )
 
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
         else:
             # Multiple indices - subplot approach
@@ -3760,12 +3760,12 @@ def _render_quick_climate_visualization(df):
                 title_text="Climate Indices Comparison"
             )
 
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
         # Quick statistics summary
         st.markdown("**📊 Quick Statistics Summary:**")
         stats_df = df.groupby('Climate_Index')['Value'].agg(['mean', 'std', 'min', 'max']).round(3)
-        st.dataframe(stats_df, use_container_width=True)
+        st.dataframe(stats_df, width="stretch")
 
         # Reset button
         if st.button("🔙 Hide Quick Visualization"):
@@ -3834,7 +3834,7 @@ def _render_advanced_trend_analysis(df):
                         hovermode='x unified'
                     )
 
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
 
                     # Display statistics
                     col1, col2, col3 = st.columns(3)
@@ -3935,7 +3935,7 @@ def _render_temperature_insights(idx, values, temporal_resolution):
             yaxis_title="Frequency",
             height=300
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
 
 def _render_precipitation_insights(idx, values, temporal_resolution):
@@ -3971,7 +3971,7 @@ def _render_precipitation_insights(idx, values, temporal_resolution):
             yaxis_title="Precipitation Value",
             height=300
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
 
 def _render_general_climate_insights(idx, values, temporal_resolution):
@@ -4000,7 +4000,7 @@ def _render_general_climate_insights(idx, values, temporal_resolution):
             yaxis_title="Index Value",
             height=300
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
 
 def _render_spatial_map_placeholder(download_results):

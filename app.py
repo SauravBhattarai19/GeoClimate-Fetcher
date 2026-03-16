@@ -1134,7 +1134,7 @@ if st.session_state.app_mode is None:
         </div>
         """, unsafe_allow_html=True)
         
-        if st.button("🚀 Launch Data Explorer", use_container_width=True, type="primary"):
+        if st.button("🚀 Launch Data Explorer", width="stretch", type="primary"):
             st.session_state.app_mode = "data_explorer"
             st.rerun()
     
@@ -1150,7 +1150,7 @@ if st.session_state.app_mode is None:
         </div>
         """, unsafe_allow_html=True)
         
-        if st.button("🚀 Launch Climate Analytics", use_container_width=True, type="primary"):
+        if st.button("🚀 Launch Climate Analytics", width="stretch", type="primary"):
             st.session_state.app_mode = "climate_analytics"
             st.rerun()
     
@@ -1169,7 +1169,7 @@ if st.session_state.app_mode is None:
         </div>
         """, unsafe_allow_html=True)
         
-        if st.button("🚀 Launch Hydrology Analyzer", use_container_width=True, type="primary"):
+        if st.button("🚀 Launch Hydrology Analyzer", width="stretch", type="primary"):
             st.session_state.app_mode = "hydrology"
             st.rerun()
     
@@ -1185,7 +1185,7 @@ if st.session_state.app_mode is None:
         </div>
         """, unsafe_allow_html=True)
         
-        if st.button("🚀 Launch Product Selector", use_container_width=True, type="primary"):
+        if st.button("🚀 Launch Product Selector", width="stretch", type="primary"):
             st.session_state.app_mode = "product_selector"
             st.rerun()
 
@@ -1204,7 +1204,7 @@ if st.session_state.app_mode is None:
         </div>
         """, unsafe_allow_html=True)
 
-        if st.button("🚀 Launch Multi-Geometry Export", use_container_width=True, type="primary"):
+        if st.button("🚀 Launch Multi-Geometry Export", width="stretch", type="primary"):
             st.session_state.app_mode = "multi_geometry_export"
             st.rerun()
 
@@ -1220,7 +1220,7 @@ if st.session_state.app_mode is None:
         </div>
         """, unsafe_allow_html=True)
 
-        if st.button("🚀 Launch Data Visualizer", use_container_width=True, type="primary"):
+        if st.button("🚀 Launch Data Visualizer", width="stretch", type="primary"):
             st.session_state.app_mode = "data_visualizer"
             st.rerun()
 

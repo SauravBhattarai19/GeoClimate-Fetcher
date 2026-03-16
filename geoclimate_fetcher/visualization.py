@@ -155,7 +155,7 @@ class DataVisualizer:
                 height=500
             )
             
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
             
             # Add trend analysis
             if st.checkbox("Show trend analysis"):
@@ -218,7 +218,7 @@ class DataVisualizer:
                 )
             
             fig.update_layout(height=600)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
             
         except Exception as e:
             st.error(f"Error plotting spatial map: {str(e)}")
@@ -299,7 +299,7 @@ class DataVisualizer:
             )
             
             fig.update_layout(height=600)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
             
         except Exception as e:
             st.error(f"Error creating animation: {str(e)}")
@@ -342,7 +342,7 @@ class DataVisualizer:
                 labels={'x': var_name, 'y': 'Count'}
             )
             
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
             
             # Percentiles
             if st.checkbox("Show percentiles"):
@@ -354,7 +354,7 @@ class DataVisualizer:
                     'Value': perc_values
                 })
                 
-                st.dataframe(perc_df, use_container_width=True)
+                st.dataframe(perc_df, width="stretch")
                 
         except Exception as e:
             st.error(f"Error showing statistics: {str(e)}")
@@ -482,7 +482,7 @@ class DataVisualizer:
                 fig.update_yaxes(title="Pixel Y")
             
             fig.update_layout(height=600)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
             
             # Color scale adjustment
             col1, col2 = st.columns(2)
@@ -493,7 +493,7 @@ class DataVisualizer:
             
             if st.button("Update color scale"):
                 fig.update_coloraxes(cmin=new_vmin, cmax=new_vmax)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
                 
         except Exception as e:
             st.error(f"Error plotting raster: {str(e)}")
@@ -551,7 +551,7 @@ class DataVisualizer:
                 title=f"Band {band_idx} Value Distribution"
             )
             
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
             
         except Exception as e:
             st.error(f"Error showing raster statistics: {str(e)}")
@@ -590,7 +590,7 @@ class DataVisualizer:
                 height=600
             )
             
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
             
         except Exception as e:
             st.error(f"Error creating 3D plot: {str(e)}")
@@ -614,7 +614,7 @@ class DataVisualizer:
             
             # Show data preview
             st.write("#### Data Preview")
-            st.dataframe(df.head(10), use_container_width=True)
+            st.dataframe(df.head(10), width="stretch")
             
             # Check for date column
             date_cols = [col for col in df.columns if 'date' in col.lower() or 'time' in col.lower()]
@@ -658,7 +658,7 @@ class DataVisualizer:
                             height=500
                         )
                         
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, width="stretch")
                         
                         # Additional analysis options
                         if st.checkbox("Show correlation matrix"):
@@ -675,7 +675,7 @@ class DataVisualizer:
                             )
                             
                             fig_corr.update_layout(title="Correlation Matrix")
-                            st.plotly_chart(fig_corr, use_container_width=True)
+                            st.plotly_chart(fig_corr, width="stretch")
             else:
                 st.warning("No date/time column found. Showing basic statistics only.")
                 
@@ -683,7 +683,7 @@ class DataVisualizer:
                 numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
                 if numeric_cols:
                     st.write("#### Numeric Column Statistics")
-                    st.dataframe(df[numeric_cols].describe(), use_container_width=True)
+                    st.dataframe(df[numeric_cols].describe(), width="stretch")
                     
         except Exception as e:
             st.error(f"Error visualizing CSV: {str(e)}")
@@ -747,7 +747,7 @@ class DataVisualizer:
                 height=400
             )
             
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
             
         except Exception as e:
             st.error(f"Error in trend analysis: {str(e)}") 

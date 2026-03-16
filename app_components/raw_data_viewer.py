@@ -76,7 +76,7 @@ def render_raw_data_viewer():
         # Display table
         st.dataframe(
             filtered_df,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             height=500
         )
@@ -94,7 +94,7 @@ def render_raw_data_viewer():
                 data=csv_data,
                 file_name="user_data.csv",
                 mime="text/csv",
-                use_container_width=True
+                width="stretch"
             )
 
         with col2:
@@ -104,7 +104,7 @@ def render_raw_data_viewer():
                 data=json_data,
                 file_name="user_data.json",
                 mime="application/json",
-                use_container_width=True
+                width="stretch"
             )
 
         with col3:
@@ -119,7 +119,7 @@ def render_raw_data_viewer():
                     data=excel_data,
                     file_name="user_data.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
+                    width="stretch"
                 )
             except ImportError:
                 st.info("Install openpyxl for Excel export")

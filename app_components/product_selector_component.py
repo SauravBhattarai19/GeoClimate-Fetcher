@@ -345,7 +345,7 @@ class ProductSelectorComponent:
                 
                 st.dataframe(
                     filtered_stations[available_cols],
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True
                 )
                 
@@ -493,7 +493,7 @@ class ProductSelectorComponent:
                     with st.expander("View Selected Stations", expanded=False):
                         st.dataframe(
                             selected_stations[available_cols],
-                            use_container_width=True,
+                            width="stretch",
                             hide_index=True
                         )
                     
@@ -580,7 +580,7 @@ class ProductSelectorComponent:
                     
                     if not filtered_metadata.empty:
                         st.success(f"✅ Loaded {len(filtered_metadata)} stations")
-                        st.dataframe(filtered_metadata, use_container_width=True, hide_index=True)
+                        st.dataframe(filtered_metadata, width="stretch", hide_index=True)
                         
                         # Store data
                         st.session_state.ps_available_stations = filtered_metadata
@@ -718,7 +718,7 @@ class ProductSelectorComponent:
                             with st.expander("View Selected Stations", expanded=False):
                                 st.dataframe(
                                     selected_custom_stations,
-                                    use_container_width=True,
+                                    width="stretch",
                                     hide_index=True
                                 )
                             
@@ -1429,12 +1429,12 @@ class ProductSelectorComponent:
             overview_fig = self.visualizer.create_comparison_overview(
                 analysis_results, summary['variable']
             )
-            st.plotly_chart(overview_fig, use_container_width=True)
+            st.plotly_chart(overview_fig, width="stretch")
             
             # Station locations map
             stations_df = pd.DataFrame([station for station in stations_data.values()])
             map_fig = self.visualizer.create_station_map(stations_df, analysis_results)
-            st.plotly_chart(map_fig, use_container_width=True)
+            st.plotly_chart(map_fig, width="stretch")
         
         # Station-by-station results
         st.markdown("---")
@@ -1492,7 +1492,7 @@ class ProductSelectorComponent:
             
             if stats_data:
                 stats_df = pd.DataFrame(stats_data)
-                st.dataframe(stats_df, use_container_width=True, hide_index=True)
+                st.dataframe(stats_df, width="stretch", hide_index=True)
                 
                 # Find best performing dataset
                 best_dataset = max(station_results.keys(), 
@@ -1508,7 +1508,7 @@ class ProductSelectorComponent:
                         results['merged_data'], station_id, dataset_name, 
                         st.session_state.ps_selected_variable
                     )
-                    st.plotly_chart(scatter_fig, use_container_width=True)
+                    st.plotly_chart(scatter_fig, width="stretch")
         
         with tabs[2]:  # Time series
             for dataset_name, results in station_results.items():
@@ -1518,7 +1518,7 @@ class ProductSelectorComponent:
                         results['merged_data'], station_id, dataset_name,
                         st.session_state.ps_selected_variable
                     )
-                    st.plotly_chart(ts_fig, use_container_width=True)
+                    st.plotly_chart(ts_fig, width="stretch")
         
         with tabs[3]:  # Seasonal analysis
             for dataset_name, results in station_results.items():
@@ -1531,14 +1531,14 @@ class ProductSelectorComponent:
                             results['merged_data'], station_id, dataset_name,
                             st.session_state.ps_selected_variable
                         )
-                        st.plotly_chart(seasonal_fig, use_container_width=True)
+                        st.plotly_chart(seasonal_fig, width="stretch")
                     
                     with col2:
                         if 'seasonal_stats' in results:
                             seasonal_table = self.visualizer.create_seasonal_stats_table(
                                 results['seasonal_stats'], station_id, dataset_name
                             )
-                            st.plotly_chart(seasonal_table, use_container_width=True)
+                            st.plotly_chart(seasonal_table, width="stretch")
     
     def _prepare_download_package(self, include_timeseries: bool = False):
         """Prepare and offer download package"""
