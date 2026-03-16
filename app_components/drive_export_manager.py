@@ -198,7 +198,7 @@ class DriveExportManager:
         col1, col2 = st.columns(2)
 
         with col1:
-            if st.button("📤 Export to Google Drive", type="primary", use_container_width=True):
+            if st.button("📤 Export to Google Drive", type="primary", width="stretch"):
                 # Perform the export
                 result = self.export_csv_to_drive(df, filename, drive_folder)
 

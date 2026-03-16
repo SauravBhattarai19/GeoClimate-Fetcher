@@ -70,18 +70,18 @@ def render_hydrology_analyzer():
         col1, col2, col3 = st.columns([2, 1, 1])
         
         with col1:
-            if st.button("🚀 Run Hydrology Analysis", type="primary", use_container_width=True):
+            if st.button("🚀 Run Hydrology Analysis", type="primary", width="stretch"):
                 # Trigger analysis
                 st.session_state.hydro_run_analysis = True
                 st.rerun()
         
         with col2:
-            if st.button("🔄 Reset Configuration", use_container_width=True):
+            if st.button("🔄 Reset Configuration", width="stretch"):
                 _reset_hydrology_configuration()
                 st.rerun()
         
         with col3:
-            if st.button("📊 View Sample Results", use_container_width=True):
+            if st.button("📊 View Sample Results", width="stretch"):
                 st.session_state.hydro_show_sample = True
                 st.rerun()
     else:
@@ -496,7 +496,7 @@ def _render_time_series_analysis():
         height=400
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # Show data summary for filtered view
     if selected_year != 'All Years':
@@ -575,7 +575,7 @@ def _render_time_series_analysis():
         height=400
     )
 
-    st.plotly_chart(fig_monthly, use_container_width=True)
+    st.plotly_chart(fig_monthly, width="stretch")
 
     # Show monthly summary for filtered view
     if selected_monthly_year != 'All Years':
@@ -702,7 +702,7 @@ def _render_time_series_analysis():
                 fig_yearly.update_yaxes(title_text="Precipitation (mm)", row=2, col=1)
                 fig_yearly.update_yaxes(title_text="Precipitation (mm/day)", row=2, col=2)
 
-                st.plotly_chart(fig_yearly, use_container_width=True)
+                st.plotly_chart(fig_yearly, width="stretch")
 
                 # Summary of trends
                 trend_summary = []
@@ -841,7 +841,7 @@ def _render_statistical_analysis():
             with st.expander("📊 Yearly Data Table", expanded=False):
                 yearly_df = yearly_stats['yearly_data'].copy()
                 yearly_df = yearly_df.round(2)
-                st.dataframe(yearly_df, use_container_width=True, hide_index=True)
+                st.dataframe(yearly_df, width="stretch", hide_index=True)
 
             # Show key insights
             summary = yearly_stats['summary']
@@ -915,7 +915,7 @@ def _render_statistical_analysis():
         height=400
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def _render_return_period_analysis():
@@ -975,7 +975,7 @@ def _render_return_period_analysis():
                 'Probability (%)': [f"{100/rp:.2f}" for rp in return_periods]
             })
 
-            st.dataframe(return_df, use_container_width=True, hide_index=True)
+            st.dataframe(return_df, width="stretch", hide_index=True)
 
             # Analyze data for outlier detection and plot preparation
             all_values = []
@@ -1058,7 +1058,7 @@ def _render_return_period_analysis():
                 showlegend=True
             )
 
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
             # Show filtering info if distributions were removed
             removed_count = len(return_analysis['distributions']) - len(valid_distributions)
@@ -1081,7 +1081,7 @@ def _render_return_period_analysis():
 
             if fit_data:
                 fit_df = pd.DataFrame(fit_data)
-                st.dataframe(fit_df, use_container_width=True, hide_index=True)
+                st.dataframe(fit_df, width="stretch", hide_index=True)
 
     except Exception as e:
         st.error(f"❌ Error in return period analysis: {str(e)}")
@@ -1582,7 +1582,7 @@ def _render_idf_analysis():
             if idf_results:
                 # Create and display plot
                 idf_plot = analyzer.create_idf_curves_plot(idf_results)
-                st.plotly_chart(idf_plot, use_container_width=True)
+                st.plotly_chart(idf_plot, width="stretch")
 
                 # Show detailed results table
                 st.markdown("#### 📊 IDF Values Table")
@@ -1601,7 +1601,7 @@ def _render_idf_analysis():
                     idf_table_data.append(row)
 
                 idf_df = pd.DataFrame(idf_table_data)
-                st.dataframe(idf_df, use_container_width=True)
+                st.dataframe(idf_df, width="stretch")
 
                 # Educational content
                 with st.expander("📚 Understanding IDF Curves"):
@@ -1700,7 +1700,7 @@ def _render_mann_kendall_analysis():
 
                         # Visualization
                         mk_plot = analyzer.create_mann_kendall_plot(mk_results)
-                        st.plotly_chart(mk_plot, use_container_width=True)
+                        st.plotly_chart(mk_plot, width="stretch")
 
                     elif aggregation == 'seasonal':
                         # Seasonal trends
@@ -1832,7 +1832,7 @@ def _render_pettitt_analysis():
 
                     # Visualization
                     pettitt_plot = analyzer.create_pettitt_plot(pettitt_results)
-                    st.plotly_chart(pettitt_plot, use_container_width=True)
+                    st.plotly_chart(pettitt_plot, width="stretch")
 
                     # Educational content
                     with st.expander("📚 Understanding Pettitt Test"):
@@ -1908,7 +1908,7 @@ def _render_flow_duration_and_spells():
 
                         # Visualization
                         fdc_plot = analyzer.create_flow_duration_curve_plot(fdc_results)
-                        st.plotly_chart(fdc_plot, use_container_width=True)
+                        st.plotly_chart(fdc_plot, width="stretch")
 
                         with st.expander("📚 Understanding Flow Duration Curves"):
                             st.markdown("""
@@ -1988,7 +1988,7 @@ def _render_flow_duration_and_spells():
 
                         # Visualization
                         spell_plot = analyzer.create_wet_dry_spell_plot(spell_results)
-                        st.plotly_chart(spell_plot, use_container_width=True)
+                        st.plotly_chart(spell_plot, width="stretch")
 
                         with st.expander("📚 Understanding Spell Analysis"):
                             st.markdown("""

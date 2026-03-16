@@ -517,7 +517,7 @@ def _render_band_selection():
                 'Band Name': bands,
                 'Unit': units
             })
-            st.dataframe(band_info, use_container_width=True)
+            st.dataframe(band_info, width="stretch")
         else:
             for band in bands:
                 st.markdown(f"• {band}")
@@ -828,12 +828,12 @@ def _render_export_interface(exporter):
     """)
 
     # Export button
-    if st.button("🚀 Start Export", type="primary", use_container_width=True):
+    if st.button("🚀 Start Export", type="primary", width="stretch"):
         _execute_multi_geometry_export(exporter, export_preference, drive_folder, scale)
 
     # Reset button
     st.markdown("---")
-    if st.button("🔄 Start Over", use_container_width=True):
+    if st.button("🔄 Start Over", width="stretch"):
         _reset_all_mg_selections()
         st.rerun()
 

@@ -17,6 +17,7 @@ import os
 from typing import Dict, List, Tuple, Optional
 import ee
 import logging
+import sys
 
 # Add geoclimate_fetcher to path
 project_root = Path(__file__).parent.parent
@@ -344,7 +345,7 @@ class ProductSelectorComponent:
                 
                 st.dataframe(
                     filtered_stations[available_cols],
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True
                 )
                 
@@ -492,7 +493,7 @@ class ProductSelectorComponent:
                     with st.expander("View Selected Stations", expanded=False):
                         st.dataframe(
                             selected_stations[available_cols],
-                            use_container_width=True,
+                            width="stretch",
                             hide_index=True
                         )
                     
@@ -500,6 +501,9 @@ class ProductSelectorComponent:
                     if st.button("Continue with Selected Stations", type="primary", key="continue_stations"):
                         st.session_state.ps_selected_stations = selected_stations
                         st.session_state.ps_stations_loaded = True
+                        # Clear any previous analysis results when stations change
+                        st.session_state.ps_analysis_complete = False
+                        st.session_state.ps_analysis_results = None
                         st.rerun()
             else:
                 st.warning("⚠️ No meteostat stations found in the selected area.")
@@ -576,7 +580,7 @@ class ProductSelectorComponent:
                     
                     if not filtered_metadata.empty:
                         st.success(f"✅ Loaded {len(filtered_metadata)} stations")
-                        st.dataframe(filtered_metadata, use_container_width=True, hide_index=True)
+                        st.dataframe(filtered_metadata, width="stretch", hide_index=True)
                         
                         # Store data
                         st.session_state.ps_available_stations = filtered_metadata
@@ -714,13 +718,16 @@ class ProductSelectorComponent:
                             with st.expander("View Selected Stations", expanded=False):
                                 st.dataframe(
                                     selected_custom_stations,
-                                    use_container_width=True,
+                                    width="stretch",
                                     hide_index=True
                                 )
                             
                             if st.button("Continue with Selected Custom Stations", type="primary", key="continue_custom"):
                                 st.session_state.ps_selected_stations = selected_custom_stations
                                 st.session_state.ps_stations_loaded = True
+                                # Clear any previous analysis results when stations change
+                                st.session_state.ps_analysis_complete = False
+                                st.session_state.ps_analysis_results = None
                                 st.rerun()
                     else:
                         st.warning("⚠️ No stations found within the selected area")
@@ -735,6 +742,9 @@ class ProductSelectorComponent:
         # Add back button
         if st.button("← Back to Station Selection", key="back_to_stations"):
             st.session_state.ps_stations_loaded = False
+            # Clear any previous analysis results when going back
+            st.session_state.ps_analysis_complete = False
+            st.session_state.ps_analysis_results = None
             st.rerun()
         
         st.markdown("Choose one variable to analyze (only one variable can be analyzed at a time):")
@@ -764,6 +774,9 @@ class ProductSelectorComponent:
         if st.button("Continue with Selected Variable", type="primary", key="continue_variable"):
             st.session_state.ps_selected_variable = variable_code
             st.session_state.ps_variable_selected = True
+            # Clear any previous analysis results when variable changes
+            st.session_state.ps_analysis_complete = False
+            st.session_state.ps_analysis_results = None
             st.rerun()
     
     def _render_dataset_selection(self):
@@ -773,6 +786,9 @@ class ProductSelectorComponent:
         # Add back button
         if st.button("← Back to Variable Selection", key="back_to_variable"):
             st.session_state.ps_variable_selected = False
+            # Clear any previous analysis results when going back
+            st.session_state.ps_analysis_complete = False
+            st.session_state.ps_analysis_results = None
             st.rerun()
         
         variable = st.session_state.ps_selected_variable
@@ -839,6 +855,9 @@ class ProductSelectorComponent:
             if st.button("Continue with Selected Datasets", type="primary", key="continue_datasets"):
                 st.session_state.ps_selected_datasets = selected_datasets
                 st.session_state.ps_datasets_selected = True
+                # Clear any previous analysis results when datasets change
+                st.session_state.ps_analysis_complete = False
+                st.session_state.ps_analysis_results = None
                 st.rerun()
         else:
             st.info("👆 Select at least one dataset to continue")
@@ -850,6 +869,9 @@ class ProductSelectorComponent:
         # Add back button
         if st.button("← Back to Dataset Selection", key="back_to_datasets"):
             st.session_state.ps_datasets_selected = False
+            # Clear any previous analysis results when going back
+            st.session_state.ps_analysis_complete = False
+            st.session_state.ps_analysis_results = None
             st.rerun()
         
         # Auto-detect optimal time range for suggestion
@@ -872,11 +894,16 @@ class ProductSelectorComponent:
                 st.session_state.ps_analysis_start_date = start_date
                 st.session_state.ps_analysis_end_date = end_date
                 st.session_state.ps_timerange_selected = True
+                # Clear any previous analysis results when timerange changes
+                st.session_state.ps_analysis_complete = False
+                st.session_state.ps_analysis_results = None
                 st.success(f"Selected optimal period: {start_date} to {end_date}")
                 st.rerun()
         else:
-            st.warning("⚠️ **No Overlapping Period Found**: Selected stations and datasets don't have a common time period with complete data.")
-            start_date, end_date = date(2000, 1, 1), date(2023, 12, 31)  # Default fallback
+            st.error("❌ **No Overlapping Period Found**: Selected stations and datasets don't have a common time period with complete data.")
+            st.error("**Action Required**: Please select different stations or datasets that have overlapping data availability.")
+            # No fallback dates - force user to select manually
+            return None
         
         # Show data availability context
         if overall_ranges:
@@ -934,6 +961,9 @@ class ProductSelectorComponent:
             
             if st.button("Start Analysis with Selected Period", type="primary", key="start_analysis"):
                 st.session_state.ps_timerange_selected = True
+                # Clear any previous analysis results when timerange changes
+                st.session_state.ps_analysis_complete = False
+                st.session_state.ps_analysis_results = None
                 st.rerun()
         else:
             st.error("❌ Start date must be before end date")
@@ -947,6 +977,9 @@ class ProductSelectorComponent:
         with col1:
             if st.button("← Back to Time Range", key="back_to_timerange"):
                 st.session_state.ps_timerange_selected = False
+                # Clear any previous analysis results when going back
+                st.session_state.ps_analysis_complete = False
+                st.session_state.ps_analysis_results = None
                 st.rerun()
         with col2:
             if st.button("🔄 Start New Analysis", key="restart_analysis"):
@@ -1178,7 +1211,24 @@ class ProductSelectorComponent:
     def _run_analysis(self):
         """Run the statistical analysis"""
         st.markdown("🔄 **Running Analysis...**")
-        
+
+        # Configure logging to show in terminal
+        import logging
+        import sys
+
+        # Create a console handler that outputs to terminal
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        console_handler.setFormatter(formatter)
+
+        # Get the logger and add the console handler
+        logger = logging.getLogger()
+        logger.setLevel(logging.INFO)
+        # Remove existing handlers to avoid duplicates
+        logger.handlers = [h for h in logger.handlers if not isinstance(h, logging.StreamHandler)]
+        logger.addHandler(console_handler)
+
         progress_bar = st.progress(0)
         status_text = st.empty()
         
@@ -1189,6 +1239,7 @@ class ProductSelectorComponent:
             variable = st.session_state.ps_selected_variable
             start_date = st.session_state.ps_analysis_start_date
             end_date = st.session_state.ps_analysis_end_date
+
             
             all_results = {}
             total_steps = len(stations) * len(datasets)
@@ -1198,101 +1249,98 @@ class ProductSelectorComponent:
             for _, station in stations.iterrows():
                 station_id = station['id']
                 station_results = {}
-                
-                status_text.text(f"Analyzing station {station_id}...")
-                
+
+                status_text.text(f"📍 Getting Meteostat data for station {station_id}...")
+
+
                 # Get station data
                 try:
                     station_data = self.meteostat_handler.get_station_data(
                         station_id, variable, start_date, end_date
                     )
-                    
+
                     if station_data is None or len(station_data) == 0:
-                        logging.warning(f"No station data for {station_id}")
+                        st.error(f"❌ No meteostat station data available for station {station_id}")
                         continue
-                        
+
+                except (ImportError, ValueError, RuntimeError) as e:
+                    st.error(f"❌ Station data error for {station_id}: {str(e)}")
+                    continue
                 except Exception as e:
-                    logging.error(f"Error getting station data for {station_id}: {str(e)}")
+                    st.error(f"❌ Unexpected error getting station data for {station_id}: {str(e)}")
                     continue
                 
                 # Compare with each dataset
-                for dataset in datasets:
-                    # Create dataset ID mapping from dataset name to simple identifier
+                for dataset_idx, dataset in enumerate(datasets, 1):
+
+                    # Use the actual Earth Engine ID from the dataset
                     dataset_name = dataset.get('Dataset Name', 'unknown')
-                    
-                    # Map dataset names to simple IDs for the analysis engine
-                    dataset_mapping = {
-                        'Daymet V4 Daily Meteorology (NA)': 'daymet',
-                        'CHIRPS Daily Precipitation': 'chirps',
-                        'ERA5 Daily Aggregates': 'era5',
-                        'ERA5-Land Hourly Climate Reanalysis': 'era5',
-                        'GridMET Daily Meteorology (CONUS)': 'gridmet',
-                        'GLDAS-2.1 Noah (0.25° 3-hourly)': 'gldas',
-                        'GLDAS-2.2 CLSM (0.25° daily)': 'gldas',
-                        'TerraClimate Monthly Climate': 'terraclimate',
-                        'GPM IMERG Monthly Precipitation (V07)': 'imerg',
-                        'CPC Unified Gauge Precipitation (Daily 0.5°)': 'cpc',
-                        'FLDAS NOAH Land Data Assimilation (Monthly 0.1°)': 'gldas'
-                    }
-                    
-                    # First try exact match, then fallback to a cleaner ID
-                    if dataset_name in dataset_mapping:
-                        dataset_id = dataset_mapping[dataset_name]
-                    else:
-                        # Create a cleaner ID from the name
-                        dataset_id = dataset_name.lower().replace(' ', '_').replace('(', '').replace(')', '').replace('-', '_').replace('.', '')
-                        # Simplify further by taking key parts
-                        if 'daymet' in dataset_id:
-                            dataset_id = 'daymet'
-                        elif 'era5' in dataset_id:
-                            dataset_id = 'era5'  
-                        elif 'chirps' in dataset_id:
-                            dataset_id = 'chirps'
-                        elif 'gridmet' in dataset_id:
-                            dataset_id = 'gridmet'
-                        elif 'gldas' in dataset_id:
-                            dataset_id = 'gldas'
-                        elif 'terraclimate' in dataset_id:
-                            dataset_id = 'terraclimate'
-                        elif 'imerg' in dataset_id:
-                            dataset_id = 'imerg'
-                        elif 'cpc' in dataset_id:
-                            dataset_id = 'cpc'
-                    
-                    logging.info(f"Processing dataset: '{dataset_name}' -> '{dataset_id}'")
-                    
+                    dataset_id = dataset.get('Earth Engine ID', None)
+
+                    if not dataset_id:
+                        st.error(f"❌ No Earth Engine ID found for dataset: {dataset_name}")
+                        continue
+
+                    # Update status with current dataset
+                    status_text.text(f"🌐 Station {station_id} - Fetching {dataset_name} ({dataset_idx}/{len(datasets)})...")
+                    logging.info(f"🌐 Fetching data from {dataset_name}...")
+
                     try:
+                        # Get station coordinates
+                        lat = station['latitude']
+                        lon = station['longitude']
+
                         # Get gridded data
                         gridded_data = self.gridded_handler.get_gridded_data(
-                            dataset_id, variable, station['latitude'], station['longitude'],
-                            start_date, end_date
+                            dataset_id, variable, lat, lon, start_date, end_date
                         )
-                        
+
                         if gridded_data is None or len(gridded_data) == 0:
-                            logging.warning(f"No gridded data for {dataset_id} at {station_id}")
+                            st.warning(f"⚠️ No Google Earth Engine data available for dataset {dataset_id} at station {station_id}")
                             continue
-                        
+
+                        # Update status for analysis step
+                        status_text.text(f"📊 Station {station_id} - Analyzing {dataset_name} ({dataset_idx}/{len(datasets)})...")
+
                         # Merge and analyze
                         merged_data = self.statistical_analyzer.merge_datasets(
                             station_data, gridded_data
                         )
-                        
+
                         if merged_data is None or len(merged_data) == 0:
-                            logging.warning(f"No overlapping data for {station_id} - {dataset_id}")
+                            st.warning(f"⚠️ No overlapping data found between station {station_id} and dataset {dataset_id}")
                             continue
-                        
+
                         # Calculate statistics
                         stats = self.statistical_analyzer.calculate_statistics(merged_data)
                         seasonal_stats = self.statistical_analyzer.calculate_seasonal_statistics(merged_data)
-                        
+
                         station_results[dataset_id] = {
                             'stats': stats,
                             'seasonal_stats': seasonal_stats,
                             'merged_data': merged_data
                         }
-                        
+
+                        # Show completion for this dataset
+                        status_text.text(f"✅ Station {station_id} - Completed {dataset_name} ({dataset_idx}/{len(datasets)})")
+                        import time
+                        time.sleep(0.1)  # Brief pause to show completion
+
+                    except (FileNotFoundError, ValueError, RuntimeError) as e:
+                        st.error(f"❌ Google Earth Engine data error for {dataset_id} at {station_id}: {str(e)}")
+                        continue
+                    except KeyError as e:
+                        import traceback
+                        logging.error(f"KeyError in analysis for {station_id} - {dataset_id}: {str(e)}")
+                        logging.error(f"Traceback: {traceback.format_exc()}")
+                        st.error(f"❌ KeyError analyzing {station_id} - {dataset_id}: Missing key {str(e)}")
+                        st.error(f"Check data structure - this suggests a field is missing from station or dataset info")
+                        continue
                     except Exception as e:
-                        logging.error(f"Error analyzing {station_id} - {dataset_id}: {str(e)}")
+                        import traceback
+                        logging.error(f"Unexpected error in analysis for {station_id} - {dataset_id}: {str(e)}")
+                        logging.error(f"Traceback: {traceback.format_exc()}")
+                        st.error(f"❌ Unexpected error analyzing {station_id} - {dataset_id}: {str(e)}")
                         continue
                     
                     current_step += 1
@@ -1300,9 +1348,22 @@ class ProductSelectorComponent:
                 
                 if station_results:
                     all_results[station_id] = station_results
+                    # Show station completion
+                    completed_datasets = len(station_results)
+                    status_text.text(f"🎯 Station {station_id} completed! ({completed_datasets} datasets analyzed)")
             
             if not all_results:
-                st.error("❌ No valid analysis results found. Please check your data selection.")
+                st.error("❌ **ANALYSIS FAILED: No valid data comparisons could be completed.**")
+                st.error("**Possible causes:**")
+                st.error("• Meteostat library not installed (`pip install meteostat`)")
+                st.error("• No meteostat data available for selected stations/time period")
+                st.error("• Google Earth Engine authentication issues")
+                st.error("• Dataset configuration file (datasets.json) missing or corrupted")
+                st.error("• Selected datasets don't support the chosen variable")
+                st.error("• No overlapping time period between station and satellite data")
+
+                st.markdown("---")
+                st.info("Please ensure all requirements are met and try again with different selections.")
                 return
             
             # Store results
@@ -1368,12 +1429,12 @@ class ProductSelectorComponent:
             overview_fig = self.visualizer.create_comparison_overview(
                 analysis_results, summary['variable']
             )
-            st.plotly_chart(overview_fig, use_container_width=True)
+            st.plotly_chart(overview_fig, width="stretch")
             
             # Station locations map
             stations_df = pd.DataFrame([station for station in stations_data.values()])
             map_fig = self.visualizer.create_station_map(stations_df, analysis_results)
-            st.plotly_chart(map_fig, use_container_width=True)
+            st.plotly_chart(map_fig, width="stretch")
         
         # Station-by-station results
         st.markdown("---")
@@ -1431,7 +1492,7 @@ class ProductSelectorComponent:
             
             if stats_data:
                 stats_df = pd.DataFrame(stats_data)
-                st.dataframe(stats_df, use_container_width=True, hide_index=True)
+                st.dataframe(stats_df, width="stretch", hide_index=True)
                 
                 # Find best performing dataset
                 best_dataset = max(station_results.keys(), 
@@ -1447,7 +1508,7 @@ class ProductSelectorComponent:
                         results['merged_data'], station_id, dataset_name, 
                         st.session_state.ps_selected_variable
                     )
-                    st.plotly_chart(scatter_fig, use_container_width=True)
+                    st.plotly_chart(scatter_fig, width="stretch")
         
         with tabs[2]:  # Time series
             for dataset_name, results in station_results.items():
@@ -1457,7 +1518,7 @@ class ProductSelectorComponent:
                         results['merged_data'], station_id, dataset_name,
                         st.session_state.ps_selected_variable
                     )
-                    st.plotly_chart(ts_fig, use_container_width=True)
+                    st.plotly_chart(ts_fig, width="stretch")
         
         with tabs[3]:  # Seasonal analysis
             for dataset_name, results in station_results.items():
@@ -1470,14 +1531,14 @@ class ProductSelectorComponent:
                             results['merged_data'], station_id, dataset_name,
                             st.session_state.ps_selected_variable
                         )
-                        st.plotly_chart(seasonal_fig, use_container_width=True)
+                        st.plotly_chart(seasonal_fig, width="stretch")
                     
                     with col2:
                         if 'seasonal_stats' in results:
                             seasonal_table = self.visualizer.create_seasonal_stats_table(
                                 results['seasonal_stats'], station_id, dataset_name
                             )
-                            st.plotly_chart(seasonal_table, use_container_width=True)
+                            st.plotly_chart(seasonal_table, width="stretch")
     
     def _prepare_download_package(self, include_timeseries: bool = False):
         """Prepare and offer download package"""

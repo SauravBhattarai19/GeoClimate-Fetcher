@@ -57,20 +57,14 @@ class UnifiedMapWidget:
         
         # Add standardized tile layers
         folium.TileLayer(
-            tiles='OpenStreetMap',
-            attr='© OpenStreetMap contributors',
-            name='OpenStreetMap'
-        ).add_to(m)
-        
-        folium.TileLayer(
             tiles='CartoDB positron',
             attr='© OpenStreetMap contributors © CARTO',
             name='Light'
         ).add_to(m)
         
         folium.TileLayer(
-            tiles='Stamen Terrain',
-            attr='Map tiles by Stamen Design, under CC BY 3.0. Data by OpenStreetMap, under ODbL.',
+            tiles='https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+            attr='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
             name='Terrain'
         ).add_to(m)
         

@@ -220,7 +220,7 @@ class QuickVisualizer:
             x_title=date_col,
             y_title="Values"
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
         # Pattern analysis for single variable
         if len(numeric_cols) == 1:
@@ -256,11 +256,11 @@ class QuickVisualizer:
                 )
             )
             fig.update_layout(title="Variable Correlations", height=400)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
         # Statistical summary
         stats = create_statistical_summary(data, numeric_cols)
-        st.dataframe(stats, use_container_width=True)
+        st.dataframe(stats, width="stretch")
 
         return True
 
@@ -277,14 +277,14 @@ class QuickVisualizer:
             fig = go.Figure()
             fig.add_trace(go.Histogram(x=data[var_col], nbinsx=30, opacity=0.7))
             fig.update_layout(title=f"Distribution of {var_col}", height=300)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
         with col2:
             # Box plot
             fig = go.Figure()
             fig.add_trace(go.Box(y=data[var_col], name=var_col, boxpoints='outliers'))
             fig.update_layout(title=f"Box Plot: {var_col}", height=300)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
         # Statistics
         stats = data[var_col].describe()
@@ -317,7 +317,7 @@ class QuickVisualizer:
         fig = go.Figure()
         fig.add_trace(go.Bar(x=value_counts.index, y=value_counts.values))
         fig.update_layout(title=f"Distribution of {cat_col}", height=400)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
         # Summary stats
         col1, col2, col3 = st.columns(3)
@@ -355,7 +355,7 @@ class QuickVisualizer:
     def _render_data_preview(self, data: pd.DataFrame):
         """Render basic data preview"""
         st.markdown("##### 👀 Data Preview")
-        st.dataframe(data.head(10), use_container_width=True)
+        st.dataframe(data.head(10), width="stretch")
 
         # Column info
         col_info = []
@@ -365,7 +365,7 @@ class QuickVisualizer:
             col_info.append({'Column': col, 'Type': dtype, 'Unique Values': unique})
 
         col_df = pd.DataFrame(col_info)
-        st.dataframe(col_df, use_container_width=True)
+        st.dataframe(col_df, width="stretch")
 
     def _render_quick_spatial_viz(self, file_path: str, metadata: Dict):
         """Render quick spatial visualization"""
@@ -481,7 +481,7 @@ class QuickVisualizer:
             height=500
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     def _render_multi_dataset_summary(self, datasets: List[Tuple[str, pd.DataFrame]]):
         """Render summary comparison for datasets"""
@@ -497,7 +497,7 @@ class QuickVisualizer:
             })
 
         summary_df = pd.DataFrame(summary_data)
-        st.dataframe(summary_df, use_container_width=True)
+        st.dataframe(summary_df, width="stretch")
 
 
 # Global instance

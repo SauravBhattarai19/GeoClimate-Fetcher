@@ -178,7 +178,7 @@ class PostDownloadHandler:
 
             # Show data preview
             st.markdown("**Preview:**")
-            st.dataframe(data.head(5), use_container_width=True)
+            st.dataframe(data.head(5), width="stretch")
 
             # Detect visualization potential
             date_cols = []
@@ -269,7 +269,7 @@ class PostDownloadHandler:
                 x_title=date_col,
                 y_title="Values"
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
             # Show pattern analysis for single variable
             if len(value_cols) == 1:
@@ -326,7 +326,7 @@ class PostDownloadHandler:
                 st.markdown("**📊 Advanced Analysis**")
                 st.info("Upload to Data Visualizer for full analysis features, comparisons, and export options.")
 
-                if st.button("🚀 Open Data Visualizer", type="primary", use_container_width=True):
+                if st.button("🚀 Open Data Visualizer", type="primary", width="stretch"):
                     st.session_state.app_mode = "data_visualizer"
                     # Store data for direct access
                     st.session_state.direct_visualization_data = {
@@ -344,7 +344,7 @@ class PostDownloadHandler:
                 st.markdown("**💾 Continue Working**")
                 st.info("Stay in current module to continue analysis or download more data.")
 
-                if st.button("↩️ Continue in Module", use_container_width=True):
+                if st.button("↩️ Continue in Module", width="stretch"):
                     # Clear post-download state and continue in module
                     st.session_state.post_download_active = False
                     st.session_state.post_download_results = []
@@ -356,7 +356,7 @@ class PostDownloadHandler:
             st.markdown("**🔍 Data Explorer**")
             st.info("Go directly to GeoData Explorer to download more datasets.")
 
-            if st.button("🔍 Data Explorer", use_container_width=True):
+            if st.button("🔍 Data Explorer", width="stretch"):
                 st.session_state.app_mode = "data_explorer"
                 # Clear post-download state when navigating to tool
                 st.session_state.post_download_active = False
@@ -369,7 +369,7 @@ class PostDownloadHandler:
             st.markdown("**🧠 Climate Analytics**")
             st.info("Go directly to Climate Intelligence Hub for climate analysis.")
 
-            if st.button("🧠 Climate Analytics", use_container_width=True):
+            if st.button("🧠 Climate Analytics", width="stretch"):
                 st.session_state.app_mode = "climate_analytics"
                 # Clear post-download state when navigating to tool
                 st.session_state.post_download_active = False
@@ -382,7 +382,7 @@ class PostDownloadHandler:
                 st.markdown("**🏠 Return Home**")
                 st.info("Go back to main platform to access other tools.")
 
-                if st.button("🏠 Back to Home", use_container_width=True):
+                if st.button("🏠 Back to Home", width="stretch"):
                     st.session_state.app_mode = None
                     # Clear post-download state when going home
                     st.session_state.post_download_active = False

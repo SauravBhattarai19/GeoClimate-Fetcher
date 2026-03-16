@@ -15,56 +15,62 @@ import geemap
 
 def calculate_optimal_chunk_size(temporal_resolution, total_days):
     """
-    Calculate optimal chunk size based on temporal resolution and total time period
+    Calculate optimal chunk size based on temporal resolution and total time period.
 
     Args:
-        temporal_resolution: 'daily', 'hourly', '30min', etc.
-        total_days: Total number of days in the time period
+        temporal_resolution: string from dataset metadata or STAC API.
+                             Case-insensitive. Recognised values include:
+                             'daily'/'day', 'hourly'/'hour'/'variable'/'1h',
+                             '30min'/'30-min'/'30minute',
+                             '3-hourly'/'3h', 'monthly'/'month',
+                             'yearly'/'annual'/'year'.
+        total_days: Total number of days in the time period.
 
     Returns:
         tuple: (chunk_size_days, max_images_per_chunk)
+
+    Notes:
+        STAC API returns "Variable" for ERA5 sub-daily products; we treat this
+        conservatively as hourly (24 images/day) so chunks stay ≤ 180 days.
     """
-    # Earth Engine has limits around 5000 elements per collection operation
     MAX_ELEMENTS = 5000
+    tr = (temporal_resolution or 'daily').lower()
 
-    if temporal_resolution == 'daily':
-        # Daily: 365 images per year, can handle ~13 years
-        images_per_day = 1
-        max_days_per_chunk = min(MAX_ELEMENTS // images_per_day, 3650)  # Max 10 years
-        chunk_days = min(total_days, max_days_per_chunk)
-
-    elif temporal_resolution == 'hourly':
-        # Hourly: 8760 images per year, need smaller chunks
-        images_per_day = 24
-        max_days_per_chunk = min(MAX_ELEMENTS // images_per_day, 180)  # ~6 months
-        chunk_days = min(total_days, max_days_per_chunk)
-
-    elif temporal_resolution == '30min':
-        # 30-minute: 17520 images per year, need even smaller chunks
+    # ── 30-minute ──────────────────────────────────────────────────────────────
+    if ('30' in tr and 'min' in tr) or tr in ('30min', '30-min', '30minute'):
         images_per_day = 48
         max_days_per_chunk = min(MAX_ELEMENTS // images_per_day, 90)  # ~3 months
         chunk_days = min(total_days, max_days_per_chunk)
 
-    elif temporal_resolution == 'yearly':
-        # Yearly: Climate indices already aggregated to 1 image per year
-        # Don't chunk - process the entire period as one
-        images_per_day = 1/365  # 1 image per year
-        chunk_days = total_days  # Process entire period
+    # ── 3-hourly ────────────────────────────────────────────────────────────────
+    elif '3-hour' in tr or '3hour' in tr or tr == '3h':
+        images_per_day = 8
+        max_days_per_chunk = min(MAX_ELEMENTS // images_per_day, 180)
+        chunk_days = min(total_days, max_days_per_chunk)
 
-    elif temporal_resolution == 'monthly':
-        # Monthly: Climate indices already aggregated to 1 image per month
-        # Don't chunk - process the entire period as one
-        images_per_day = 1/30  # 1 image per month
-        chunk_days = total_days  # Process entire period
+    # ── Hourly (incl. STAC "Variable" = ERA5 sub-daily) ────────────────────────
+    elif 'hour' in tr or tr in ('variable', '1h', '1 hour'):
+        images_per_day = 24
+        max_days_per_chunk = min(MAX_ELEMENTS // images_per_day, 180)  # ~6 months
+        chunk_days = min(total_days, max_days_per_chunk)
 
+    # ── Yearly / Annual — no chunking needed ────────────────────────────────────
+    elif 'year' in tr or 'annual' in tr or 'multi-year' in tr:
+        images_per_day = 1 / 365
+        chunk_days = total_days
+
+    # ── Monthly — no chunking needed ───────────────────────────────────────────
+    elif 'month' in tr:
+        images_per_day = 1 / 30
+        chunk_days = total_days
+
+    # ── Daily (default) ─────────────────────────────────────────────────────────
     else:
-        # Default: assume daily
         images_per_day = 1
-        max_days_per_chunk = min(MAX_ELEMENTS // images_per_day, 1825)  # 5 years
+        max_days_per_chunk = min(MAX_ELEMENTS // images_per_day, 3650)  # Max 10 years
         chunk_days = min(total_days, max_days_per_chunk)
 
     max_images = chunk_days * images_per_day
-
     return chunk_days, max_images
 
 
@@ -111,7 +117,8 @@ def create_date_chunks(start_date, end_date, chunk_days):
 
 
 def process_image_collection_chunked(collection, bands, geometry, start_date, end_date,
-                                   export_format, scale, temporal_resolution='daily'):
+                                   export_format, scale, temporal_resolution='daily',
+                                   ee_id=None):
     """
     Process large image collections using chunking mechanism
 
@@ -168,7 +175,7 @@ def process_image_collection_chunked(collection, bands, geometry, start_date, en
         date_chunks = create_date_chunks(start_str, end_str, chunk_days)
 
         if export_format == 'CSV':
-            return _process_csv_chunks(collection, bands, geometry, date_chunks, scale, temporal_resolution)
+            return _process_csv_chunks(collection, bands, geometry, date_chunks, scale, temporal_resolution, ee_id=ee_id)
         elif export_format == 'GeoTIFF':
             return _process_geotiff_chunks(collection, bands, geometry, date_chunks, scale, temporal_resolution)
         else:
@@ -209,16 +216,28 @@ def _process_single_chunk(collection, bands, geometry, start_date, end_date,
     return {'success': False, 'message': f"Unsupported format: {export_format}"}
 
 
-def _process_csv_chunks(collection, bands, geometry, date_chunks, scale, temporal_resolution):
-    """Process CSV export using optimized chunked fetcher"""
+def _process_csv_chunks(collection, bands, geometry, date_chunks, scale, temporal_resolution, ee_id=None):
+    """Process CSV export using optimized chunked fetcher.
+
+    ee_id should be passed by the caller to avoid calling collection.getInfo()
+    on a potentially huge collection (which triggers the 5 000-element GEE limit).
+    If ee_id is None we attempt a safe .id().getInfo() call; on failure we fall
+    straight through to the legacy method.
+    """
     all_dfs = []
     chunk_progress = st.empty()
 
     try:
-        # Get collection EE ID for creating new fetchers
-        ee_id = collection.getInfo()['id'] if hasattr(collection, 'getInfo') else None
+        # Resolve ee_id without enumerating collection elements
         if not ee_id:
-            # Fallback to slow method if we can't get EE ID
+            try:
+                # .get('system:id') is a lightweight property lookup, NOT a full getInfo()
+                ee_id = collection.get('system:id').getInfo()
+            except Exception:
+                ee_id = None
+
+        if not ee_id:
+            # Cannot build ImageCollectionFetcher — use legacy per-chunk method
             return _process_csv_chunks_legacy(collection, bands, geometry, date_chunks, scale, temporal_resolution)
 
         for chunk_idx, (chunk_start, chunk_end) in enumerate(date_chunks):
@@ -362,45 +381,84 @@ def _process_csv_chunks_legacy(collection, bands, geometry, date_chunks, scale, 
 
 
 def _extract_csv_data_from_collection(collection, geometry, scale, collection_size):
-    """Extract CSV data from a single collection"""
-    rows = []
-    images_list = collection.toList(collection_size)
+    """
+    Extract CSV data from a collection as a list of row dicts.
+
+    Uses FeatureCollection.getDownloadURL (server-side CSV generation) instead
+    of the old toList + per-image reduceRegion loop, which:
+      - Failed for collection_size > 5000 (GEE toList limit)
+      - Made one blocking HTTP call per image
+    """
+    import requests
+    import io as _io
 
     progress_placeholder = st.empty()
-
     try:
-        for i in range(collection_size):
-            try:
-                # Progress update
-                if i % 10 == 0:
-                    progress_placeholder.info(f"Extracting data from image {i+1}/{collection_size}...")
+        progress_placeholder.info(
+            f"Fetching {collection_size} records from Earth Engine (server-side CSV)..."
+        )
 
-                image = ee.Image(images_list.get(i))
+        # Build a FeatureCollection where each feature holds the date and band means
+        def to_feature(image):
+            date_str = image.date().format('YYYY-MM-dd HH:mm:ss')
+            means = image.reduceRegion(
+                reducer=ee.Reducer.mean(),
+                geometry=geometry,
+                scale=scale,
+                maxPixels=1e9
+            )
+            return ee.Feature(None, means.set('datetime', date_str))
 
-                # Get date components
-                date_obj = image.date()
-                datetime_str = date_obj.format('YYYY-MM-dd HH:mm:ss').getInfo()
+        # Explicitly cast to FeatureCollection — collection.map() on an
+        # ImageCollection returns a mapped Collection, not an ee.FeatureCollection,
+        # so the cast is required before calling getDownloadURL.
+        fc = ee.FeatureCollection(collection.map(to_feature))
 
-                # Get statistics
-                stats = image.reduceRegion(
-                    reducer=ee.Reducer.mean(),
-                    geometry=geometry,
-                    scale=scale,
-                    maxPixels=1e9
-                ).getInfo()
+        # getDownloadURL generates CSV server-side — no 5000-element limit,
+        # single HTTP download rather than N blocking getInfo() calls.
+        url = fc.getDownloadURL(filetype='csv')
+        response = requests.get(url, timeout=300)
+        response.raise_for_status()
 
-                # Create row
-                row = {
-                    'datetime': datetime_str,
-                    **stats
-                }
+        df = pd.read_csv(_io.StringIO(response.text))
+        if df.empty:
+            return []
 
-                rows.append(row)
+        # Normalise datetime column name
+        if 'datetime' not in df.columns and len(df.columns) > 0:
+            df = df.rename(columns={df.columns[0]: 'datetime'})
 
-            except Exception as img_error:
-                st.warning(f"Error processing image {i+1}: {str(img_error)}")
-                continue
+        return df.to_dict('records')
 
+    except Exception as e:
+        st.warning(
+            f"getDownloadURL failed ({e}), falling back to per-image extraction..."
+        )
+        # Legacy fallback: image-by-image (slow, fails at >5000, kept as last resort)
+        rows = []
+        try:
+            images_list = collection.toList(min(collection_size, 5000))
+            n = min(collection_size, 5000)
+            for i in range(n):
+                try:
+                    if i % 10 == 0:
+                        progress_placeholder.info(
+                            f"Legacy extraction: image {i+1}/{n}..."
+                        )
+                    image = ee.Image(images_list.get(i))
+                    datetime_str = image.date().format('YYYY-MM-dd HH:mm:ss').getInfo()
+                    stats = image.reduceRegion(
+                        reducer=ee.Reducer.mean(),
+                        geometry=geometry,
+                        scale=scale,
+                        maxPixels=1e9
+                    ).getInfo()
+                    rows.append({'datetime': datetime_str, **stats})
+                except Exception as img_error:
+                    st.warning(f"Error processing image {i+1}: {str(img_error)}")
+                    continue
+        except Exception:
+            pass
         return rows
 
     finally:
@@ -609,20 +667,27 @@ def export_individual_geotiffs_standalone(collection, temp_path, geometry, scale
         images_list = collection.toList(collection_size)
         exported_files = []
 
-        # Create progress placeholder for larger collections
-        progress_placeholder = st.empty() if collection_size > 5 else None
+        # Progress bar + single status line that updates every image
+        progress_bar         = st.progress(0)
+        progress_placeholder = st.empty()
 
         for i in range(collection_size):
             try:
-                # Show progress for larger collections - replace, don't add
-                if progress_placeholder and i % 5 == 0:
-                    progress_placeholder.info(f"Exporting GeoTIFF {i+1}/{collection_size}...")
+                # Show "fetching…" before the GEE call
+                progress_bar.progress(i / collection_size)
+                progress_placeholder.info(f"🔄 Fetching image {i + 1}/{collection_size}…")
 
                 image = ee.Image(images_list.get(i))
 
-                # Get image date for filename
+                # Get image date for filename (already a required GEE call)
                 date_str = image.date().format('YYYY_MM_dd').getInfo()
                 time_str = image.date().format('HH_mm_ss').getInfo()
+
+                # Update status with the actual date now that we have it
+                year_label = date_str[:4] if date_str else str(i + 1)
+                progress_placeholder.info(
+                    f"📥 Exporting {i + 1}/{collection_size} — {year_label}"
+                )
 
                 # Create filename with time info
                 filename = f"image_{date_str}_{time_str}.tif"
@@ -638,20 +703,23 @@ def export_individual_geotiffs_standalone(collection, temp_path, geometry, scale
                     scale=scale,
                     region=geometry,
                     file_per_band=False,
-                    crs='EPSG:4326'  # Explicitly set coordinate reference system
+                    crs='EPSG:4326'
                 )
 
                 if file_path.exists() and file_path.stat().st_size > 0:
                     exported_files.append(file_path)
+                    progress_placeholder.success(
+                        f"✅ {i + 1}/{collection_size} — {year_label} saved"
+                    )
                 else:
-                    st.warning(f"Failed to export image {i+1}: {filename}")
+                    st.warning(f"⚠️ Image {i + 1} ({year_label}): export produced empty file")
 
             except Exception as img_error:
-                st.warning(f"Error exporting image {i+1}: {str(img_error)}")
+                st.warning(f"⚠️ Image {i + 1}: {str(img_error)}")
                 continue
 
-        if progress_placeholder:
-            progress_placeholder.empty()
+        progress_bar.progress(1.0)
+        progress_placeholder.empty()
 
         if exported_files:
             # Create ZIP file containing all GeoTIFFs

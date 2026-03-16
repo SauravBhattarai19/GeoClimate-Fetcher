@@ -226,13 +226,13 @@ class UserRegistration:
                 submitted = st.form_submit_button(
                     "✅ Submit & Continue",
                     type="primary",
-                    use_container_width=True
+                    width="stretch"
                 )
 
             with col_skip:
                 skipped = st.form_submit_button(
                     "⏭️ Skip for Now",
-                    use_container_width=True
+                    width="stretch"
                 )
 
         if submitted or skipped:

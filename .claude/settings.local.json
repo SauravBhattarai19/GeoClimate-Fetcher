@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)",
+      "WebSearch",
+      "Bash(conda run:*)",
+      "Bash(python3:*)",
+      "WebFetch(domain:github.com)"
+    ]
+  }
+}

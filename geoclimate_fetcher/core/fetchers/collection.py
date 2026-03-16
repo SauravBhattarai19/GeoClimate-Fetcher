@@ -109,55 +109,76 @@ class ImageCollectionFetcher:
 
         def extract_date_value(image):
             """Extract date and average values from an image."""
-            # Get the timestamp
             date = ee.Date(image.get('system:time_start'))
-            date_string = date.format('YYYY-MM-dd')
-
-            # Get the average value for each band
+            date_string = date.format('YYYY-MM-dd HH:mm:ss')
             means = image.reduceRegion(
                 reducer=ee.Reducer.mean(),
-                geometry=simplified_geometry,  # Use simplified geometry
-                scale=optimized_scale,  # Use optimized scale
+                geometry=simplified_geometry,
+                scale=optimized_scale,
                 maxPixels=2e9
             )
-            
-            # Create properties object with bands
-            properties = {'date': date_string}
-            for band in self.bands:
-                # Use .get() method to get band value from means
-                properties[band] = means.get(band)
-            
-            # Create a feature with properties
+            properties = means.set('date', date_string)
             return ee.Feature(None, properties)
-            
-        # Map over the collection and get average values
-        features = self.collection.map(extract_date_value)
-        
-        # Get the data as a Pandas DataFrame
-        print("Fetching feature collection from Earth Engine...")
-        feature_collection = features.getInfo()
-        
-        # Extract the properties we need into a DataFrame
-        if 'features' not in feature_collection or not feature_collection.get('features'):
-            print("No features returned from Earth Engine. Collection may be empty for the given time range.")
-            return pd.DataFrame()
-            
-        rows = []
-        for feature in feature_collection['features']:
-            props = feature['properties']
-            row = {'date': props['date']}
-            for band in self.bands:
-                row[band] = props.get(band)
-            rows.append(row)
-            
-        df = pd.DataFrame(rows)
-        if not df.empty:
-            df['date'] = pd.to_datetime(df['date'])
-            df = df.sort_values('date')
-            
-        return df
+
+        # Map over the collection and explicitly cast to FeatureCollection.
+        # ImageCollection.map() returns a mapped Collection object, NOT an
+        # ee.FeatureCollection — the cast is required before calling getDownloadURL.
+        features = ee.FeatureCollection(self.collection.map(extract_date_value))
+
+        # Use getDownloadURL instead of getInfo():
+        #   - No 5000-element limit (GEE generates CSV server-side)
+        #   - Single HTTP download instead of JSON serialisation round-trip
+        #   - 5-10x faster for large feature collections
+        print("Fetching time series CSV from Earth Engine via getDownloadURL...")
+        try:
+            import requests
+            import io as _io
+
+            selectors = ['date'] + list(self.bands)
+            url = features.getDownloadURL(filetype='csv', selectors=selectors)
+            response = requests.get(url, timeout=300)
+            response.raise_for_status()
+
+            df = pd.read_csv(_io.StringIO(response.text))
+
+            if df.empty:
+                print("No data returned from Earth Engine for the given time range.")
+                return pd.DataFrame()
+
+            # Ensure a 'date' column exists (GEE may name it differently)
+            if 'date' not in df.columns:
+                # Fall back to first column as date if 'date' is missing
+                df = df.rename(columns={df.columns[0]: 'date'})
+
+            df['date'] = pd.to_datetime(df['date'], errors='coerce')
+            df = df.sort_values('date').reset_index(drop=True)
+            return df
+
+        except Exception as download_err:
+            # Graceful fallback: if getDownloadURL fails (e.g. network issue),
+            # try the legacy getInfo() path which works for small collections.
+            print(f"getDownloadURL failed ({download_err}), falling back to getInfo()...")
+            feature_collection = features.getInfo()
+
+            if 'features' not in feature_collection or not feature_collection.get('features'):
+                print("No features returned from Earth Engine.")
+                return pd.DataFrame()
+
+            rows = []
+            for feature in feature_collection['features']:
+                props = feature['properties']
+                row = {'date': props.get('date', '')}
+                for band in self.bands:
+                    row[band] = props.get(band)
+                rows.append(row)
+
+            df = pd.DataFrame(rows)
+            if not df.empty:
+                df['date'] = pd.to_datetime(df['date'], errors='coerce')
+                df = df.sort_values('date').reset_index(drop=True)
+            return df
     
-    def get_time_series_average_chunked(self, chunk_months=3, export_format: str = 'CSV', user_scale: float = 1000, temporal_resolution: str = 'Daily', dataset_native_scale: float = None):
+    def get_time_series_average_chunked(self, chunk_months=3, export_format: str = 'CSV', user_scale: float = 1000, temporal_resolution: str = 'Daily', dataset_native_scale: float = None, progress_callback=None):
         """
         Calculate spatial average time series in chunks with temporal-resolution-aware chunking.
 
@@ -171,22 +192,34 @@ class ImageCollectionFetcher:
         Returns:
             DataFrame with dates and band averages for the entire period
         """
-        # Smart chunking based on temporal resolution
+        # Smart chunking based on temporal resolution.
+        # Since get_time_series_average now uses getDownloadURL (no 5000-element limit),
+        # chunks can be much larger — reducing total HTTP round-trips significantly.
+        # Hourly 3→12 months = 4x fewer calls; Daily 12→60 months = 5x fewer calls.
+        #
+        # 'Variable' is what STAC returns for sub-daily datasets like ERA5 Hourly.
+        # Treat conservatively as Hourly (12-month chunks).
         chunk_strategies = {
-            'Static': None,  # No chunking needed
-            'Multi-year': None,  # No chunking needed
-            'Annual': 60,  # 5 years per chunk
-            'Yearly': 60,  # 5 years per chunk
+            'Static': None,          # No chunking needed
+            'Multi-year': None,      # No chunking needed
+            'Annual': 120,           # 10 years per chunk
+            'Yearly': 120,           # 10 years per chunk
             '30-Year Monthly Average': None,  # Static data
-            'Monthly': 36,  # 3 years per chunk
-            '16-Day': 24,  # 2 years per chunk
-            '8-Day': 12,  # 1 year per chunk
-            '6-Day': 12,  # 1 year per chunk
-            '2-Day': 12,  # 1 year per chunk
-            'Daily': 12,  # 1 year per chunk
-            '3-hourly': 6,  # 6 months per chunk
-            'Hourly': 3,  # 3 months per chunk
-            '30-minute': 1  # 1 month per chunk
+            'Monthly': 60,           # 5 years per chunk
+            '16-Day': 60,            # 5 years per chunk
+            '8-Day': 60,             # 5 years per chunk
+            '6-Day': 60,             # 5 years per chunk
+            '2-Day': 60,             # 5 years per chunk
+            'Daily': 60,             # 5 years per chunk
+            '3-hourly': 12,          # 1 year per chunk
+            'Hourly': 12,            # 1 year per chunk  (was 3 months)
+            '30-minute': 3,          # 3 months per chunk (was 1 month)
+            # STAC API variant spellings:
+            'Variable': 12,          # ERA5 Hourly reports 'Variable' in STAC
+            'variable': 12,
+            'hourly': 12,
+            'daily': 60,
+            'monthly': 60,
         }
 
         # Determine optimal chunk size
@@ -338,7 +371,10 @@ class ImageCollectionFetcher:
             temp_files = []
             
             for i, (chunk_start, chunk_end) in enumerate(chunks):
-                print(f"Processing chunk {i+1}/{len(chunks)}: {chunk_start} to {chunk_end}")
+                msg = f"Processing chunk {i+1}/{len(chunks)}: {chunk_start} to {chunk_end}"
+                print(msg)
+                if progress_callback:
+                    progress_callback(i, len(chunks), chunk_start, chunk_end)
                 
                 # Filter the collection to this chunk's date range
                 chunk_start_str = chunk_start.strftime('%Y-%m-%d')
@@ -366,11 +402,17 @@ class ImageCollectionFetcher:
                         
                         chunk_dfs.append(chunk_data)
                         print(f"Chunk {i+1}: Retrieved {len(chunk_data)} records")
+                        if progress_callback:
+                            progress_callback(i + 1, len(chunks), chunk_start, chunk_end, records=len(chunk_data))
                     else:
                         print(f"Chunk {i+1}: No data found")
+                        if progress_callback:
+                            progress_callback(i + 1, len(chunks), chunk_start, chunk_end, records=0)
                         
                 except Exception as e:
                     print(f"Error processing chunk {i+1}: {str(e)}")
+                    if progress_callback:
+                        progress_callback(i + 1, len(chunks), chunk_start, chunk_end, error=str(e))
             
             # Combine all chunks
             if chunk_dfs:

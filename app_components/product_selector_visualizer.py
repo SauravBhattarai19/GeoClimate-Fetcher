@@ -359,11 +359,14 @@ class ProductSelectorVisualizer:
                 return go.Figure()
             
             df = pd.DataFrame(comparison_data)
-            
+
+            # Ensure Station IDs are treated as categorical (not numerical)
+            df['Station'] = df['Station'].astype(str)
+
             # Create subplots
             fig = make_subplots(
                 rows=2, cols=2,
-                subplot_titles=('RMSE (Lower is Better)', 'R² (Higher is Better)', 
+                subplot_titles=('RMSE (Lower is Better)', 'R² (Higher is Better)',
                                'Correlation (Higher is Better)', 'Absolute Bias (Lower is Better)')
             )
             
@@ -408,6 +411,12 @@ class ProductSelectorVisualizer:
                 height=700,
                 showlegend=True
             )
+
+            # Update all X-axes to treat station IDs as categorical
+            fig.update_xaxes(type='category', title_text="Station ID", row=1, col=1)
+            fig.update_xaxes(type='category', title_text="Station ID", row=1, col=2)
+            fig.update_xaxes(type='category', title_text="Station ID", row=2, col=1)
+            fig.update_xaxes(type='category', title_text="Station ID", row=2, col=2)
             
             return fig
             

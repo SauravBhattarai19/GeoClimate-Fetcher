@@ -12,7 +12,7 @@ def render_product_selector():
 
     # App title and header
     st.markdown('<h1 class="main-title">🎯 Optimal Product Selector</h1>', unsafe_allow_html=True)
-    st.markdown("### Compare meteostat station data with gridded datasets to find optimal data sources")
+    st.markdown("### Compare meteostat station data with Google Earth Engine datasets to find optimal data sources")
     
     # Import and initialize the product selector component
     try:
