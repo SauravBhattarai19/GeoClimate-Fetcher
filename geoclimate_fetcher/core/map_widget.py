@@ -69,8 +69,8 @@ class UnifiedMapWidget:
         ).add_to(m)
         
         folium.TileLayer(
-            tiles='Stamen Terrain',
-            attr='Map tiles by Stamen Design, under CC BY 3.0. Data by OpenStreetMap, under ODbL.',
+            tiles='https://tiles.stadiamaps.com/tiles/stamen_terrain/{z}/{x}/{y}{r}.png',
+            attr='&copy; <a href="https://stamen.com">Stamen Design</a>, &copy; <a href="https://stadiamaps.com/">Stadia Maps</a>, &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
             name='Terrain'
         ).add_to(m)
         
