@@ -1452,9 +1452,44 @@ def _render_geemap_preview_lazy(start_date, end_date):
     if not is_static:
         tr_lower = temporal_resolution.lower()
         is_subdaily = any(x in tr_lower for x in ['hour', 'minute'])
+        is_annual = any(x in tr_lower for x in ['annual', 'year']) and not is_subdaily
+        is_monthly = 'month' in tr_lower and not is_subdaily
 
-        picked_hour = 0
-        if is_subdaily:
+        if is_annual:
+            # Annual dataset — pick a whole year; filter spans Jan 1 → Jan 1 next year
+            start_year = start_date.year
+            end_year = end_date.year
+            year_options = list(range(start_year, end_year + 1))
+            picked_year = st.selectbox(
+                "Pick a year:",
+                year_options,
+                index=len(year_options) - 1,
+                key="preview_year_sel"
+            )
+            filter_start = f"{picked_year}-01-01"
+            filter_end = f"{picked_year + 1}-01-01"
+            label = str(picked_year)
+        elif is_monthly:
+            # Monthly dataset — pick year + month
+            col_y, col_m = st.columns(2)
+            with col_y:
+                year_options = list(range(start_date.year, end_date.year + 1))
+                picked_year = st.selectbox(
+                    "Year:", year_options, index=len(year_options) - 1, key="preview_year_sel"
+                )
+            with col_m:
+                picked_month = st.selectbox(
+                    "Month:", list(range(1, 13)),
+                    format_func=lambda m: datetime(2000, m, 1).strftime('%B'),
+                    key="preview_month_sel"
+                )
+            next_month = picked_month % 12 + 1
+            next_year = picked_year + (1 if picked_month == 12 else 0)
+            filter_start = f"{picked_year}-{picked_month:02d}-01"
+            filter_end = f"{next_year}-{next_month:02d}-01"
+            label = f"{picked_year}-{picked_month:02d}"
+        elif is_subdaily:
+            picked_hour = 0
             col_date, col_hour = st.columns([2, 1])
             with col_date:
                 picked_date = st.date_input(
@@ -1472,6 +1507,11 @@ def _render_geemap_preview_lazy(start_date, end_date):
                     key="preview_hour_sel",
                     format_func=lambda h: f"{h:02d}:00"
                 )
+            d = picked_date
+            filter_start = f"{d.year}-{d.month:02d}-{d.day:02d} {picked_hour:02d}:00:00"
+            end_dt = datetime(d.year, d.month, d.day, picked_hour) + timedelta(hours=1)
+            filter_end = end_dt.strftime('%Y-%m-%d %H:%M:%S')
+            label = f"{picked_date} {picked_hour:02d}:00 UTC"
         else:
             picked_date = st.date_input(
                 "Pick a date:",
@@ -1480,15 +1520,6 @@ def _render_geemap_preview_lazy(start_date, end_date):
                 max_value=end_date,
                 key="preview_date_picker"
             )
-
-        # Build filterDate strings — no timestamp conversion needed
-        if is_subdaily:
-            d = picked_date
-            filter_start = f"{d.year}-{d.month:02d}-{d.day:02d} {picked_hour:02d}:00:00"
-            end_dt = datetime(d.year, d.month, d.day, picked_hour) + timedelta(hours=1)
-            filter_end = end_dt.strftime('%Y-%m-%d %H:%M:%S')
-            label = f"{picked_date} {picked_hour:02d}:00 UTC"
-        else:
             filter_start = str(picked_date)
             filter_end = str(picked_date + timedelta(days=1))
             label = str(picked_date)
@@ -1496,48 +1527,65 @@ def _render_geemap_preview_lazy(start_date, end_date):
         if st.button(f"🗺️ Show Map — {label}", type="primary", key="btn_show_preview"):
             with st.spinner(f"🔄 Loading {label}..."):
                 try:
+                    import folium
+                    import streamlit.components.v1 as components
+                    from branca.colormap import LinearColormap
+                    # No upfront .select(bands) — avoids heterogeneous-collection errors
+                    # on datasets where band count differs by year (e.g. CGLS-LC100)
                     img = (
                         ee.ImageCollection(selected_dataset['ee_id'])
-                        .select(selected_bands)
                         .filterDate(filter_start, filter_end)
                         .filterBounds(geometry)
                         .first()
                         .clip(geometry)
                     )
-                    vis_config = _get_vis_params_for_band(viz_band, img, geometry)
-                    stats = img.select(viz_band).reduceRegion(
-                        reducer=ee.Reducer.percentile([5, 95]),
-                        geometry=geometry,
-                        scale=5000,
-                        maxPixels=1e8
-                    ).getInfo()
-                    vmin = stats.get(f'{viz_band}_p5') or 0
-                    vmax = stats.get(f'{viz_band}_p95') or 100
-
-                    Map = geemap.Map()
-                    try:
-                        centroid = geometry.centroid().getInfo()['coordinates']
-                        Map.setCenter(centroid[0], centroid[1], 8)
-                    except Exception:
-                        Map.setCenter(0, 0, 3)
-                    Map.addLayer(geometry, {'color': 'red'}, 'Study Area', True, 0.5)
-                    Map.addLayer(
-                        img,
-                        {'bands': [viz_band], 'min': vmin, 'max': vmax,
-                         'palette': vis_config['palette']},
-                        f"{viz_band} — {label}", True
-                    )
-                    try:
-                        Map.add_colorbar(
-                            vis_params={'min': vmin, 'max': vmax,
-                                        'palette': vis_config['palette']},
-                            label=f"{viz_band} ({vis_config['unit']})",
-                            position='bottomright'
+                    band_names = img.bandNames().getInfo()
+                    if not band_names:
+                        st.error("❌ No image found for this period. Try a different selection.")
+                    else:
+                        actual_band = viz_band if viz_band in band_names else band_names[0]
+                        if actual_band != viz_band:
+                            st.info(f"ℹ️ Band '{viz_band}' not in this image. Showing '{actual_band}'.")
+                        vis_config = _get_vis_params_for_band(actual_band, img, geometry)
+                        stats = img.select(actual_band).reduceRegion(
+                            reducer=ee.Reducer.percentile([5, 95]),
+                            geometry=geometry, scale=5000, maxPixels=1e8
+                        ).getInfo()
+                        vmin = stats.get(f'{actual_band}_p5') or 0
+                        vmax = stats.get(f'{actual_band}_p95') or 100
+                        if vmin == vmax:
+                            vmin, vmax = 0, max(vmax, 1)
+                        palette = vis_config['palette']
+                        bounds_coords = geometry.bounds().getInfo()['coordinates'][0]
+                        lons = [pt[0] for pt in bounds_coords]
+                        lats = [pt[1] for pt in bounds_coords]
+                        min_lon, max_lon = min(lons), max(lons)
+                        min_lat, max_lat = min(lats), max(lats)
+                        thumb_url = img.select(actual_band).getThumbURL({
+                            'min': vmin, 'max': vmax, 'palette': palette,
+                            'region': geometry.bounds(), 'dimensions': 768, 'format': 'png',
+                        })
+                        m = folium.Map(
+                            location=[(min_lat + max_lat) / 2, (min_lon + max_lon) / 2],
+                            zoom_start=7
                         )
-                    except Exception:
-                        pass
-                    Map.to_streamlit(height=500)
-                    st.caption(f"{viz_band} | {vmin:.2f}–{vmax:.2f} {vis_config['unit']}")
+                        folium.raster_layers.ImageOverlay(
+                            image=thumb_url,
+                            bounds=[[min_lat, min_lon], [max_lat, max_lon]],
+                            opacity=0.85, name=f"{actual_band} — {label}",
+                            interactive=False, cross_origin=False,
+                        ).add_to(m)
+                        folium.GeoJson(
+                            geometry.getInfo(), name="Study Area",
+                            style_function=lambda x: {'color': 'black', 'weight': 2, 'fillOpacity': 0}
+                        ).add_to(m)
+                        LinearColormap(
+                            colors=palette, vmin=vmin, vmax=vmax,
+                            caption=f"{actual_band} ({vis_config['unit']})"
+                        ).add_to(m)
+                        folium.LayerControl().add_to(m)
+                        components.html(m.get_root().render(), height=520)
+                        st.caption(f"{actual_band} | {vmin:.2f}–{vmax:.2f} {vis_config['unit']}")
                 except Exception as e:
                     st.error(f"❌ Preview failed: {str(e)}")
 
@@ -1546,6 +1594,9 @@ def _render_geemap_preview_lazy(start_date, end_date):
         if st.button("🗺️ Load Static Preview", type="primary", key="btn_static_preview"):
             with st.spinner("🔄 Loading..."):
                 try:
+                    import folium
+                    import streamlit.components.v1 as components
+                    from branca.colormap import LinearColormap
                     image = (
                         ee.Image(selected_dataset['ee_id'])
                         .select(selected_bands)
@@ -1554,27 +1605,42 @@ def _render_geemap_preview_lazy(start_date, end_date):
                     vis_config = _get_vis_params_for_band(viz_band, image, geometry)
                     stats = image.select(viz_band).reduceRegion(
                         reducer=ee.Reducer.percentile([5, 95]),
-                        geometry=geometry,
-                        scale=1000,
-                        maxPixels=1e8
+                        geometry=geometry, scale=1000, maxPixels=1e8
                     ).getInfo()
                     vmin = stats.get(f'{viz_band}_p5') or 0
                     vmax = stats.get(f'{viz_band}_p95') or 100
-
-                    Map = geemap.Map()
-                    try:
-                        centroid = geometry.centroid().getInfo()['coordinates']
-                        Map.setCenter(centroid[0], centroid[1], 8)
-                    except Exception:
-                        Map.setCenter(0, 0, 3)
-                    Map.addLayer(geometry, {'color': 'red'}, 'Study Area', True, 0.5)
-                    Map.addLayer(
-                        image,
-                        {'bands': [viz_band], 'min': vmin, 'max': vmax,
-                         'palette': vis_config['palette']},
-                        viz_band, True
+                    if vmin == vmax:
+                        vmin, vmax = 0, max(vmax, 1)
+                    palette = vis_config['palette']
+                    bounds_coords = geometry.bounds().getInfo()['coordinates'][0]
+                    lons = [pt[0] for pt in bounds_coords]
+                    lats = [pt[1] for pt in bounds_coords]
+                    min_lon, max_lon = min(lons), max(lons)
+                    min_lat, max_lat = min(lats), max(lats)
+                    thumb_url = image.select(viz_band).getThumbURL({
+                        'min': vmin, 'max': vmax, 'palette': palette,
+                        'region': geometry.bounds(), 'dimensions': 768, 'format': 'png',
+                    })
+                    m = folium.Map(
+                        location=[(min_lat + max_lat) / 2, (min_lon + max_lon) / 2],
+                        zoom_start=7
                     )
-                    Map.to_streamlit(height=500)
+                    folium.raster_layers.ImageOverlay(
+                        image=thumb_url,
+                        bounds=[[min_lat, min_lon], [max_lat, max_lon]],
+                        opacity=0.85, name=viz_band,
+                        interactive=False, cross_origin=False,
+                    ).add_to(m)
+                    folium.GeoJson(
+                        geometry.getInfo(), name="Study Area",
+                        style_function=lambda x: {'color': 'black', 'weight': 2, 'fillOpacity': 0}
+                    ).add_to(m)
+                    LinearColormap(
+                        colors=palette, vmin=vmin, vmax=vmax,
+                        caption=f"{viz_band} ({vis_config['unit']})"
+                    ).add_to(m)
+                    folium.LayerControl().add_to(m)
+                    components.html(m.get_root().render(), height=520)
                     st.caption(f"{viz_band} | {vmin:.2f}–{vmax:.2f} {vis_config['unit']}")
                 except Exception as e:
                     st.error(f"❌ Preview failed: {str(e)}")
@@ -1659,42 +1725,77 @@ def _render_download_interface():
     st.markdown("### 📅 Select Date Range")
     st.caption(f"Dataset available: {dataset_start_date} → {dataset_end_date}")
 
-    preset_options = []
-    preset_dates_map = {}
-    if (max_end_date - timedelta(days=30)) >= dataset_start_date:
-        preset_options.append("Last 30 days")
-        preset_dates_map["Last 30 days"] = (max_end_date - timedelta(days=30), max_end_date)
-    if (max_end_date - timedelta(days=90)) >= dataset_start_date:
-        preset_options.append("Last 3 months")
-        preset_dates_map["Last 3 months"] = (max_end_date - timedelta(days=90), max_end_date)
-    if (max_end_date - timedelta(days=365)) >= dataset_start_date:
-        preset_options.append("Last year")
-        preset_dates_map["Last year"] = (max_end_date - timedelta(days=365), max_end_date)
-    preset_options.append("Full available period")
-    preset_dates_map["Full available period"] = (dataset_start_date, dataset_end_date)
-    preset_options.append("Custom range")
+    temporal_resolution = selected_dataset.get('temporal_resolution', 'Daily')
+    tr_lower = temporal_resolution.lower()
+    is_annual_dataset = any(x in tr_lower for x in ['annual', 'year'])
 
-    col_preset, col_dates = st.columns([1, 2])
-    with col_preset:
-        date_option = st.radio("Quick select:", preset_options, key="dl_date_preset",
-                               label_visibility="collapsed")
-    with col_dates:
-        if date_option == "Custom range":
-            c1, c2 = st.columns(2)
-            default_start = st.session_state.get(
-                'start_date', max(dataset_start_date, max_end_date - timedelta(days=30)))
-            default_end = st.session_state.get('end_date', max_end_date)
-            with c1:
-                start_date = st.date_input("Start", value=default_start,
-                    min_value=dataset_start_date, max_value=dataset_end_date,
-                    key="dl_start_date")
-            with c2:
-                end_date = st.date_input("End", value=default_end,
-                    min_value=dataset_start_date, max_value=dataset_end_date,
-                    key="dl_end_date")
-        else:
-            start_date, end_date = preset_dates_map[date_option]
-            st.info(f"📅 {start_date}  →  {end_date}")
+    if is_annual_dataset:
+        # Annual datasets: sub-year windows contain no images — show year presets
+        start_year = dataset_start_date.year
+        end_year = min(dataset_end_date.year, today.year)
+        available_years = list(range(start_year, end_year + 1))
+        year_labels = [str(y) for y in available_years] + ["All available years", "Custom year range"]
+
+        col_preset, col_dates = st.columns([1, 2])
+        with col_preset:
+            date_option = st.radio("Select year:", year_labels, key="dl_date_preset",
+                                   index=len(available_years) - 1, label_visibility="collapsed")
+        with col_dates:
+            if date_option == "Custom year range":
+                c1, c2 = st.columns(2)
+                with c1:
+                    start_year_sel = st.selectbox("Start Year", available_years, key="dl_start_year")
+                with c2:
+                    end_year_sel = st.selectbox("End Year", available_years,
+                                                index=len(available_years) - 1, key="dl_end_year")
+                start_date = datetime(start_year_sel, 1, 1).date()
+                end_date = datetime(end_year_sel, 12, 31).date()
+            elif date_option == "All available years":
+                start_date = dataset_start_date
+                end_date = dataset_end_date
+                st.info(f"📅 {start_date}  →  {end_date}")
+            else:
+                y = int(date_option)
+                start_date = datetime(y, 1, 1).date()
+                end_date = datetime(y, 12, 31).date()
+                st.info(f"📅 {start_date}  →  {end_date}")
+    else:
+        preset_options = []
+        preset_dates_map = {}
+        if (max_end_date - timedelta(days=30)) >= dataset_start_date:
+            preset_options.append("Last 30 days")
+            preset_dates_map["Last 30 days"] = (max_end_date - timedelta(days=30), max_end_date)
+        if (max_end_date - timedelta(days=90)) >= dataset_start_date:
+            preset_options.append("Last 3 months")
+            preset_dates_map["Last 3 months"] = (max_end_date - timedelta(days=90), max_end_date)
+        if (max_end_date - timedelta(days=365)) >= dataset_start_date:
+            preset_options.append("Last year")
+            preset_dates_map["Last year"] = (max_end_date - timedelta(days=365), max_end_date)
+        preset_options.append("Full available period")
+        preset_dates_map["Full available period"] = (dataset_start_date, dataset_end_date)
+        preset_options.append("Custom range")
+
+        col_preset, col_dates = st.columns([1, 2])
+        with col_preset:
+            date_option = st.radio("Quick select:", preset_options, key="dl_date_preset",
+                                   label_visibility="collapsed")
+        with col_dates:
+            if date_option == "Custom range":
+                c1, c2 = st.columns(2)
+                default_start = st.session_state.get(
+                    'start_date', max(dataset_start_date, max_end_date - timedelta(days=30)))
+                default_end = st.session_state.get('end_date', max_end_date)
+                with c1:
+                    start_date = st.date_input("Start", value=default_start,
+                        min_value=dataset_start_date, max_value=dataset_end_date,
+                        key="dl_start_date")
+                with c2:
+                    end_date = st.date_input("End", value=default_end,
+                        min_value=dataset_start_date, max_value=dataset_end_date,
+                        key="dl_end_date")
+            else:
+                start_date, end_date = preset_dates_map[date_option]
+                st.info(f"📅 {start_date}  →  {end_date}")
 
     if start_date >= end_date:
         st.error("❌ Start date must be before end date")
@@ -2967,8 +3068,25 @@ def _process_smart_download(export_format, scale, export_preference):
                         return _process_download(export_format, scale)
 
                 else:
-                    # For GeoTIFF format, create a median composite for smart download
-                    composite_image = fetcher.collection.median()
+                    # For GeoTIFF format, create a median composite for smart download.
+                    # Handle heterogeneous collections (e.g. CGLS-LC100: 2015 has 14
+                    # bands, 2016–2019 have 15 — calling .median() on a mix fails with
+                    # "Expected a homogeneous image collection" error).
+                    # Use only bands present in the first image as the common denominator.
+                    try:
+                        first_bands = fetcher.collection.first().bandNames().getInfo()
+                        safe_bands = [b for b in bands if b in first_bands]
+                        if set(safe_bands) != set(bands):
+                            excluded = [b for b in bands if b not in first_bands]
+                            st.warning(
+                                f"⚠️ Band(s) **{', '.join(excluded)}** are absent in the "
+                                f"earliest image of this collection and will be excluded "
+                                f"from the composite. To include these bands, select a "
+                                f"date range that skips the earliest year."
+                            )
+                    except Exception:
+                        safe_bands = bands
+                    composite_image = fetcher.collection.select(safe_bands).median()
 
                     # Generate filename
                     from datetime import datetime
