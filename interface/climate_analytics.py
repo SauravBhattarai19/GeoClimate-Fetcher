@@ -2349,29 +2349,37 @@ def _display_geemap_visualization(results):
 
     with st.spinner(f"🔄 Loading {selected_index} — {selected_label}…"):
         try:
-            # Filter to the exact timestamp
+            import folium
+            import streamlit.components.v1 as components
+            from branca.colormap import LinearColormap
+
+            # Filter to exact timestamp — ee.ImageCollection.first() never returns
+            # Python None, so check band count to detect a null/empty image instead.
             selected_ts = int(selected_dt.timestamp() * 1000)
             img = collection.filter(
                 ee.Filter.eq('system:time_start', selected_ts)
             ).first()
 
-            # Fallback: filter by calendar date window if exact TS doesn't match
-            if img is None:
+            # Fallback: ±32-day window in case timestamp precision differs
+            band_names = img.bandNames().getInfo()
+            if not band_names:
                 d_start = selected_dt.strftime('%Y-%m-%d')
                 d_end   = (selected_dt + timedelta(days=32)).strftime('%Y-%m-%d')
                 img = collection.filterDate(d_start, d_end).first()
+                band_names = img.bandNames().getInfo()
 
-            if img is None:
+            if not band_names:
                 st.error("❌ Could not retrieve image for this time period.")
                 return
+
+            band_name = band_names[0]
 
             # Clip to study area
             if geometry:
                 img = img.clip(geometry)
 
-            # 5th–95th percentile range for the colorbar (one GEE call)
+            # 5th–95th percentile range for the colorbar
             try:
-                band_name = img.bandNames().getInfo()[0]
                 stats = img.select(band_name).reduceRegion(
                     reducer=ee.Reducer.percentile([5, 95]),
                     geometry=geometry if geometry else img.geometry(),
@@ -2380,41 +2388,67 @@ def _display_geemap_visualization(results):
                 ).getInfo()
                 vmin = stats.get(f'{band_name}_p5') or 0
                 vmax = stats.get(f'{band_name}_p95') or 100
-                if vmin == vmax:        # flat image fallback
+                if vmin == vmax:
                     vmin, vmax = 0, max(vmax, 1)
             except Exception:
                 vmin, vmax = 0, 100
-                band_name  = selected_index
 
-            # Build map
-            Map = geemap.Map()
+            # Compute spatial bounds for ImageOverlay
+            bounds_geo = geometry.bounds() if geometry else img.geometry().bounds()
+            bounds_coords = bounds_geo.getInfo()['coordinates'][0]
+            lons = [pt[0] for pt in bounds_coords]
+            lats = [pt[1] for pt in bounds_coords]
+            min_lon, max_lon = min(lons), max(lons)
+            min_lat, max_lat = min(lats), max(lats)
+            center_lat = (min_lat + max_lat) / 2
+            center_lon = (min_lon + max_lon) / 2
+
+            # getThumbURL embeds an auth token in the URL — works in any browser
+            # without OAuth headers (unlike v1 tile URLs from getMapId).
+            thumb_url = img.select(band_name).getThumbURL({
+                'min': vmin,
+                'max': vmax,
+                'palette': palette,
+                'region': bounds_geo,
+                'dimensions': 768,
+                'format': 'png',
+            })
+
+            # Build folium map
+            m = folium.Map(location=[center_lat, center_lon], zoom_start=7)
+
+            # EE index image overlay
+            folium.raster_layers.ImageOverlay(
+                image=thumb_url,
+                bounds=[[min_lat, min_lon], [max_lat, max_lon]],
+                opacity=0.85,
+                name=f"{selected_index} — {selected_label}",
+                interactive=False,
+                cross_origin=False,
+            ).add_to(m)
+
+            # Study area boundary
             if geometry:
-                try:
-                    c = geometry.centroid().getInfo()['coordinates']
-                    Map.setCenter(c[0], c[1], 7)
-                except Exception:
-                    pass
+                folium.GeoJson(
+                    geometry.getInfo(),
+                    name="Study Area",
+                    style_function=lambda x: {
+                        'color': 'black', 'weight': 2, 'fillOpacity': 0
+                    }
+                ).add_to(m)
 
-            if geometry:
-                Map.addLayer(geometry, {'color': 'black'}, 'Study Area', True, 0.5)
-
-            Map.addLayer(
-                img,
-                {'min': vmin, 'max': vmax, 'palette': palette},
-                f"{selected_index} — {selected_label}",
-                True
+            # Colorbar legend
+            colorbar = LinearColormap(
+                colors=palette,
+                vmin=vmin,
+                vmax=vmax,
+                caption=f"{selected_index} ({meta['unit']})"
             )
+            colorbar.add_to(m)
 
-            try:
-                Map.add_colorbar(
-                    vis_params={'min': vmin, 'max': vmax, 'palette': palette},
-                    label=f"{selected_index} ({meta['unit']})",
-                    position='bottomright'
-                )
-            except Exception:
-                pass
+            folium.LayerControl().add_to(m)
 
-            Map.to_streamlit(height=560)
+            components.html(m.get_root().render(), height=560)
             st.caption(
                 f"**{selected_index}** | {meta['desc']} | {selected_label} | "
                 f"Range: {vmin:.2f}–{vmax:.2f} {meta['unit']} (5th–95th pct)"
