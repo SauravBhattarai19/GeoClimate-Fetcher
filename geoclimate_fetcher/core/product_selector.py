@@ -110,7 +110,7 @@ class MeteostatHandler:
             ValueError: If variable is not supported or data not found
         """
         try:
-            from meteostat import Daily
+            from meteostat import daily
             from datetime import datetime
 
             # Convert date objects to datetime objects for meteostat
@@ -124,8 +124,8 @@ class MeteostatHandler:
             else:
                 end_datetime = end_date
 
-            # Use the simple direct approach as shown in your working example
-            data = Daily(station_id, start_datetime, end_datetime)
+            # meteostat 2.x API: daily() is a function, station= kwarg required
+            data = daily(station=station_id, start=start_datetime, end=end_datetime)
             df = data.fetch()
 
             if df.empty:
@@ -783,7 +783,7 @@ class GriddedDataHandler:
             # Apply unit conversions
             df = self.apply_unit_conversion(df, ee_id, variable)
             
-            logging.info(f"✅ Retrieved {len(df)} records from {dataset_id} ({ee_id})")
+            logging.info(f"✅ Retrieved {len(df)} records from {ee_id}")
             return df
             
         except Exception as e:
