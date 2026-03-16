@@ -62,8 +62,8 @@ class GeometryComponent:
         )
           # Add additional tile layers
         folium.TileLayer(
-            tiles='https://tiles.stadiamaps.com/tiles/stamen_terrain/{z}/{x}/{y}{r}.png',
-            attr='&copy; <a href="https://stamen.com">Stamen Design</a>, &copy; <a href="https://stadiamaps.com/">Stadia Maps</a>, &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+            tiles='https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+            attr='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
             name='Terrain'
         ).add_to(m)
         folium.TileLayer(
