@@ -35,6 +35,10 @@ def route_to_interface():
         from interface.multi_geometry_export import render_multi_geometry_export
         render_multi_geometry_export()
 
+    elif app_mode == "raster_calculator":
+        from interface.raster_calculator import render_raster_calculator
+        render_raster_calculator()
+
     else:
         # Default case - should not happen, but handle gracefully
         st.error(f"❌ Unknown app mode: {app_mode}")

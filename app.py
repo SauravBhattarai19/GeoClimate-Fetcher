@@ -1136,7 +1136,7 @@ if st.session_state.app_mode is None:
                 <div class="stat-label">Climate Indices</div>
             </div>
             <div class="stat-item">
-                <div class="stat-number">6</div>
+                <div class="stat-number">7</div>
                 <div class="stat-label">Analysis Tools</div>
             </div>
         </div>
@@ -1275,6 +1275,29 @@ if st.session_state.app_mode is None:
         if st.button("🚀 Launch Data Visualizer", width="stretch", type="primary"):
             st.session_state.app_mode = "data_visualizer"
             st.rerun()
+
+    # Fourth row of tools
+    col7, col8 = st.columns(2)
+
+    with col7:
+        st.markdown("""
+        <div class="tool-card">
+            <span class="tool-icon">🧮</span>
+            <div class="tool-title">Raster Calculator</div>
+            <div class="tool-description">
+                Perform band math on any Earth Engine dataset. Compute spectral indices
+                (NDVI, NDWI, EVI, ...) or write custom expressions like (B4-B3)/(B4+B3).
+                Supports temporal aggregation and GeoTIFF export.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        if st.button("🚀 Launch Raster Calculator", width="stretch", type="primary"):
+            st.session_state.app_mode = "raster_calculator"
+            st.rerun()
+
+    with col8:
+        st.empty()  # Placeholder for future tools
 
     # Author Section
     st.markdown('<h3>👨‍💻 About the Developer</h3>', unsafe_allow_html=True)
