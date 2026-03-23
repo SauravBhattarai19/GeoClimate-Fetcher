@@ -31,9 +31,9 @@ class DriveExportManager:
 
             # Check if EE is authenticated (indicates Google auth is available)
             try:
-                ee.Initialize()
+                if not ee.data._initialized:
+                    ee.Initialize()
                 # If EE is authenticated, we can create a Drive service
-                # This is a simplified approach - in production you'd want proper OAuth
                 st.info("🔗 Using Earth Engine authentication for Google Drive access")
                 return True
             except Exception:

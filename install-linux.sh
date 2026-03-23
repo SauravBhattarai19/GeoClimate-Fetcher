@@ -143,8 +143,16 @@ echo ""
 echo "[Step 2/6] Checking for project files..."
 if [ -f "app.py" ]; then
     echo "   Project files found. Skipping clone."
+elif [ -f "GeoClimate-Fetcher/app.py" ]; then
+    echo "   Found existing GeoClimate-Fetcher folder. Using it."
+    cd GeoClimate-Fetcher
 else
     echo "   Project files not found. Cloning repository..."
+    if [ -d "GeoClimate-Fetcher" ]; then
+        echo "   Note: GeoClimate-Fetcher folder exists but appears incomplete."
+        echo "   Removing it and cloning fresh..."
+        rm -rf GeoClimate-Fetcher
+    fi
     git clone https://github.com/SauravBhattarai19/GeoClimate-Fetcher.git
     cd GeoClimate-Fetcher
     echo "   Repository cloned successfully."

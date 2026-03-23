@@ -55,11 +55,21 @@ This is a web-based interface that provides five integrated tools for climate da
 
 ## 🚀 Quick Start
 
-### Option 1: Use the Live Platform (Recommended)
+### Option 1: Use the Live Platform — No Setup Required! (Recommended)
 
 1. **Visit the hosted application**: [https://geeclimate.streamlit.app/](https://geeclimate.streamlit.app/)
+2. **Select "🚀 Quick Access"** in the authentication panel (selected by default)
+3. **Start analyzing!** No account, no login, no installation needed.
 
-2. **One-time setup** (required for Google Earth Engine access):
+> For heavy usage or private projects, you can switch to your own GEE account using the "Use Your Own GEE Account" option.
+
+### Use Your Own GEE Account (Optional)
+
+If you prefer to use your own Google Earth Engine credentials:
+
+1. **Visit the hosted application**: [https://geeclimate.streamlit.app/](https://geoclimate.streamlit.app/)
+
+2. **Select "🔑 Use Your Own GEE Account"** and complete the one-time setup:
 
    **Prerequisites:**
    - Google Earth Engine account → [Sign up FREE](https://earthengine.google.com/signup/) *(for study & research)*

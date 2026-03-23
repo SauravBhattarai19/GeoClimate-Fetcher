@@ -36,6 +36,33 @@ from geoclimate_fetcher.climate_indices import ClimateIndicesCalculator
 import hashlib
 from pathlib import Path
 
+
+@st.cache_resource
+def initialize_ee_service_account():
+    """
+    Initialize GEE using the platform's service account.
+    Credentials are stored in Streamlit Cloud secrets.
+    Returns True if successful, False otherwise.
+    """
+    try:
+        if "gee" not in st.secrets:
+            return False
+
+        key_data = json.loads(st.secrets["gee"]["key_json"])
+        credentials = ee.ServiceAccountCredentials(
+            st.secrets["gee"]["client_email"],
+            key_data=key_data
+        )
+        ee.Initialize(
+            credentials=credentials,
+            project=st.secrets["gee"].get("project_id", None)
+        )
+        # Verify connection works
+        ee.Image("USGS/SRTMGL1_003").getInfo()
+        return True
+    except Exception:
+        return False
+
 # Try to import cookie manager, fallback if not available
 try:
     import extra_streamlit_components as stx
@@ -139,12 +166,25 @@ def clear_authentication():
     # Clear session state
     st.session_state.auth_complete = False
     st.session_state.project_id = None
-    
+    st.session_state.auth_mode = None
+
+    # Clear cached service account initialization
+    try:
+        initialize_ee_service_account.clear()
+    except Exception:
+        pass
+
+    # Reset ee state
+    try:
+        ee.data._initialized = False
+    except Exception:
+        pass
+
     # Clear cookies
     try:
         cookie_manager.delete('gee_auth_token')
         cookie_manager.delete('gee_project_id')
-    except Exception as e:
+    except Exception:
         pass  # Cookie cleanup is non-critical
 
 # Import app components
@@ -622,21 +662,33 @@ if 'hydro_analysis_results' not in st.session_state:
 # MAIN APP FLOW - LOGIN FIRST APPROACH
 # =====================
 
+# Track auth mode for switching detection
+if 'auth_mode' not in st.session_state:
+    st.session_state.auth_mode = None
+
 # Check if user is authenticated - if not, show login page
 if not st.session_state.get('auth_complete', False):
-    # Check for stored authentication first
+    # Try Quick Access (service account) if available and user hasn't chosen own account
+    if st.session_state.auth_mode != "own_account":
+        sa_success = initialize_ee_service_account()
+        if sa_success:
+            st.session_state.auth_complete = True
+            st.session_state.project_id = st.secrets.get("gee", {}).get("project_id", "shared-platform")
+            st.session_state.auth_mode = "quick_access"
+            st.rerun()
+
+    # Check for stored authentication (cookie-based)
     stored_project_id = check_stored_auth()
-    
+
     if stored_project_id:
-        # Try to authenticate with stored credentials silently
         try:
             success, message = authenticate_gee(stored_project_id)
             if success:
+                st.session_state.auth_mode = "own_account"
                 st.success("✅ Welcome back! Authenticated successfully.")
                 time.sleep(1)
                 st.rerun()
-        except Exception as e:
-            # Stored auth failed, show login page
+        except Exception:
             pass  # Stored auth failed, will show login page
     
     # Show dedicated login page with fancy hero

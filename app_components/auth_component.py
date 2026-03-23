@@ -59,6 +59,44 @@ class AuthComponent:
         except Exception as e:
             return False, f"Authentication failed: {str(e)}"
     
+    def _render_quick_access(self):
+        """Render Quick Access mode using platform service account."""
+        import ee
+
+        # Try service account initialization
+        try:
+            from app import initialize_ee_service_account
+            sa_success = initialize_ee_service_account()
+        except Exception:
+            sa_success = False
+
+        if sa_success:
+            st.session_state.auth_complete = True
+            st.session_state.auth_mode = "quick_access"
+            try:
+                st.session_state.project_id = st.secrets["gee"].get("project_id", "shared-platform")
+            except Exception:
+                st.session_state.project_id = "shared-platform"
+
+            st.success("✅ Ready! Using shared platform access.")
+            st.caption(
+                "💡 Google Earth Engine is **free** for research and education. "
+                "For heavy usage or private projects, switch to 'Use Your Own GEE Account' above."
+            )
+            time.sleep(1)
+            st.rerun()
+            return True
+        else:
+            st.warning(
+                "⚠️ Quick Access is currently unavailable (platform service account not configured). "
+                "Please use your own GEE account instead — select the option above."
+            )
+            st.caption(
+                "This typically means the platform is running locally or the admin hasn't set up "
+                "Streamlit secrets yet. See STREAMLIT_CLOUD_SETUP.md for instructions."
+            )
+            return False
+
     def render(self):
         """Render the authentication component"""
         
@@ -106,12 +144,20 @@ class AuthComponent:
             col1, col2 = st.columns([3, 1])
             with col1:
                 project_id_display = st.session_state.get('project_id', 'Unknown')
-                st.info(f"🚀 Authenticated as: **{project_id_display}**\n\nYour session is active!")
+                auth_mode_label = "Quick Access" if st.session_state.get('auth_mode') == "quick_access" else "Your Account"
+                st.info(f"🚀 Authenticated via: **{auth_mode_label}**\n\nProject: **{project_id_display}**")
             with col2:
                 if st.button("Re-authenticate", help="Click to authenticate with different credentials"):
                     st.session_state.auth_complete = False
+                    st.session_state.auth_mode = None
                     if 'gee_credentials_content' in st.session_state:
                         del st.session_state.gee_credentials_content
+                    # Clear cached service account init
+                    try:
+                        from app import initialize_ee_service_account
+                        initialize_ee_service_account.clear()
+                    except Exception:
+                        pass
                     st.rerun()
 
             return True  # This will allow the main app to proceed to next step
@@ -125,15 +171,27 @@ class AuthComponent:
                 )
                 if success:
                     st.session_state.auth_complete = True
+                    st.session_state.auth_mode = "own_account"
                     st.success("✅ Auto-authenticated successfully!")
                     time.sleep(1)
                     st.rerun()
                     return True
-        
-        
+
         # Load saved credentials
         saved_credentials = self.load_saved_credentials()
-        
+
+        # --- Auth Mode Selection ---
+        access_mode = st.radio(
+            "Choose how to access the platform:",
+            ["🚀 Quick Access (no setup needed)", "🔑 Use Your Own GEE Account"],
+            index=0,
+            help="Quick Access lets you start immediately using shared platform credentials. "
+                 "Use your own account for heavy usage or private projects."
+        )
+
+        if access_mode == "🚀 Quick Access (no setup needed)":
+            return self._render_quick_access()
+
         st.markdown("""
         To use this application, you need to authenticate with Google Earth Engine.
         Choose the authentication method based on how you're using the app.
@@ -349,6 +407,7 @@ class AuthComponent:
                     # Set session state for this user session ONLY
                     # Session state is isolated per browser connection (secure)
                     st.session_state.auth_complete = True
+                    st.session_state.auth_mode = "own_account"
                     st.session_state.auth_project_id = project_id
                     st.session_state.project_id = project_id  # For display in nav
 

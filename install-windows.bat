@@ -62,8 +62,16 @@ echo.
 echo [Step 2/6] Checking for project files...
 if exist "%~dp0app.py" (
     echo    Project files found. Skipping clone.
+) else if exist "%~dp0GeoClimate-Fetcher\app.py" (
+    echo    Found existing GeoClimate-Fetcher folder. Using it.
+    cd /d "%~dp0GeoClimate-Fetcher"
 ) else (
     echo    Project files not found. Cloning repository...
+    if exist "%~dp0GeoClimate-Fetcher" (
+        echo    Note: GeoClimate-Fetcher folder exists but appears incomplete.
+        echo    Removing it and cloning fresh...
+        rmdir /s /q "%~dp0GeoClimate-Fetcher"
+    )
     git clone https://github.com/SauravBhattarai19/GeoClimate-Fetcher.git "%~dp0GeoClimate-Fetcher"
     if !errorlevel! neq 0 (
         echo.
