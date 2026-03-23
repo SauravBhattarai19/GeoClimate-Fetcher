@@ -600,7 +600,7 @@ def export_individual_geotiffs_standalone(collection, temp_path, geometry, scale
         collection_props = collection.getInfo().get('properties', {})
         is_climatology_mode = collection_props.get('climatology_mode', False)
         climatology_type = collection_props.get('climatology_type', 'mean')
-    except:
+    except Exception:
         is_climatology_mode = False
         climatology_type = 'mean'
 

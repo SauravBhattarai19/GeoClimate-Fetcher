@@ -38,7 +38,7 @@ class ClimateIndicesCalculator:
         # Get from JSON config if available, otherwise use defaults
         try:
             return self.dataset_config._config.get('climate_indices', {})
-        except:
+        except Exception:
             # Fallback to basic metadata
             return {
                 'TXx': {

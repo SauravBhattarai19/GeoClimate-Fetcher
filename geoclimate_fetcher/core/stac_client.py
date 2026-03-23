@@ -136,13 +136,13 @@ class STACClient:
                 if ds_data.get('start_date'):
                     try:
                         start_date = datetime.fromisoformat(ds_data['start_date'])
-                    except:
+                    except Exception:
                         pass
 
                 if ds_data.get('end_date'):
                     try:
                         end_date = datetime.fromisoformat(ds_data['end_date'])
-                    except:
+                    except Exception:
                         pass
 
                 # Parse bands
@@ -215,7 +215,7 @@ class STACClient:
             generated_at = datetime.fromisoformat(generated_at_str)
             age = datetime.now() - generated_at
             return age.days
-        except:
+        except Exception:
             return None
 
     def _fetch_with_retry(self, url: str) -> Dict:

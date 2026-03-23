@@ -111,7 +111,7 @@ class GEEAuth:
                 raise Exception("Authentication succeeded but connection test failed")
                 
         except Exception as e:
-            print(f"Authentication failed: {str(e)}")
+            pass  # Authentication failure handled by return value
             self._initialized = False
             return False
             
@@ -188,7 +188,7 @@ def save_credentials(project_id: str, service_account: Optional[str] = None,
             try:
                 os.remove(CREDENTIALS_FILE)
             except Exception as e:
-                print(f"Error removing credentials file: {str(e)}")
+                pass  # Non-critical cleanup
         return
         
     # Create directory if it doesn't exist
@@ -207,7 +207,7 @@ def save_credentials(project_id: str, service_account: Optional[str] = None,
         with open(CREDENTIALS_FILE, 'w') as f:
             json.dump(credentials, f)
     except Exception as e:
-        print(f"Error saving credentials: {str(e)}")
+        pass  # Credential save failure is non-critical
 
 
 def load_credentials() -> Dict[str, str]:
@@ -234,6 +234,6 @@ def load_credentials() -> Dict[str, str]:
                 if key in saved_credentials:
                     credentials[key] = saved_credentials[key]
         except Exception as e:
-            print(f"Error loading credentials: {str(e)}")
+            pass  # Return defaults if credentials can't be loaded
             
     return credentials

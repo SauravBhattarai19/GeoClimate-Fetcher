@@ -107,7 +107,7 @@ def check_stored_auth():
                 return project_cookie
     except Exception as e:
         # Handle any cookie-related errors gracefully
-        print(f"Error checking stored auth: {str(e)}")
+        pass  # Cookie errors are non-critical
     return None
 
 # Function to authenticate GEE and store credentials
@@ -125,7 +125,7 @@ def authenticate_gee(project_id, service_account=None, key_file=None, auth_token
                 cookie_manager.set("gee_auth_token", auth_token, expires_at=datetime.now() + timedelta(days=30))
                 cookie_manager.set("gee_project_id", project_id, expires_at=datetime.now() + timedelta(days=30))
             except Exception as e:
-                print(f"Warning: Could not set cookies: {str(e)}")
+                pass  # Cookie storage is optional
             return True, "Authentication successful!"
         else:
             return False, "Authentication failed. Please check your credentials."
@@ -145,7 +145,7 @@ def clear_authentication():
         cookie_manager.delete('gee_auth_token')
         cookie_manager.delete('gee_project_id')
     except Exception as e:
-        print(f"Error clearing cookies: {str(e)}")
+        pass  # Cookie cleanup is non-critical
 
 # Import app components
 from app_components.theme_utils import apply_dark_mode_css
@@ -637,7 +637,7 @@ if not st.session_state.get('auth_complete', False):
                 st.rerun()
         except Exception as e:
             # Stored auth failed, show login page
-            print(f"Stored authentication failed: {str(e)}")
+            pass  # Stored auth failed, will show login page
     
     # Show dedicated login page with fancy hero
     st.markdown("""
@@ -909,7 +909,7 @@ if not st.session_state.get('auth_complete', False):
             st.markdown('<div style="text-align: center;">', unsafe_allow_html=True)
             st.image("pictures/Saurav.png", width=120)
             st.markdown('</div>', unsafe_allow_html=True)
-        except:
+        except Exception:
             st.markdown("**👨‍💻**")
 
     with col_info:

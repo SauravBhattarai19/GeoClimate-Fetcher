@@ -423,7 +423,7 @@ class ImageCollectionFetcher:
                 for temp_file in temp_files:
                     try:
                         os.remove(temp_file)
-                    except:
+                    except Exception:
                         pass
                         
                 return combined_df
@@ -475,7 +475,7 @@ class ImageCollectionFetcher:
                         print("Using convex hull for maximum simplification...")
                         simplified = geometry.convexHull()
 
-                except:
+                except Exception:
                     print("Using convex hull as fallback...")
                     simplified = geometry.convexHull()
 
