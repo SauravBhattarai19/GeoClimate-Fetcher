@@ -301,14 +301,52 @@ else
 fi
 
 # ========================================
-#  LAUNCH THE APPLICATION
+#  CREATE DESKTOP LAUNCHER
 # ========================================
+echo ""
+echo "Creating Desktop launcher..."
+
+APP_DIR="$(pwd)"
+
+# Try XDG Desktop first, fall back to ~/Desktop
+DESKTOP_DIR="${XDG_DESKTOP_DIR:-$HOME/Desktop}"
+mkdir -p "$DESKTOP_DIR"
+
+LAUNCHER="$DESKTOP_DIR/GeoClimate Fetcher.sh"
+
+cat > "$LAUNCHER" << LAUNCHER_EOF
+#!/bin/bash
+cd "$APP_DIR"
+source .venv/bin/activate
+streamlit run app.py
+LAUNCHER_EOF
+
+chmod +x "$LAUNCHER"
+
+# Also create a .desktop entry for desktop environments that support it
+DESKTOP_ENTRY="$DESKTOP_DIR/GeoClimate Fetcher.desktop"
+cat > "$DESKTOP_ENTRY" << DESKTOP_EOF
+[Desktop Entry]
+Type=Application
+Name=GeoClimate Fetcher
+Comment=GeoClimate Intelligence Platform
+Exec=bash -c 'cd "$APP_DIR" && source .venv/bin/activate && streamlit run app.py'
+Terminal=true
+Icon=utilities-terminal
+Categories=Science;Education;
+DESKTOP_EOF
+
+chmod +x "$DESKTOP_ENTRY"
+
 echo ""
 echo "========================================================"
 echo "   Setup complete! Launching GeoClimate Fetcher..."
 echo "   The app will open in your web browser shortly."
 echo ""
-echo "   For future launches, run: ./run-linux.sh"
+echo "   A launcher has been saved to your Desktop:"
+echo "   $LAUNCHER"
+echo ""
+echo "   Just double-click it anytime to start the app!"
 echo "========================================================"
 echo ""
 

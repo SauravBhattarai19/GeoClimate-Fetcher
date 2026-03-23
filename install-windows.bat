@@ -229,14 +229,33 @@ if exist "%USERPROFILE%\.config\earthengine\credentials" (
 )
 
 REM ========================================
-REM  LAUNCH THE APPLICATION
+REM  CREATE DESKTOP LAUNCHER
 REM ========================================
+echo.
+echo Creating Desktop launcher...
+
+set "DESKTOP=%USERPROFILE%\Desktop"
+set "APP_DIR=%cd%"
+set "LAUNCHER=%DESKTOP%\GeoClimate Fetcher.bat"
+
+(
+    echo @echo off
+    echo title GeoClimate Fetcher
+    echo cd /d "%APP_DIR%"
+    echo call .venv\Scripts\activate.bat
+    echo streamlit run app.py
+    echo pause
+) > "%LAUNCHER%"
+
 echo.
 echo ========================================================
 echo    Setup complete! Launching GeoClimate Fetcher...
 echo    The app will open in your web browser shortly.
 echo.
-echo    For future launches, double-click: run-windows.bat
+echo    A launcher has been saved to your Desktop:
+echo    %LAUNCHER%
+echo.
+echo    Just double-click it anytime to start the app!
 echo ========================================================
 echo.
 

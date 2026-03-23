@@ -179,14 +179,32 @@ else
 fi
 
 # ========================================
-#  LAUNCH THE APPLICATION
+#  CREATE DESKTOP LAUNCHER
 # ========================================
+echo ""
+echo "Creating Desktop launcher..."
+
+APP_DIR="$(pwd)"
+LAUNCHER="$HOME/Desktop/GeoClimate Fetcher.command"
+
+cat > "$LAUNCHER" << LAUNCHER_EOF
+#!/bin/bash
+cd "$APP_DIR"
+source .venv/bin/activate
+streamlit run app.py
+LAUNCHER_EOF
+
+chmod +x "$LAUNCHER"
+
 echo ""
 echo "========================================================"
 echo "   Setup complete! Launching GeoClimate Fetcher..."
 echo "   The app will open in your web browser shortly."
 echo ""
-echo "   For future launches, double-click: run-mac.command"
+echo "   A launcher has been saved to your Desktop:"
+echo "   $LAUNCHER"
+echo ""
+echo "   Just double-click it anytime to start the app!"
 echo "========================================================"
 echo ""
 
