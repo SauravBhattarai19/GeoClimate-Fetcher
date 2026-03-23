@@ -59,43 +59,87 @@ class AuthComponent:
         except Exception as e:
             return False, f"Authentication failed: {str(e)}"
     
-    def _render_quick_access(self):
-        """Render Quick Access mode using platform service account."""
-        import ee
-
-        # Try service account initialization
+    def _do_quick_access_init(self):
+        """Run the actual GEE service account init. Returns (success: bool, error: str|None)."""
         try:
-            from app import initialize_ee_service_account
-            sa_success = initialize_ee_service_account()
-        except Exception:
-            sa_success = False
+            main_mod = sys.modules.get("__main__")
+            init_fn = getattr(main_mod, "initialize_ee_service_account", None)
+            if callable(init_fn):
+                sa_success = init_fn()
+            else:
+                from app import initialize_ee_service_account
+                sa_success = initialize_ee_service_account()
+            err = st.session_state.get("_gee_quick_access_error")
+            return sa_success, err
+        except Exception as e:
+            return False, str(e)
 
-        if sa_success:
-            st.session_state.auth_complete = True
-            st.session_state.auth_mode = "quick_access"
-            try:
-                st.session_state.project_id = st.secrets["gee"].get("project_id", "shared-platform")
-            except Exception:
-                st.session_state.project_id = "shared-platform"
+    def _render_quick_access(self):
+        """Render Quick Access mode — shows info and requires an explicit button click."""
+        st.markdown("### 🚀 Quick Access")
+        st.markdown(
+            "Use the shared platform credentials to get started instantly. "
+            "No setup required.\n\n"
+            "⚠️ **Recommended for light/trial usage only.** For better performance, "
+            "reliability, and private projects, use **Your Own GEE Account** instead."
+        )
 
-            st.success("✅ Ready! Using shared platform access.")
-            st.caption(
-                "💡 Google Earth Engine is **free** for research and education. "
-                "For heavy usage or private projects, switch to 'Use Your Own GEE Account' above."
-            )
-            time.sleep(1)
-            st.rerun()
+        # If GEE init already succeeded this session, just show the success state.
+        if st.session_state.get("_ee_quick_access_initialized"):
+            st.success("✅ Connected via Quick Access.")
+            st.caption("💡 Switch to 'Use Your Own GEE Account' above for better performance.")
             return True
-        else:
+
+        # Show any previous error from a failed attempt.
+        prev_err = st.session_state.get("_gee_quick_access_error")
+        if prev_err:
             st.warning(
-                "⚠️ Quick Access is currently unavailable (platform service account not configured). "
-                "Please use your own GEE account instead — select the option above."
+                "⚠️ A previous Quick Access attempt failed. See details below before retrying."
             )
-            st.caption(
-                "This typically means the platform is running locally or the admin hasn't set up "
-                "Streamlit secrets yet. See STREAMLIT_CLOUD_SETUP.md for instructions."
-            )
-            return False
+            with st.expander("Error details & how to fix"):
+                st.code(prev_err, language=None)
+                st.markdown(
+                    """
+**Common fixes**
+
+1. In [Google Cloud IAM](https://console.cloud.google.com/iam-admin/iam) for the project in
+   secrets, add the service account with:
+   - **Service Usage Consumer** (`roles/serviceusage.serviceUsageConsumer`)
+   - **Earth Engine Resource Viewer** (`roles/earthengine.viewer`)
+
+2. Confirm **Earth Engine API** is enabled and the project is registered for EE use.
+
+3. Wait a few minutes after IAM changes, then retry.
+
+References:
+- https://developers.google.com/earth-engine/guides/access_control
+- https://docs.cloud.google.com/service-usage/docs/access-control
+                    """
+                )
+
+        # Explicit button — no auto-login.
+        if st.button("🚀 Connect with Quick Access", type="primary", key="qa_connect_btn"):
+            with st.spinner("Connecting to Google Earth Engine..."):
+                success, err = self._do_quick_access_init()
+            if success:
+                st.session_state.auth_complete = True
+                st.session_state.auth_mode = "quick_access"
+                try:
+                    st.session_state.project_id = st.secrets["gee"].get("project_id", "shared-platform")
+                except Exception:
+                    st.session_state.project_id = "shared-platform"
+                st.success("✅ Connected! Using shared platform access.")
+                time.sleep(1)
+                st.rerun()
+                return True
+            else:
+                st.error(
+                    "❌ Quick Access failed. Check the error details above, or switch to "
+                    "'Use Your Own GEE Account'."
+                )
+                return False
+
+        return False
 
     def render(self):
         """Render the authentication component"""
@@ -152,10 +196,14 @@ class AuthComponent:
                     st.session_state.auth_mode = None
                     if 'gee_credentials_content' in st.session_state:
                         del st.session_state.gee_credentials_content
-                    # Clear cached service account init
                     try:
-                        from app import initialize_ee_service_account
-                        initialize_ee_service_account.clear()
+                        main_mod = sys.modules.get("__main__")
+                        clear_fn = getattr(main_mod, "clear_ee_service_account_init_state", None)
+                        if callable(clear_fn):
+                            clear_fn()
+                        else:
+                            from app import clear_ee_service_account_init_state
+                            clear_ee_service_account_init_state()
                     except Exception:
                         pass
                     st.rerun()
@@ -181,21 +229,31 @@ class AuthComponent:
         saved_credentials = self.load_saved_credentials()
 
         # --- Auth Mode Selection ---
+        st.info(
+            "🚀 **Quick Access** uses shared platform credentials — great for trying out the app. "
+            "🔑 **Your Own GEE Account** gives better performance, reliability, and privacy. "
+            "Choose below, then click the connect button."
+        )
+
         access_mode = st.radio(
             "Choose how to access the platform:",
             ["🚀 Quick Access (no setup needed)", "🔑 Use Your Own GEE Account"],
             index=0,
-            help="Quick Access lets you start immediately using shared platform credentials. "
-                 "Use your own account for heavy usage or private projects."
+            help="Quick Access uses shared credentials — no setup needed. "
+                 "Own account is recommended for better performance and private projects.",
         )
+
+        st.divider()
 
         if access_mode == "🚀 Quick Access (no setup needed)":
             return self._render_quick_access()
 
-        st.markdown("""
-        To use this application, you need to authenticate with Google Earth Engine.
-        Choose the authentication method based on how you're using the app.
-        """)
+        # Own account panel
+        st.markdown("### 🔑 Use Your Own GEE Account")
+        st.markdown(
+            "Authenticate with your personal Google Earth Engine project and credentials "
+            "for better performance and private usage."
+        )
 
         # Authentication method selection
         auth_method = st.radio(

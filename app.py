@@ -37,31 +37,54 @@ import hashlib
 from pathlib import Path
 
 
-@st.cache_resource
+_EE_SA_SESSION_FLAG = "_ee_quick_access_initialized"
+_GEE_QA_ERROR_KEY = "_gee_quick_access_error"
+
+
 def initialize_ee_service_account():
     """
     Initialize GEE using the platform's service account.
-    Credentials are stored in Streamlit Cloud secrets.
+    Credentials are stored in Streamlit Cloud secrets or .streamlit/secrets.toml.
     Returns True if successful, False otherwise.
+
+    Note: ee.ServiceAccountCredentials expects key_data as a JSON *string* (or PEM);
+    it parses JSON internally. Passing a dict breaks authentication.
+
+    We avoid @st.cache_resource here: a failed attempt would cache False for the whole
+    server process, so fixing secrets would never take effect until restart.
     """
+    if st.session_state.get(_EE_SA_SESSION_FLAG):
+        return True
     try:
         if "gee" not in st.secrets:
+            st.session_state.pop(_GEE_QA_ERROR_KEY, None)
             return False
 
-        key_data = json.loads(st.secrets["gee"]["key_json"])
+        raw_key = st.secrets["gee"]["key_json"]
+        # Streamlit may expose key_json as str (TOML string) or as dict (nested secrets).
+        key_data_str = raw_key if isinstance(raw_key, str) else json.dumps(raw_key)
+
         credentials = ee.ServiceAccountCredentials(
             st.secrets["gee"]["client_email"],
-            key_data=key_data
+            key_data=key_data_str,
         )
         ee.Initialize(
             credentials=credentials,
-            project=st.secrets["gee"].get("project_id", None)
+            project=st.secrets["gee"].get("project_id", None),
         )
-        # Verify connection works
         ee.Image("USGS/SRTMGL1_003").getInfo()
+        st.session_state.pop(_GEE_QA_ERROR_KEY, None)
+        st.session_state[_EE_SA_SESSION_FLAG] = True
         return True
-    except Exception:
+    except Exception as e:
+        st.session_state[_GEE_QA_ERROR_KEY] = str(e)
         return False
+
+
+def clear_ee_service_account_init_state():
+    """Clear Quick Access init flag (replaces st.cache_resource clear on this flow)."""
+    st.session_state.pop(_EE_SA_SESSION_FLAG, None)
+    st.session_state.pop(_GEE_QA_ERROR_KEY, None)
 
 # Try to import cookie manager, fallback if not available
 try:
@@ -168,11 +191,7 @@ def clear_authentication():
     st.session_state.project_id = None
     st.session_state.auth_mode = None
 
-    # Clear cached service account initialization
-    try:
-        initialize_ee_service_account.clear()
-    except Exception:
-        pass
+    clear_ee_service_account_init_state()
 
     # Reset ee state
     try:
@@ -668,15 +687,6 @@ if 'auth_mode' not in st.session_state:
 
 # Check if user is authenticated - if not, show login page
 if not st.session_state.get('auth_complete', False):
-    # Try Quick Access (service account) if available and user hasn't chosen own account
-    if st.session_state.auth_mode != "own_account":
-        sa_success = initialize_ee_service_account()
-        if sa_success:
-            st.session_state.auth_complete = True
-            st.session_state.project_id = st.secrets.get("gee", {}).get("project_id", "shared-platform")
-            st.session_state.auth_mode = "quick_access"
-            st.rerun()
-
     # Check for stored authentication (cookie-based)
     stored_project_id = check_stored_auth()
 

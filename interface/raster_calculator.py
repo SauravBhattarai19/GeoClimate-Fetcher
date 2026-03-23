@@ -12,7 +12,6 @@ from datetime import datetime, timedelta
 
 from geoclimate_fetcher.core import (
     GeometryHandler,
-    GEEExporter,
     GeometrySelectionWidget,
 )
 from geoclimate_fetcher.core.stac_client import STACClient
@@ -142,6 +141,8 @@ def _init_session_state():
         'rc_expression': '',
         'rc_band_mapping': {},
         'rc_result_image': None,
+        'rc_download_complete': False,
+        'rc_download_results': None,
     }
     for key, val in defaults.items():
         if key not in st.session_state:
@@ -152,19 +153,27 @@ def _render_area_selection():
     """Step 1: Area of interest selection via interactive map."""
     st.markdown("### Step 1: Select Area of Interest")
 
-    widget = GeometrySelectionWidget()
-    geometry_result = widget.render()
-
-    if geometry_result and geometry_result.get('geometry'):
+    def on_geometry_selected(geometry):
         st.session_state.rc_geometry_complete = True
-        st.session_state.rc_geometry = geometry_result['geometry']
-        st.success("Area of interest selected.")
-        return True
+        st.session_state.rc_geometry = geometry
+        try:
+            st.success("✅ Area of interest selected.")
+        except Exception:
+            pass
 
-    if st.session_state.rc_geometry_complete and st.session_state.rc_geometry:
-        return True
+    geometry_widget = GeometrySelectionWidget(
+        session_prefix="rc_",
+        title="🗺️ Area of Interest",
+    )
 
-    return False
+    result = geometry_widget.render_complete_interface(on_geometry_selected=on_geometry_selected)
+    if result:
+        existing_geom = st.session_state.get('rc_geometry')
+        if existing_geom and not st.session_state.get('rc_geometry_complete', False):
+            on_geometry_selected(existing_geom)
+        st.rerun()
+
+    return st.session_state.get('rc_geometry_complete', False)
 
 
 def _render_dataset_selection():
@@ -425,15 +434,19 @@ def _render_compute_and_export(
 
         result_image = st.session_state.rc_result_image
 
-        # Preview
-        st.markdown("#### Preview")
-        try:
-            _render_preview(result_image, geometry, output_name)
-        except Exception as e:
-            st.warning(f"Preview unavailable: {e}")
+        st.markdown("---")
+
+        # Preview — behind a button to avoid re-fetching on every widget interaction
+        with st.expander("🗺️ Preview on Map (Optional)", expanded=True):
+            if st.button("🗺️ Show Map Preview", type="secondary",
+                         key="rc_show_preview_btn", use_container_width=True):
+                with st.spinner("Generating map preview..."):
+                    _render_preview(result_image, geometry, output_name)
+
+        st.markdown("---")
 
         # Export
-        st.markdown("#### Export")
+        st.markdown("### 💾 Download / Export")
         _render_export(result_image, geometry, scale, output_name)
 
 
@@ -471,112 +484,225 @@ def _run_computation(ds_id, expression, band_mapping,
     return result
 
 
-def _render_preview(result_image: ee.Image, geometry: ee.Geometry,
-                    band_name: str):
-    """Render a thumbnail preview of the result."""
+def _render_preview(result_image: ee.Image, geometry: ee.Geometry, band_name: str):
+    """Render an interactive Folium map preview of the result, matching GeoData Explorer style."""
+    import folium
+    import streamlit.components.v1 as components
+
+    palette = ['#d73027', '#f46d43', '#fdae61', '#fee08b',
+               '#ffffbf', '#d9ef8b', '#a6d96a', '#66bd63', '#1a9850']
+
+    # Compute 5th–95th percentile for a sensible colour stretch
+    vmin, vmax = -1.0, 1.0
     try:
-        # Get thumbnail URL
-        vis_params = {
-            'min': -1,
-            'max': 1,
-            'palette': ['red', 'white', 'green'],
-            'dimensions': 512,
-            'region': geometry,
-        }
+        stats = result_image.reduceRegion(
+            reducer=ee.Reducer.percentile([5, 95]),
+            geometry=geometry,
+            scale=200,
+            maxPixels=1e8,
+            bestEffort=True,
+        ).getInfo()
+        p5 = stats.get(f"{band_name}_p5")
+        p95 = stats.get(f"{band_name}_p95")
+        if p5 is not None and p95 is not None and p5 != p95:
+            vmin, vmax = round(p5, 4), round(p95, 4)
+    except Exception:
+        pass
 
-        # Try to get actual min/max from the image
-        try:
-            stats = result_image.reduceRegion(
-                reducer=ee.Reducer.percentile([5, 95]),
-                geometry=geometry,
-                scale=100,
-                maxPixels=1e7,
-                bestEffort=True,
-            ).getInfo()
+    try:
+        bounds = geometry.bounds().getInfo()['coordinates'][0]
+        lons = [c[0] for c in bounds]
+        lats = [c[1] for c in bounds]
+        min_lon, max_lon = min(lons), max(lons)
+        min_lat, max_lat = min(lats), max(lats)
+        center_lat = (min_lat + max_lat) / 2
+        center_lon = (min_lon + max_lon) / 2
 
-            p5_key = f"{band_name}_p5"
-            p95_key = f"{band_name}_p95"
+        thumb_url = result_image.select(band_name).getThumbURL({
+            'min': vmin,
+            'max': vmax,
+            'palette': palette,
+            'region': geometry.bounds(),
+            'dimensions': 768,
+            'format': 'png',
+        })
 
-            if p5_key in stats and p95_key in stats:
-                p5 = stats[p5_key]
-                p95 = stats[p95_key]
-                if p5 is not None and p95 is not None and p5 != p95:
-                    vis_params['min'] = round(p5, 4)
-                    vis_params['max'] = round(p95, 4)
-        except Exception:
-            pass
+        m = folium.Map(location=[center_lat, center_lon], zoom_start=7)
+        folium.raster_layers.ImageOverlay(
+            image=thumb_url,
+            bounds=[[min_lat, min_lon], [max_lat, max_lon]],
+            opacity=0.85,
+            name=band_name,
+            interactive=False,
+            cross_origin=False,
+        ).add_to(m)
+        folium.LayerControl().add_to(m)
 
-        thumb_url = result_image.getThumbURL(vis_params)
-        st.image(thumb_url, caption=f"{band_name} (5th-95th percentile stretch)")
-        st.caption(f"Min: {vis_params['min']} | Max: {vis_params['max']}")
+        components.html(m.get_root().render(), height=480)
+        st.caption(f"**{band_name}** — colour stretch: {vmin} to {vmax} (5th–95th percentile)")
+
     except Exception as e:
-        st.warning(f"Could not generate preview: {e}")
+        st.warning(f"Could not generate map preview: {e}")
 
 
 def _render_export(result_image: ee.Image, geometry: ee.Geometry,
                    scale: int, output_name: str):
-    """Render export options and handle download."""
-    export_format = st.selectbox(
-        "Export format",
-        ["GeoTIFF", "CSV (Zonal Stats)"],
-        help="GeoTIFF for raster data, CSV for zonal statistics."
+    """Render export options.
+
+    Results are persisted in session state so the download button stays available
+    across reruns. Drive export is hidden when using Quick Access (shared service
+    account) because exports would land in the platform's Drive, not the user's.
+    """
+    from geoclimate_fetcher.core import GEEExporter
+    from datetime import datetime as _dt
+
+    # ── Persistent results panel ────────────────────────────────────────────
+    if st.session_state.get('rc_download_complete') and st.session_state.get('rc_download_results'):
+        _render_download_results(output_name)
+        return
+
+    # ── Export configuration ─────────────────────────────────────────────────
+    using_quick_access = st.session_state.get('auth_mode') == 'quick_access'
+
+    col1, col2 = st.columns(2)
+    with col1:
+        export_format = st.selectbox(
+            "Format",
+            ["GeoTIFF", "CSV (Zonal Stats)"],
+            key="rc_export_format",
+        )
+    with col2:
+        filename = st.text_input(
+            "Filename",
+            value=f"raster_calc_{output_name}",
+            key="rc_export_filename",
+        )
+
+    if export_format == "GeoTIFF":
+        if using_quick_access:
+            export_preference = "local"
+            st.caption(
+                "ℹ️ Quick Access: local download only. "
+                "Use your own GEE account to enable Google Drive export."
+            )
+        else:
+            export_preference = st.radio(
+                "Export method",
+                ["auto", "local", "drive"],
+                horizontal=True,
+                key="rc_export_method",
+                help="Auto tries local first and falls back to Drive for large files.",
+            )
+
+        if st.button("🚀 Export GeoTIFF", type="primary", use_container_width=True,
+                     key="rc_export_btn_tiff"):
+            with st.spinner("Exporting..."):
+                exporter = GEEExporter()
+                result = exporter.smart_export_with_fallback(
+                    image=result_image.toFloat(),
+                    filename=filename,
+                    region=geometry,
+                    scale=float(scale),
+                    export_preference=export_preference,
+                )
+
+            if result.get('success') and result.get('export_method') == 'local':
+                size_mb = result.get('actual_size_mb', 0) or 0
+                st.session_state.rc_download_results = {
+                    'file_data': result['file_data'],
+                    'filename': f"{filename}.tif",
+                    'mime_type': 'image/tiff',
+                    'export_format': 'GeoTIFF',
+                    'file_size_mb': size_mb,
+                    'timestamp': _dt.now().strftime('%H:%M:%S'),
+                }
+                st.session_state.rc_download_complete = True
+                st.rerun()
+            elif result.get('success') and result.get('export_method') == 'drive':
+                folder = result.get('drive_folder', 'GeoClimate_Exports')
+                drive_url = result.get('drive_url', 'https://drive.google.com/drive/')
+                st.success(f"📤 Export submitted to Google Drive — folder: **{folder}**")
+                st.markdown(f"[📁 Open Google Drive]({drive_url})")
+            else:
+                st.error(f"Export failed: {result.get('message', 'Unknown error')}")
+                logger.error("Raster calculator export failed: %s", result.get('message'))
+
+    elif export_format == "CSV (Zonal Stats)":
+        if st.button("🚀 Compute & Download CSV", type="primary", use_container_width=True,
+                     key="rc_export_btn_csv"):
+            with st.spinner("Computing zonal statistics..."):
+                csv_data = _export_zonal_csv(result_image, geometry, scale, filename, output_name)
+            if csv_data:
+                st.session_state.rc_download_results = {
+                    'file_data': csv_data.encode('utf-8'),
+                    'filename': f"{filename}_zonal_stats.csv",
+                    'mime_type': 'text/csv',
+                    'export_format': 'CSV',
+                    'file_size_mb': len(csv_data) / (1024 * 1024),
+                    'timestamp': _dt.now().strftime('%H:%M:%S'),
+                }
+                st.session_state.rc_download_complete = True
+                st.rerun()
+
+
+def _render_download_results(output_name: str):
+    """Persistent results panel — mirrors geodata explorer's _render_download_results_interface."""
+    results = st.session_state.rc_download_results
+
+    st.success("✅ Export completed successfully!")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("📁 Format", results['export_format'])
+    with col2:
+        st.metric("💾 File Size", f"{results['file_size_mb']:.2f} MB")
+    with col3:
+        st.metric("⏰ Exported at", results['timestamp'])
+
+    st.markdown("---")
+    st.markdown("### 📥 Download")
+
+    st.download_button(
+        label=f"📥 Download {results['export_format']} ({results['file_size_mb']:.2f} MB)",
+        data=results['file_data'],
+        file_name=results['filename'],
+        mime=results['mime_type'],
+        type="primary",
+        use_container_width=True,
+        key="rc_redownload_btn",
     )
 
-    filename = st.text_input(
-        "Filename",
-        value=f"raster_calc_{output_name}",
-        help="Output filename (without extension)."
-    )
+    st.markdown("---")
+    st.markdown("### 🔄 What would you like to do next?")
 
-    export_preference = st.radio(
-        "Export method",
-        ["auto", "local", "drive"],
-        horizontal=True,
-        help="'auto' tries local first, falls back to Drive for large files."
-    )
-
-    if st.button("Export", type="primary", use_container_width=True):
-        with st.spinner("Exporting..."):
-            try:
-                if export_format == "GeoTIFF":
-                    exporter = GEEExporter()
-                    export_result = exporter.smart_export_with_fallback(
-                        image=result_image.toFloat(),
-                        filename=filename,
-                        region=geometry,
-                        scale=float(scale),
-                        export_preference=export_preference,
-                    )
-
-                    if export_result.get('success'):
-                        st.success("Export successful!")
-
-                        if export_result.get('file_data'):
-                            st.download_button(
-                                label="Download GeoTIFF",
-                                data=export_result['file_data'],
-                                file_name=f"{filename}.tif",
-                                mime="image/tiff",
-                                use_container_width=True,
-                            )
-                        elif export_result.get('drive_url'):
-                            st.info(f"File exported to Google Drive: {export_result.get('drive_folder', '')}")
-                            st.markdown(f"[Open in Google Drive]({export_result['drive_url']})")
-                        else:
-                            st.info(export_result.get('message', 'Export completed.'))
-                    else:
-                        st.error(f"Export failed: {export_result.get('message', 'Unknown error')}")
-
-                elif export_format == "CSV (Zonal Stats)":
-                    _export_zonal_csv(result_image, geometry, scale, filename, output_name)
-
-            except Exception as e:
-                st.error(f"Export failed: {e}")
-                logger.error("Raster calculator export failed: %s", e)
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🔄 Export Again / Change Format", use_container_width=True,
+                     key="rc_reset_export_btn"):
+            st.session_state.rc_download_complete = False
+            st.session_state.rc_download_results = None
+            st.rerun()
+    with col2:
+        if st.button("🆕 New Calculation", use_container_width=True,
+                     key="rc_new_calc_btn"):
+            for k in ['rc_download_complete', 'rc_download_results',
+                      'rc_result_image', 'rc_geometry_complete',
+                      'rc_geometry', 'rc_dataset_id', 'rc_bands_loaded',
+                      'rc_band_list', 'rc_expression', 'rc_band_mapping']:
+                st.session_state[k] = None if 'geometry' in k or 'image' in k or 'id' in k else (
+                    False if isinstance(st.session_state.get(k), bool) else
+                    [] if isinstance(st.session_state.get(k), list) else
+                    '' if isinstance(st.session_state.get(k), str) else None
+                )
+            st.session_state.rc_geometry_complete = False
+            st.session_state.rc_download_complete = False
+            st.session_state.rc_download_results = None
+            st.session_state.rc_result_image = None
+            st.rerun()
 
 
-def _export_zonal_csv(result_image, geometry, scale, filename, band_name):
-    """Export zonal statistics as CSV."""
+def _export_zonal_csv(result_image, geometry, scale, filename, band_name) -> str | None:
+    """Compute zonal statistics and return CSV string, or None on failure."""
     import pandas as pd
 
     stats = result_image.reduceRegion(
@@ -594,17 +720,11 @@ def _export_zonal_csv(result_image, geometry, scale, filename, band_name):
 
     if stats:
         df = pd.DataFrame([stats])
-        csv_data = df.to_csv(index=False)
         st.dataframe(df)
-        st.download_button(
-            label="Download CSV",
-            data=csv_data,
-            file_name=f"{filename}_zonal_stats.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-    else:
-        st.warning("No statistics could be computed for this region.")
+        return df.to_csv(index=False)
+
+    st.warning("No statistics could be computed for this region.")
+    return None
 
 
 # ---------------------------------------------------------------------------
