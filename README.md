@@ -91,7 +91,23 @@ This is a web-based interface that provides five integrated tools for climate da
 
 4. **Start analyzing**: Access all five analysis tools instantly!
 
-### Option 2: Run Locally
+### Option 2: One-Click Install (Recommended for Local Use)
+
+No coding experience needed! Just download the repository and double-click the installer for your operating system:
+
+| Your OS  | Double-click to install     | Double-click to launch      |
+|----------|----------------------------|-----------------------------|
+| Windows  | `install-windows.bat`      | `run-windows.bat`           |
+| macOS    | `install-mac.command`      | `run-mac.command`           |
+| Linux    | `install-linux.sh`         | `run-linux.sh`              |
+
+The installer automatically handles: Git, Python, virtual environment, all dependencies, and Google Earth Engine authentication. You only need to run the installer once — after that, use the launcher file for daily use.
+
+> **macOS note**: If macOS blocks the file, right-click it and select "Open".
+>
+> **Linux note**: You may need to right-click > Properties > "Allow executing as program" first.
+
+### Option 3: Manual Install
 
 **Prerequisites:**
 - Python 3.8 or higher
