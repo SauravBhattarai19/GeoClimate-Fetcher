@@ -138,42 +138,27 @@ def get_bands_for_dataset(dataset_name):
         bands = catalog.get_bands_for_dataset(dataset_name)
         if bands:
             return bands
-    except Exception as e:
-        print(f"STAC lookup failed, falling back to CSV: {e}")
+    except Exception:
+        pass  # STAC unavailable, fall back to CSV
 
     # Fallback to direct CSV reading
     data_dir = Path('geoclimate_fetcher') / 'data'
     if not data_dir.exists():
         return []
 
-    # Try to find the dataset in any CSV file
     for csv_file in data_dir.glob('*.csv'):
         try:
             df = pd.read_csv(csv_file)
             if 'Dataset Name' not in df.columns or 'Band Names' not in df.columns:
                 continue
 
-            # Find the dataset
             dataset_row = df[df['Dataset Name'] == dataset_name]
             if not dataset_row.empty:
                 bands_str = dataset_row.iloc[0].get('Band Names', '')
                 if isinstance(bands_str, str) and bands_str:
                     return [band.strip() for band in bands_str.split(',')]
-        except Exception as e:
-            print(f"Error reading {csv_file}: {e}")
-
-    # If not found, try the Datasets.csv file specifically
-    datasets_file = data_dir / 'Datasets.csv'
-    if datasets_file.exists():
-        try:
-            df = pd.read_csv(datasets_file)
-            dataset_row = df[df['Dataset Name'] == dataset_name]
-            if not dataset_row.empty:
-                bands_str = dataset_row.iloc[0].get('Band Names', '')
-                if isinstance(bands_str, str) and bands_str:
-                    return [band.strip() for band in bands_str.split(',')]
-        except Exception as e:
-            print(f"Error reading Datasets.csv: {e}")
+        except Exception:
+            continue
 
     return []
 
@@ -320,7 +305,7 @@ def _download_image_simple(ee_id, bands, geometry, temp_path, export_format, sca
         if os.path.exists(temp_path):
             try:
                 os.unlink(temp_path)
-            except:
+            except OSError:
                 pass
 
 
@@ -449,7 +434,7 @@ def _download_image_collection_simple(ee_id, bands, geometry, start_date, end_da
         if os.path.exists(temp_path):
             try:
                 os.unlink(temp_path)
-            except:
+            except OSError:
                 pass
 
 def _export_individual_geotiffs(collection, temp_path, geometry, scale, collection_size):
@@ -556,21 +541,12 @@ def _export_individual_geotiffs(collection, temp_path, geometry, scale, collecti
 
 def _export_netcdf_with_time(collection, temp_path, geometry, scale, collection_size, ee_id):
     """Export NetCDF with proper multi-dimensional structure and time axis"""
-    try:
-        # For now, return an informative message that NetCDF is not yet fully implemented
-        return {
-            'success': False,
-            'file_path': None,
-            'file_data': None,
-            'message': f"NetCDF export is not yet implemented. Please use CSV for time series data or GeoTIFF for spatial data. Collection has {collection_size} images."
-        }
-    except Exception as e:
-        return {
-            'success': False,
-            'file_path': None,
-            'file_data': None,
-            'message': f"NetCDF processing failed: {str(e)}"
-        }
+    return {
+        'success': False,
+        'file_path': None,
+        'file_data': None,
+        'message': f"NetCDF export is not yet implemented. Please use CSV for time series data or GeoTIFF for spatial data. Collection has {collection_size} images."
+    }
 
 
 def _export_composite_geotiff(collection, temp_path, geometry, scale, collection_size, start_date, end_date):

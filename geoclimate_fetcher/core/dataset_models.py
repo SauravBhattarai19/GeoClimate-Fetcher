@@ -162,13 +162,13 @@ class DatasetMetadata:
             if start_str:
                 try:
                     start_date = datetime.fromisoformat(start_str.replace('Z', '+00:00'))
-                except:
+                except Exception:
                     pass
 
             if end_str:
                 try:
                     end_date = datetime.fromisoformat(end_str.replace('Z', '+00:00'))
-                except:
+                except Exception:
                     pass
 
         # Extract spatial extent

@@ -34,7 +34,7 @@ class UserRegistration:
                 with open(self.storage_file, 'r') as f:
                     data = json.load(f)
                     return user_hash in data.get('users', {})
-            except:
+            except Exception:
                 return False
         return False
 
@@ -48,7 +48,7 @@ class UserRegistration:
             try:
                 with open(self.storage_file, 'r') as f:
                     data = json.load(f)
-            except:
+            except Exception:
                 pass
 
         # Add user data with timestamp
@@ -66,7 +66,7 @@ class UserRegistration:
             with open(self.storage_file, 'w') as f:
                 json.dump(data, f, indent=2)
         except Exception as e:
-            print(f"Warning: Could not save user data: {e}")
+            pass  # Non-critical: user data save failed
 
     def get_stats(self):
         """Get user statistics"""
@@ -97,7 +97,7 @@ class UserRegistration:
                         stats['institutions'][institution] = stats['institutions'].get(institution, 0) + 1
 
                 return stats
-        except:
+        except Exception:
             return {'total_users': 0, 'countries': {}, 'purposes': {}}
 
     def render(self, project_id):

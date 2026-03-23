@@ -665,7 +665,7 @@ def _parse_dataset_dates(start_date_str, end_date_str):
         return start_date, end_date
 
     except Exception as e:
-        print(f"Error parsing dates: {e}")
+        pass  # Date parsing failed, return None defaults
         return None, None
 
 
@@ -2926,11 +2926,6 @@ def _process_smart_download(export_format, scale, export_preference):
         st.info("⏳ Processing your Earth Engine data request...")
 
         with st.spinner("🌍 Fetching Earth Engine data..."):
-            # DEBUG: Check what dataset contains
-            print(f"🐛 DEBUG: dataset object = {dataset}")
-            print(f"🐛 DEBUG: dataset.get('snippet_type') = {repr(dataset.get('snippet_type'))}")
-            print(f"🐛 DEBUG: dataset.get('ee_id') = {repr(dataset.get('ee_id'))}")
-
             # Handle different dataset types - robust check for ImageCollection (case insensitive)
             snippet_type = dataset.get('snippet_type', 'ImageCollection')
             if snippet_type and snippet_type.lower() in ['imagecollection'] or snippet_type in [None, '']:

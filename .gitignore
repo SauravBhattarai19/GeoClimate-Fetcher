@@ -57,6 +57,10 @@ coverage.xml
 profile_default/
 ipython_config.py
 
+# Streamlit secrets — NEVER commit
+.streamlit/secrets.toml
+service_account*.json
+
 # Environments
 .env
 .venv

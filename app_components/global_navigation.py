@@ -20,6 +20,7 @@ def render_global_navigation(clear_auth_func=None):
         ("🧠", "Climate Analytics", "climate_analytics"),
         ("💧", "Hydrology", "hydrology"),
         ("🎯", "Product Selector", "product_selector"),
+        ("🧮", "Raster Calc", "raster_calculator"),
         ("📊", "Visualizer", "data_visualizer"),
         ("🚪", "Logout", "logout")
     ]
@@ -204,6 +205,7 @@ def get_current_tool_info():
         "climate_analytics": {"name": "Climate Analytics", "icon": "🧠", "description": "Calculate Climate Indices"},
         "hydrology": {"name": "Hydrology Analyzer", "icon": "💧", "description": "Precipitation Analysis"},
         "product_selector": {"name": "Product Selector", "icon": "🎯", "description": "Compare Data Sources"},
+        "raster_calculator": {"name": "Raster Calculator", "icon": "🧮", "description": "Band Math & Spectral Indices"},
         "data_visualizer": {"name": "Data Visualizer", "icon": "📊", "description": "Visualize Your Data"}
     }
 

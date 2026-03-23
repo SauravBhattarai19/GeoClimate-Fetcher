@@ -91,7 +91,7 @@ class DatasetConfig:
                             try:
                                 dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
                                 dataset_config['start_date'] = dt.strftime('%Y-%m-%d')
-                            except:
+                            except Exception:
                                 dataset_config['start_date'] = start_date[:10]  # Take first 10 chars
 
                     if end_date:
@@ -101,7 +101,7 @@ class DatasetConfig:
                             try:
                                 dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
                                 dataset_config['end_date'] = dt.strftime('%Y-%m-%d')
-                            except:
+                            except Exception:
                                 dataset_config['end_date'] = end_date[:10]
                     else:
                         # No end date means ongoing dataset

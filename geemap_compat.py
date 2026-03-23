@@ -57,7 +57,12 @@ except Exception as e:
 
             def addLayer(self, ee_object, vis_params=None, name="Layer",
                          shown=True, opacity=1.0):
-                pass  # requires full geemap
+                import warnings
+                warnings.warn(
+                    "Earth Engine layer rendering requires geemap.foliumap. "
+                    "Install geemap properly to enable map layers.",
+                    RuntimeWarning, stacklevel=2
+                )
 
             add_layer = addLayer
 
@@ -67,7 +72,7 @@ except Exception as e:
                     self.zoom_start = zoom
 
             def add_colorbar(self, *args, **kwargs):
-                pass
+                pass  # Colorbar requires full geemap
 
             def add_layer_control(self):
                 folium.LayerControl().add_to(self)

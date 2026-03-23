@@ -207,7 +207,7 @@ class MeteostatHandler:
             # Check date format
             try:
                 pd.to_datetime(data_df['date'])
-            except:
+            except Exception:
                 return False, "Invalid date format in data. Expected YYYY-MM-DD"
             
             return True, "Validation successful"
@@ -805,42 +805,36 @@ class GriddedDataHandler:
             total_chunks = (total_days // chunk_size_days) + 1
             chunk_num = 0
 
-            print(f"📦 Processing large dataset in {total_chunks} chunks of ~{chunk_size_days} days each...")
-            logging.info(f"📦 Processing large dataset in {total_chunks} chunks of ~{chunk_size_days} days each...")
+            logging.info("Processing large dataset in %d chunks of ~%d days each", total_chunks, chunk_size_days)
 
             while current_date <= end_date:
                 chunk_end = min(current_date + timedelta(days=chunk_size_days), end_date)
                 chunk_num += 1
 
                 try:
-                    if chunk_num % 10 == 1:  # Print every 10th chunk to avoid spam
-                        print(f"  📦 Processing chunk {chunk_num}/{total_chunks}: {current_date} to {chunk_end}")
-                    logging.info(f"  📦 Processing chunk {chunk_num}/{total_chunks}: {current_date} to {chunk_end}")
+                    logging.info("Processing chunk %d/%d: %s to %s", chunk_num, total_chunks, current_date, chunk_end)
                     # Process chunk
                     chunk_data = self._process_chunk(ee_id, bands, point_coords, current_date, chunk_end)
                     if not chunk_data.empty:
                         all_results.append(chunk_data)
-                        if chunk_num % 10 == 0:  # Print every 10th completion
-                            print(f"    ✅ Chunk {chunk_num} completed: {len(chunk_data)} records")
-                        logging.info(f"    ✅ Chunk {chunk_num} completed: {len(chunk_data)} records")
+                        logging.info("Chunk %d completed: %d records", chunk_num, len(chunk_data))
                     else:
-                        logging.info(f"    ⚠️ Chunk {chunk_num}: No data found")
+                        logging.info("Chunk %d: No data found", chunk_num)
 
                 except Exception as e:
-                    logging.warning(f"    ❌ Error processing chunk {chunk_num}: {str(e)}")
+                    logging.warning("Error processing chunk %d: %s", chunk_num, e)
 
                 current_date = chunk_end + timedelta(days=1)
-            
+
             # Combine all chunks
             if all_results:
                 final_df = pd.concat(all_results, ignore_index=True)
                 final_df = final_df.sort_values('date').reset_index(drop=True)
-                
+
                 # Apply unit conversions
                 final_df = self.apply_unit_conversion(final_df, ee_id, variable)
-                
-                print(f"✅ Retrieved {len(final_df)} total records using chunked processing")
-                logging.info(f"✅ Retrieved {len(final_df)} records using chunked processing")
+
+                logging.info("Retrieved %d records using chunked processing", len(final_df))
                 return final_df
             else:
                 logging.warning(f"No data retrieved from {ee_id}")
@@ -1087,7 +1081,7 @@ class GriddedDataHandler:
                         else:
                             start_date = pd.to_datetime(start_str).date()
                         dataset_starts.append(start_date)
-                    except:
+                    except Exception:
                         continue
                 
                 if dataset.get('End Date'):
@@ -1098,7 +1092,7 @@ class GriddedDataHandler:
                         else:
                             end_date = pd.to_datetime(end_str).date()
                         dataset_ends.append(end_date)
-                    except:
+                    except Exception:
                         continue
             
             if not dataset_starts or not dataset_ends:

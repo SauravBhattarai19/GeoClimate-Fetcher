@@ -6,6 +6,7 @@ import os
 import ee
 import time
 import json
+import logging
 import pandas as pd
 import xarray as xr
 import numpy as np
@@ -13,6 +14,8 @@ from typing import Dict, List, Union, Optional, Any, Tuple, Callable
 from pathlib import Path
 from tqdm import tqdm
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 class GEEExporter:
     """Class for exporting Earth Engine data."""
@@ -108,8 +111,8 @@ class GEEExporter:
                     result['message'] = f"Downloaded locally ({local_result.get('actual_size_mb', 0):.1f} MB). {local_msg}"
                 else:
                     # Local failed, fallback to Drive
-                    print(f"Local export failed: {local_result.get('message', '')}")
-                    print("Falling back to Google Drive export...")
+                    logger.info("Local export failed: %s. Falling back to Google Drive export.",
+                               local_result.get('message', ''))
 
                     drive_result = self._export_to_drive_smart(image, filename, region, scale, crs)
                     result.update(drive_result)
@@ -145,21 +148,13 @@ class GEEExporter:
         import tempfile
         import os
 
-        print(f"🚀🚀 DEBUG: _export_to_local_smart called with filename: {filename}")
-        print(f"🔍🔍 DEBUG: Image type in smart export: {type(image)}")
-
         try:
             # Create temporary file
             with tempfile.NamedTemporaryFile(delete=False, suffix='.tif') as temp_file:
                 temp_path = temp_file.name
 
-            print(f"📁📁 DEBUG: Created temp file: {temp_path}")
-            print(f"🔄🔄 DEBUG: About to call export_image_to_local...")
-
             # Export using enhanced method with explicit CRS
             result_path = self.export_image_to_local(image, temp_path, region, scale, crs)
-
-            print(f"✅✅ DEBUG: export_image_to_local returned: {result_path}")
 
             # Validate that the file was actually created and has content
             if not os.path.exists(result_path):
@@ -206,7 +201,7 @@ class GEEExporter:
                     os.unlink(temp_path)
                 if 'result_path' in locals() and os.path.exists(result_path):
                     os.unlink(result_path)
-            except:
+            except Exception:
                 pass
 
             return {
@@ -291,7 +286,7 @@ class GEEExporter:
         import calendar
         
         if df.empty:
-            print("No data to export")
+            logger.warning("No data to export")
             return []
         
         # Convert date column to datetime if needed
@@ -342,7 +337,7 @@ class GEEExporter:
                         (df[date_col].dt.date <= chunk_end)]
             
             if chunk_df.empty:
-                print(f"Chunk {i+1}: No data for {chunk_start} to {chunk_end}")
+                logger.info("Chunk %d: No data for %s to %s", i+1, chunk_start, chunk_end)
                 continue
                 
             # Create a filename with date range
@@ -360,7 +355,7 @@ class GEEExporter:
             fc = ee.FeatureCollection(features)
             
             # Export to Drive
-            print(f"Exporting chunk {i+1}/{len(chunks)}: {chunk_start} to {chunk_end} with {len(chunk_df)} records")
+            logger.info("Exporting chunk %d/%d: %s to %s with %d records", i+1, len(chunks), chunk_start, chunk_end, len(chunk_df))
             
             task_id = self.export_table_to_drive(
                 fc, chunk_filename, folder, wait=False
@@ -417,9 +412,9 @@ class GEEExporter:
         bands = list(dataset.data_vars.keys())
         
         # Print information
-        print(f"Exporting {len(times)} dates with {len(bands)} bands")
-        print(f"Time range: {pd.to_datetime(times[0])} to {pd.to_datetime(times[-1])}")
-        print(f"Spatial extent: {lons.min()} to {lons.max()}, {lats.min()} to {lats.max()}")
+        logger.info("Exporting %d dates with %d bands", len(times), len(bands))
+        logger.info("Time range: %s to %s", pd.to_datetime(times[0]), pd.to_datetime(times[-1]))
+        logger.info("Spatial extent: %s to %s, %s to %s", lons.min(), lons.max(), lats.min(), lats.max())
         
         # Get geotransform
         height = len(lats)
@@ -462,7 +457,7 @@ class GEEExporter:
                     dst.write(array, j)
                     dst.set_band_description(j, bands[j-1])
         
-        print(f"Successfully exported {len(output_files)} GeoTIFF files to {output_dir}")
+        logger.info("Successfully exported %d GeoTIFF files to %s", len(output_files), output_dir)
         return output_files
         
     def estimate_export_size(self, image: ee.Image, region: ee.Geometry, 
@@ -514,7 +509,7 @@ class GEEExporter:
                     return True
                     
                 if state == 'FAILED':
-                    print(f"Export failed: {task_status.get('error_message', 'Unknown error')}")
+                    logger.error("Export failed: %s", task_status.get('error_message', 'Unknown error'))
                     return False
                     
                 if 'progress' in task_status:
@@ -524,7 +519,7 @@ class GEEExporter:
                     
                 # Check timeout
                 if time.time() - start_time > self.timeout:
-                    print("Export timed out")
+                    logger.error("Export timed out")
                     return False
                     
                 # Wait before checking again
@@ -567,12 +562,10 @@ class GEEExporter:
             # PROVEN WORKING method: toFloat() ensures proper Float32 datatype
             # This matches the successful notebook approach that produces Float32 TIFFs
             harmonized_image = image.toFloat()
-
-            print(f"✅ Applied toFloat() conversion - PROVEN to produce Float32 TIFFs!")
             return harmonized_image
 
         except Exception as e:
-            print(f"Warning: Could not harmonize band types ({str(e)}). Using original image.")
+            logger.warning("Could not harmonize band types: %s. Using original image.", e)
             return image
 
     def _enforce_float32_for_export(self, image: ee.Image) -> ee.Image:
@@ -590,12 +583,10 @@ class GEEExporter:
             # PROVEN WORKING method: toFloat() from successful notebook implementation
             # This actually produces Float32 TIFFs unlike multiply(1.0)
             float_image = image.toFloat()
-
-            print(f"✅ Applied toFloat() conversion - PROVEN to work for Float32 TIFFs!")
             return float_image
 
         except Exception as e:
-            print(f"Warning: Float32 enforcement failed ({str(e)}). Using original image.")
+            logger.warning("Float32 enforcement failed: %s. Using original image.", e)
             return image
 
     def _validate_tiff_export(self, file_path: Union[str, Path], expected_crs: str = 'EPSG:4326') -> Dict[str, Any]:
@@ -743,18 +734,14 @@ class GEEExporter:
         # Harmonize band data types to prevent export errors
         try:
             harmonized_image = self._harmonize_band_types(image)
-            print("✅ Harmonized band data types for export")
         except Exception as e:
-            print(f"⚠️ Warning: Could not harmonize band types: {str(e)}")
             harmonized_image = image
         
         # Apply additional Float32 enforcement for GEE export
         try:
             # Ensure the image is definitively in Float32 before export
             export_ready_image = self._enforce_float32_for_export(harmonized_image)
-            print("✅ Applied final Float32 enforcement for GEE export")
         except Exception as e:
-            print(f"⚠️ Warning: Could not apply final Float32 enforcement: {str(e)}")
             export_ready_image = harmonized_image
 
         # Start the export task
@@ -844,62 +831,19 @@ class GEEExporter:
         # Ensure directory exists
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        print(f"🚀 DEBUG: Starting PROVEN Float32 export to {output_path} with {crs} projection...")
-        print(f"🔍 DEBUG: Input image type: {type(image)}")
-
-        # STEP 1: Apply the PROVEN toFloat() conversion (like successful notebook)
+        # Convert to Float32 and clip to region
         try:
-            # This is the KEY that makes Float32 TIFFs work!
             float32_image = image.toFloat()
-            print("✅ DEBUG: Applied toFloat() - the PROVEN method for Float32 TIFFs!")
-            print(f"🔍 DEBUG: Float32 image created: {type(float32_image)}")
-
-            # Verify the image has float type
-            try:
-                img_info = float32_image.getInfo()
-                if 'bands' in img_info:
-                    for i, band in enumerate(img_info['bands']):
-                        data_type = band.get('data_type', {})
-                        print(f"🔍 DEBUG: Band {i} data type after toFloat(): {data_type}")
-            except Exception as info_e:
-                print(f"🔍 DEBUG: Could not get image info: {info_e}")
-
-        except Exception as e:
-            print(f"⚠️ WARNING: toFloat() failed: {str(e)}, using original image")
+        except Exception:
             float32_image = image
 
-        # STEP 2: Apply EXACT notebook approach - clip THEN convert to Float32
         try:
-            print("🔄 DEBUG: Clipping image to region first (like notebook)...")
-            clipped_image = float32_image.clip(region)
-
-            print("🔄 DEBUG: Applying toFloat() to clipped image (EXACT notebook approach)...")
-            final_float32_image = clipped_image.toFloat()
-            print("✅ DEBUG: Applied toFloat() to clipped image - EXACT notebook method!")
-
-            # Verify the final image has float type
-            try:
-                img_info = final_float32_image.getInfo()
-                if 'bands' in img_info:
-                    for i, band in enumerate(img_info['bands']):
-                        data_type = band.get('data_type', {})
-                        print(f"🔍 DEBUG: Final Band {i} data type after clip+toFloat(): {data_type}")
-            except Exception as info_e:
-                print(f"🔍 DEBUG: Could not get final image info: {info_e}")
-
-        except Exception as e:
-            print(f"⚠️ WARNING: Clip+toFloat() failed: {str(e)}, using original float32_image")
+            final_float32_image = float32_image.clip(region).toFloat()
+        except Exception:
             final_float32_image = float32_image
 
-        # STEP 3: Use geemap.ee_export_image() - the PROVEN working method
+        # Export using geemap
         try:
-            print("📁 DEBUG: Exporting with geemap.ee_export_image() - EXACT notebook approach...")
-            print(f"🔍 DEBUG: About to call geemap.ee_export_image with:")
-            print(f"   - filename: {str(output_path)}")
-            print(f"   - scale: {scale}")
-            print(f"   - crs: {crs}")
-            print(f"   - file_per_band: False")
-
             geemap.ee_export_image(
                 final_float32_image,
                 filename=str(output_path),
@@ -909,22 +853,9 @@ class GEEExporter:
                 crs=crs
             )
 
-            print("✅ DEBUG: geemap.ee_export_image() completed successfully")
-
-            # Validate the exported TIFF file
-            validation_result = self._validate_tiff_export(output_path, crs)
-            if validation_result['success']:
-                print(f"✅ PROVEN method export validated: {validation_result['message']}")
-            else:
-                print(f"⚠️ Export validation warning: {validation_result['message']}")
-
-            print(f"✅ PROVEN method export complete: {output_path}")
             return output_path
 
-        except Exception as e:
-            print(f"⚠️ Primary geemap method failed: {str(e)}")
-            print("🔄 Falling back to direct download method...")
-
+        except Exception:
             # Fallback to direct download
             return self._export_to_local_with_direct_download(float32_image, output_path, region, scale, crs)
 
@@ -934,7 +865,6 @@ class GEEExporter:
         """
         Final fallback using direct download with explicit Float32 preservation.
         """
-        print("🔄 Using direct download fallback...")
 
         # Check estimated size
         estimated_size = self.estimate_export_size(image, region, scale)
@@ -947,7 +877,6 @@ class GEEExporter:
             )
 
         # Image is already converted to Float32 in the main method
-        print("✅ Using Float32 image passed from main method")
         export_ready_image = image
 
         # Get image as numpy arrays using export-ready image
@@ -981,23 +910,16 @@ class GEEExporter:
                     if band in pixels and pixels[band] is not None and len(pixels[band]) > 0:
                         arrays[band] = np.array(pixels[band])
                     else:
-                        print(f"Warning: No data returned for band '{band}'")
+                        logger.warning("No data returned for band: %s", band)
 
                     pbar.update(1)
                 except Exception as e:
-                    print(f"Error downloading band {band}: {str(e)}")
+                    logger.error("Error downloading band %s: %s", band, e)
                     pbar.update(1)
 
         # Check if we successfully got any data
         if not arrays:
-            print("No data was returned from Earth Engine. This could be because:")
-            print("1. There is no data available for this region in the selected dataset")
-            print("2. The region might be too large for direct download")
-            print("3. The Earth Engine API request failed")
-            print("\nTry one of the following solutions:")
-            print("- Use 'Export to Google Drive' instead of direct download")
-            print("- Select a smaller region")
-            print("- Try a different dataset that covers this region")
+            logger.warning("No data returned from Earth Engine for this region/dataset.")
             raise ValueError("Failed to download any image data")
 
         # Create a simple GeoTIFF
@@ -1028,14 +950,6 @@ class GEEExporter:
                 dst.write(array_float32, i)
                 dst.set_band_description(i, band)
 
-        # Validate the exported TIFF file
-        validation_result = self._validate_tiff_export(output_path, crs)
-        if validation_result['success']:
-            print(f"✅ Direct download export validated: {validation_result['message']}")
-        else:
-            print(f"⚠️ Direct download export validation warning: {validation_result['message']}")
-
-        print(f"✅ Direct download export complete: {output_path}")
         return output_path
         
     def export_to_cloud_optimized_geotiff(self, image: ee.Image, output_path: Union[str, Path],

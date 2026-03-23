@@ -36,6 +36,56 @@ from geoclimate_fetcher.climate_indices import ClimateIndicesCalculator
 import hashlib
 from pathlib import Path
 
+
+_EE_SA_SESSION_FLAG = "_ee_quick_access_initialized"
+_GEE_QA_ERROR_KEY = "_gee_quick_access_error"
+
+
+def initialize_ee_service_account():
+    """
+    Initialize GEE using the platform's service account.
+    Credentials are stored in Streamlit Cloud secrets or .streamlit/secrets.toml.
+    Returns True if successful, False otherwise.
+
+    Note: ee.ServiceAccountCredentials expects key_data as a JSON *string* (or PEM);
+    it parses JSON internally. Passing a dict breaks authentication.
+
+    We avoid @st.cache_resource here: a failed attempt would cache False for the whole
+    server process, so fixing secrets would never take effect until restart.
+    """
+    if st.session_state.get(_EE_SA_SESSION_FLAG):
+        return True
+    try:
+        if "gee" not in st.secrets:
+            st.session_state.pop(_GEE_QA_ERROR_KEY, None)
+            return False
+
+        raw_key = st.secrets["gee"]["key_json"]
+        # Streamlit may expose key_json as str (TOML string) or as dict (nested secrets).
+        key_data_str = raw_key if isinstance(raw_key, str) else json.dumps(raw_key)
+
+        credentials = ee.ServiceAccountCredentials(
+            st.secrets["gee"]["client_email"],
+            key_data=key_data_str,
+        )
+        ee.Initialize(
+            credentials=credentials,
+            project=st.secrets["gee"].get("project_id", None),
+        )
+        ee.Image("USGS/SRTMGL1_003").getInfo()
+        st.session_state.pop(_GEE_QA_ERROR_KEY, None)
+        st.session_state[_EE_SA_SESSION_FLAG] = True
+        return True
+    except Exception as e:
+        st.session_state[_GEE_QA_ERROR_KEY] = str(e)
+        return False
+
+
+def clear_ee_service_account_init_state():
+    """Clear Quick Access init flag (replaces st.cache_resource clear on this flow)."""
+    st.session_state.pop(_EE_SA_SESSION_FLAG, None)
+    st.session_state.pop(_GEE_QA_ERROR_KEY, None)
+
 # Try to import cookie manager, fallback if not available
 try:
     import extra_streamlit_components as stx
@@ -107,7 +157,7 @@ def check_stored_auth():
                 return project_cookie
     except Exception as e:
         # Handle any cookie-related errors gracefully
-        print(f"Error checking stored auth: {str(e)}")
+        pass  # Cookie errors are non-critical
     return None
 
 # Function to authenticate GEE and store credentials
@@ -125,7 +175,7 @@ def authenticate_gee(project_id, service_account=None, key_file=None, auth_token
                 cookie_manager.set("gee_auth_token", auth_token, expires_at=datetime.now() + timedelta(days=30))
                 cookie_manager.set("gee_project_id", project_id, expires_at=datetime.now() + timedelta(days=30))
             except Exception as e:
-                print(f"Warning: Could not set cookies: {str(e)}")
+                pass  # Cookie storage is optional
             return True, "Authentication successful!"
         else:
             return False, "Authentication failed. Please check your credentials."
@@ -139,13 +189,22 @@ def clear_authentication():
     # Clear session state
     st.session_state.auth_complete = False
     st.session_state.project_id = None
-    
+    st.session_state.auth_mode = None
+
+    clear_ee_service_account_init_state()
+
+    # Reset ee state
+    try:
+        ee.data._initialized = False
+    except Exception:
+        pass
+
     # Clear cookies
     try:
         cookie_manager.delete('gee_auth_token')
         cookie_manager.delete('gee_project_id')
-    except Exception as e:
-        print(f"Error clearing cookies: {str(e)}")
+    except Exception:
+        pass  # Cookie cleanup is non-critical
 
 # Import app components
 from app_components.theme_utils import apply_dark_mode_css
@@ -622,22 +681,25 @@ if 'hydro_analysis_results' not in st.session_state:
 # MAIN APP FLOW - LOGIN FIRST APPROACH
 # =====================
 
+# Track auth mode for switching detection
+if 'auth_mode' not in st.session_state:
+    st.session_state.auth_mode = None
+
 # Check if user is authenticated - if not, show login page
 if not st.session_state.get('auth_complete', False):
-    # Check for stored authentication first
+    # Check for stored authentication (cookie-based)
     stored_project_id = check_stored_auth()
-    
+
     if stored_project_id:
-        # Try to authenticate with stored credentials silently
         try:
             success, message = authenticate_gee(stored_project_id)
             if success:
+                st.session_state.auth_mode = "own_account"
                 st.success("✅ Welcome back! Authenticated successfully.")
                 time.sleep(1)
                 st.rerun()
-        except Exception as e:
-            # Stored auth failed, show login page
-            print(f"Stored authentication failed: {str(e)}")
+        except Exception:
+            pass  # Stored auth failed, will show login page
     
     # Show dedicated login page with fancy hero
     st.markdown("""
@@ -909,7 +971,7 @@ if not st.session_state.get('auth_complete', False):
             st.markdown('<div style="text-align: center;">', unsafe_allow_html=True)
             st.image("pictures/Saurav.png", width=120)
             st.markdown('</div>', unsafe_allow_html=True)
-        except:
+        except Exception:
             st.markdown("**👨‍💻**")
 
     with col_info:
@@ -1084,7 +1146,7 @@ if st.session_state.app_mode is None:
                 <div class="stat-label">Climate Indices</div>
             </div>
             <div class="stat-item">
-                <div class="stat-number">6</div>
+                <div class="stat-number">7</div>
                 <div class="stat-label">Analysis Tools</div>
             </div>
         </div>
@@ -1223,6 +1285,29 @@ if st.session_state.app_mode is None:
         if st.button("🚀 Launch Data Visualizer", width="stretch", type="primary"):
             st.session_state.app_mode = "data_visualizer"
             st.rerun()
+
+    # Fourth row of tools
+    col7, col8 = st.columns(2)
+
+    with col7:
+        st.markdown("""
+        <div class="tool-card">
+            <span class="tool-icon">🧮</span>
+            <div class="tool-title">Raster Calculator</div>
+            <div class="tool-description">
+                Perform band math on any Earth Engine dataset. Compute spectral indices
+                (NDVI, NDWI, EVI, ...) or write custom expressions like (B4-B3)/(B4+B3).
+                Supports temporal aggregation and GeoTIFF export.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        if st.button("🚀 Launch Raster Calculator", width="stretch", type="primary"):
+            st.session_state.app_mode = "raster_calculator"
+            st.rerun()
+
+    with col8:
+        st.empty()  # Placeholder for future tools
 
     # Author Section
     st.markdown('<h3>👨‍💻 About the Developer</h3>', unsafe_allow_html=True)

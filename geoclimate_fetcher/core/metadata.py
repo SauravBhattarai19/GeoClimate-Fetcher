@@ -103,7 +103,7 @@ class MetadataCatalog:
                 df = pd.read_csv(csv_file)
                 self._catalog[category] = df
             except Exception as e:
-                print(f"Error loading {csv_file}: {str(e)}")
+                pass  # Skip unreadable CSV files
                 
         # Combine all datasets into a single DataFrame
         if self._catalog:
