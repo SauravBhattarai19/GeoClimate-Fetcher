@@ -296,9 +296,11 @@ def _simplify_geojson_locally(geojson_data, tolerance_meters):
         # Convert to GeoDataFrame
         gdf = gpd.GeoDataFrame.from_features(geojson_data['features'])
 
-        # Set CRS if not set (assume WGS84)
+        # Ensure CRS is EPSG:4326 (required by GEE — reproject if needed)
         if gdf.crs is None:
             gdf.set_crs(epsg=4326, inplace=True)
+        elif gdf.crs.to_epsg() != 4326:
+            gdf = gdf.to_crs(epsg=4326)
 
         # Convert tolerance from meters to degrees (approximate)
         # At equator: 1 degree ≈ 111,320 meters
@@ -343,6 +345,12 @@ def _process_shapefile_zip(uploaded_file):
 
         # Read with geopandas
         gdf = gpd.read_file(shp_files[0])
+
+        # Reproject to EPSG:4326 (required by GEE)
+        if gdf.crs is None:
+            gdf.set_crs(epsg=4326, inplace=True)
+        elif gdf.crs.to_epsg() != 4326:
+            gdf = gdf.to_crs(epsg=4326)
 
         # Convert to GeoJSON
         return json.loads(gdf.to_json())
@@ -583,19 +591,9 @@ def _render_date_selection():
         dataset_start = datetime(2000, 1, 1).date()
         dataset_end = datetime.now().date()
 
-    st.markdown("### Data Availability:")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.info(f"**Start:** {dataset_start}")
-    with col2:
-        st.info(f"**End:** {dataset_end}")
+    st.caption(f"Dataset available: {dataset_start} → {dataset_end}")
 
-    # Flexible date selection
     st.markdown("### Select Your Date Range:")
-    st.info("""
-    **Flexible Date Selection:** You can select any date range - a few days, months, or years.
-    The system will automatically chunk long ranges for optimal processing.
-    """)
 
     # Calculate sensible defaults within the valid range
     default_start = datetime(datetime.now().year - 1, 1, 1).date()
@@ -627,52 +625,22 @@ def _render_date_selection():
             help="Select end date for your data export"
         )
 
-    # Calculate date range statistics
-    date_range_days = (user_end_date - user_start_date).days + 1
+    # Compute chunk preview to inform the user
     num_geometries = len(st.session_state.mg_geometries)
-    num_params = len(st.session_state.mg_selected_bands)
+    temporal_resolution = st.session_state.mg_selected_dataset.get('temporal_resolution', 'Daily') if st.session_state.mg_selected_dataset else 'Daily'
+    preview_chunks = _calculate_date_chunks(
+        user_start_date, user_end_date,
+        num_geometries=num_geometries,
+        temporal_resolution=temporal_resolution
+    )
+    num_chunks = len(preview_chunks)
+    chunk_days_preview = (preview_chunks[0][1] - preview_chunks[0][0]).days + 1 if preview_chunks else 1
+    est_elements = _estimate_images_in_chunk(chunk_days_preview, temporal_resolution) * num_geometries
 
-    # Determine chunking strategy
-    if date_range_days <= 365:
-        num_chunks = 1
-        chunk_strategy = "single chunk"
-    elif date_range_days <= 730:  # 2 years
-        num_chunks = 2
-        chunk_strategy = "2 chunks (~1 year each)"
+    if num_chunks == 1:
+        st.caption(f"Will be downloaded as a single local file (~{est_elements:,} elements).")
     else:
-        num_chunks = max(2, (date_range_days // 365) + 1)
-        chunk_strategy = f"{num_chunks} chunks (~1 year each)"
-
-    st.markdown("### Export Strategy:")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.info(f"""
-        - **Date Range:** {date_range_days} days
-        - **Geometries:** {num_geometries}
-        - **Parameters:** {num_params}
-        """)
-    with col2:
-        st.info(f"""
-        - **Chunking:** {chunk_strategy}
-        - **Processing:** One chunk at a time
-        - **Smart Export:** Local first, Drive fallback
-        """)
-
-    # Complexity warning
-    complexity_per_chunk = num_geometries * num_params * (date_range_days / num_chunks / 365)
-    if complexity_per_chunk > 100:
-        st.warning(f"""
-        ⚠️ **High Complexity Detected** (Score: {complexity_per_chunk:.0f} per chunk)
-        - Local download likely to fail or timeout
-        - System will automatically use Google Drive export
-        - Consider reducing: fewer geometries, fewer parameters, or shorter date range
-        """)
-    else:
-        st.success(f"""
-        ✅ **Moderate Complexity** (Score: {complexity_per_chunk:.0f} per chunk)
-        - Local download may succeed for smaller chunks
-        - Automatic fallback to Drive if needed
-        """)
+        st.caption(f"Will be split into {num_chunks} chunks of ~{chunk_days_preview} days each (~{est_elements:,} elements/chunk) for local download.")
 
     if st.button("Continue to Reducer Selection →", type="primary"):
         st.session_state.mg_start_date = user_start_date
@@ -692,20 +660,12 @@ def _render_reducer_selection():
         st.session_state.mg_dates_selected = False
         st.rerun()
 
-    st.info("""
-    **Select how to aggregate pixel values within each geometry**
-    - **Mean:** Average of all pixels (faster, good for general use)
-    - **Median:** Middle value (more robust to outliers)
-    """)
-
     reducer_type = st.radio(
-        "Choose aggregation method:",
+        "Aggregation method:",
         ['mean', 'median'],
-        format_func=lambda x: f"{'📊 Mean (Average)' if x == 'mean' else '📈 Median (Middle Value)'}",
+        format_func=lambda x: "Mean (average)" if x == 'mean' else "Median (robust to outliers)",
         horizontal=True
     )
-
-    st.markdown(f"**Selected:** {'Mean - calculates the average of all pixel values' if reducer_type == 'mean' else 'Median - uses the middle value, more robust to outliers'}")
 
     if st.button("Continue to Export →", type="primary"):
         st.session_state.mg_reducer_type = reducer_type
@@ -721,45 +681,32 @@ def _render_export_interface(exporter):
         st.session_state.mg_reducer_selected = False
         st.rerun()
 
-    # Show summary of all selections
-    st.markdown("### 📋 Export Summary:")
-
-    # Calculate date chunks for display
+    # Summary
     start_date = st.session_state.mg_start_date
     end_date = st.session_state.mg_end_date
-    date_chunks = _calculate_date_chunks(start_date, end_date)
+    _num_geoms = len(st.session_state.mg_geometries) if st.session_state.mg_geometries else 1
+    _temporal_res = st.session_state.mg_selected_dataset.get('temporal_resolution', 'Daily') if st.session_state.mg_selected_dataset else 'Daily'
+    date_chunks = _calculate_date_chunks(start_date, end_date, num_geometries=_num_geoms, temporal_resolution=_temporal_res)
+    num_chunks = len(date_chunks)
 
     col1, col2 = st.columns(2)
     with col1:
         st.markdown(f"""
-        - **Geometries:** {len(st.session_state.mg_geometries)}
-        - **Identifier:** {st.session_state.mg_identifier_field}
         - **Dataset:** {st.session_state.mg_selected_dataset.get('name', 'Unknown')}
         - **Parameters:** {', '.join(st.session_state.mg_selected_bands)}
+        - **Aggregation:** {st.session_state.mg_reducer_type.capitalize()}
         """)
     with col2:
         st.markdown(f"""
+        - **Geometries:** {_num_geoms} ({st.session_state.mg_identifier_field})
         - **Date Range:** {start_date} to {end_date}
-        - **Chunks:** {len(date_chunks)} (processed separately)
-        - **Aggregation:** {st.session_state.mg_reducer_type.capitalize()}
-        - **Simplification:** {st.session_state.get('mg_simplify_tolerance', 100)}m
+        - **Chunks:** {num_chunks}
         """)
 
-    # Export preference
-    export_preference = st.radio(
-        "Export Preference:",
-        ['auto', 'drive'],
-        format_func=lambda x: "🤖 Smart (Try local first, fallback to Drive)" if x == 'auto' else "☁️ Google Drive Only",
-        horizontal=True,
-        help="Smart export tries to download locally first, then falls back to Google Drive for large exports"
-    )
+    if num_chunks > 1:
+        st.caption(f"Large request split into {num_chunks} chunks. Each chunk downloaded locally; Drive used only if a chunk fails.")
 
-    # Google Drive folder name (if using Drive)
-    drive_folder = st.text_input(
-        "Google Drive Folder Name:",
-        value=f"MultiGeometry_Export_{datetime.now().strftime('%Y%m%d')}",
-        help="Folder name in your Google Drive where files will be saved"
-    )
+    st.markdown("---")
 
     # Scale/Resolution
     scale = st.number_input(
@@ -770,62 +717,14 @@ def _render_export_interface(exporter):
         help="Resolution for spatial averaging. Use dataset's native resolution for best results."
     )
 
-    st.markdown("---")
+    # Drive folder — only shown as a fallback note
+    drive_folder = st.text_input(
+        "Google Drive Folder (fallback):",
+        value=f"MultiGeometry_Export_{datetime.now().strftime('%Y%m%d')}",
+        help="Used only when a chunk is too large for local download."
+    )
 
-    # Calculate complexity score for user guidance using actual chunks
-    num_geometries = len(st.session_state.mg_geometries)
-    num_chunks = len(date_chunks)
-    num_bands = len(st.session_state.mg_selected_bands)
-    total_days = (end_date - start_date).days + 1
-
-    # Complexity per chunk (more accurate than total)
-    complexity_per_chunk = num_geometries * num_bands * (total_days / num_chunks / 365)
-    total_complexity = num_geometries * num_chunks * num_bands
-
-    # Provide intelligent feedback based on complexity
-    if complexity_per_chunk > 100:
-        st.error(f"""
-        🚨 **High Complexity Per Chunk** (Score: {complexity_per_chunk:.0f})
-        - {num_geometries} geometries × {num_bands} bands × {num_chunks} chunks
-        - **Local download WILL BE SKIPPED** - going directly to Google Drive
-        - This prevents long waits (EE has 5-min internal timeout)
-        - Estimated time: {num_chunks * 3}-{num_chunks * 10} minutes
-        """)
-    elif complexity_per_chunk > 50:
-        st.warning(f"""
-        ⚠️ **Medium-High Complexity** (Score: {complexity_per_chunk:.0f})
-        - {num_geometries} geometries × {num_bands} bands × {num_chunks} chunks
-        - Local download will be attempted for **first chunk only**
-        - If first chunk fails, remaining chunks go directly to Drive
-        - This prevents wasting time on repeated failures
-        - Estimated time: {num_chunks * 2}-{num_chunks * 7} minutes
-        """)
-    elif complexity_per_chunk > 20:
-        st.info(f"""
-        ℹ️ **Moderate Complexity** (Score: {complexity_per_chunk:.0f})
-        - {num_geometries} geometries × {num_bands} bands × {num_chunks} chunks
-        - Local download likely to succeed
-        - Automatic Drive fallback if local fails
-        - Estimated time: {num_chunks * 1}-{num_chunks * 3} minutes
-        """)
-    else:
-        st.success(f"""
-        ✅ **Low Complexity** (Score: {complexity_per_chunk:.0f})
-        - {num_geometries} geometries × {num_bands} bands × {num_chunks} chunks
-        - Local download expected to succeed
-        - Fast processing expected
-        - Estimated time: {max(1, num_chunks * 0.5):.0f}-{num_chunks * 2} minutes
-        """)
-
-    # Warning about processing time
-    st.warning(f"""
-    ⚠️ **Smart Export Strategy:**
-    - **{num_chunks} chunk(s)** will be processed (each ~1 year or less)
-    - **Learning from failure:** If local fails on first chunk, skips local for all remaining chunks
-    - **No fake timeouts:** Uses pre-flight complexity check instead of waiting
-    - Geometry simplification applied: {st.session_state.get('mg_simplify_tolerance', 100)}m
-    - Monitor Drive tasks: https://code.earthengine.google.com/tasks
-    """)
+    export_preference = 'auto'  # Always try local first
 
     # Export button
     if st.button("🚀 Start Export", type="primary", width="stretch"):
@@ -852,6 +751,9 @@ def _execute_multi_geometry_export(exporter, export_preference, drive_folder, sc
     end_date = st.session_state.mg_end_date
     reducer_type = st.session_state.mg_reducer_type
     simplify_tolerance = st.session_state.get('mg_simplify_tolerance', 100)
+
+    # Pull temporal resolution for element-count estimation
+    temporal_resolution = st.session_state.mg_selected_dataset.get('temporal_resolution', 'Daily') if st.session_state.mg_selected_dataset else 'Daily'
 
     # Validate required session state variables
     if start_date is None or end_date is None:
@@ -911,8 +813,13 @@ def _execute_multi_geometry_export(exporter, export_preference, drive_folder, sc
                     st.error(f"❌ Failed to create FeatureCollection: {error_msg}")
                 return
 
-        # Calculate date chunks
-        date_chunks = _calculate_date_chunks(start_date, end_date)
+        # Calculate date chunks — sized to stay under EE's 5,000-element limit
+        num_geometries = len(st.session_state.mg_geometries)
+        date_chunks = _calculate_date_chunks(
+            start_date, end_date,
+            num_geometries=num_geometries,
+            temporal_resolution=temporal_resolution
+        )
         total_chunks = len(date_chunks)
 
         # Process chunk by chunk with learning
@@ -922,36 +829,19 @@ def _execute_multi_geometry_export(exporter, export_preference, drive_folder, sc
         progress_bar = st.progress(0)
         status_text = st.empty()
 
-        # Calculate complexity per chunk to determine strategy
-        num_geometries = len(st.session_state.mg_geometries)
-        num_bands = len(parameters)
-        total_days = (end_date - start_date).days + 1
-        complexity_per_chunk = num_geometries * num_bands * (total_days / total_chunks / 365)
-
-        # SMART STRATEGY: Determine if we should skip local entirely based on pre-check
-        local_failed = False  # Track if local export has failed (for learning)
-
-        if complexity_per_chunk > 100:
-            st.warning(f"🚨 High complexity ({complexity_per_chunk:.0f}). Skipping local downloads entirely → Google Drive only.")
-            force_drive = True
-        elif complexity_per_chunk > 50:
-            st.info(f"ℹ️ Medium-high complexity ({complexity_per_chunk:.0f}). Will try local for first chunk only. If it fails, remaining chunks go to Drive.")
-            force_drive = False
-        else:
-            st.success(f"✅ Moderate complexity ({complexity_per_chunk:.0f}). Local downloads should work.")
-            force_drive = False
+        # Determine strategy: force Drive only when chunks still exceed element limit
+        chunk_days = (date_chunks[0][1] - date_chunks[0][0]).days + 1 if date_chunks else 1
+        est_elements_per_chunk = _estimate_images_in_chunk(chunk_days, temporal_resolution) * num_geometries
+        local_failed = False
+        force_drive = est_elements_per_chunk > 4500
 
         for chunk_idx, (chunk_start, chunk_end) in enumerate(date_chunks):
             chunk_label = f"{chunk_start.strftime('%Y-%m-%d')} to {chunk_end.strftime('%Y-%m-%d')}"
             status_text.text(f"Processing chunk {chunk_idx + 1}/{total_chunks}: {chunk_label}")
             progress_bar.progress(chunk_idx / total_chunks)
 
-            # LEARNING: Determine effective preference for this chunk
-            if force_drive:
-                effective_preference = 'drive'
-            elif local_failed:
-                # Local failed on previous chunk, skip local for this and all remaining
-                st.info(f"⏭️ Chunk {chunk_idx + 1}: Skipping local (learned from previous failure)")
+            # Determine effective preference for this chunk
+            if force_drive or local_failed:
                 effective_preference = 'drive'
             else:
                 effective_preference = export_preference
@@ -960,7 +850,9 @@ def _execute_multi_geometry_export(exporter, export_preference, drive_folder, sc
             chunk_result = _export_chunk_data(
                 ee_fc, dataset_id, parameters, chunk_start, chunk_end,
                 identifier_field, reducer_type, scale,
-                effective_preference, drive_folder, exporter
+                effective_preference, drive_folder, exporter,
+                num_geometries=num_geometries,
+                temporal_resolution=temporal_resolution
             )
 
             if chunk_result:
@@ -968,10 +860,8 @@ def _execute_multi_geometry_export(exporter, export_preference, drive_folder, sc
                 if 'task_id' in chunk_result:
                     task_ids.append(chunk_result['task_id'])
 
-                # LEARNING: If this chunk failed locally, don't try local for remaining chunks
                 if chunk_result.get('local_failed', False):
                     local_failed = True
-                    st.warning(f"📝 **Learning:** Local download failed. Skipping local for remaining {total_chunks - chunk_idx - 1} chunk(s).")
 
             time.sleep(0.5)  # Small delay between chunks
 
@@ -1022,11 +912,23 @@ def _execute_multi_geometry_export(exporter, export_preference, drive_folder, sc
         st.code(traceback.format_exc())
 
 
-def _export_chunk_data(ee_fc, dataset_id, parameters, chunk_start, chunk_end, identifier_field, reducer_type, scale, export_preference, drive_folder, exporter):
+def _export_chunk_data(ee_fc, dataset_id, parameters, chunk_start, chunk_end,
+                       identifier_field, reducer_type, scale,
+                       export_preference, drive_folder, exporter,
+                       num_geometries=1, temporal_resolution='Daily'):
     """
-    Export data for a single date chunk with NO fake timeouts.
-    Returns result dict with 'local_failed' flag for learning.
+    Export data for a single date chunk.
+
+    Pre-flight element count check:
+      element_count = num_images_in_chunk × num_geometries
+      GEE's getInfo() aborts after 5,000 elements — we skip local download
+      automatically when the estimate exceeds 4,500.
+
+    Returns result dict with 'local_failed' flag for the caller's
+    failure-learning logic.
     """
+    LOCAL_ELEMENT_LIMIT = 4500  # Stay safely below EE's hard 5,000 limit
+
     chunk_label = f"{chunk_start.strftime('%Y%m%d')}_{chunk_end.strftime('%Y%m%d')}"
 
     try:
@@ -1056,13 +958,17 @@ def _export_chunk_data(ee_fc, dataset_id, parameters, chunk_start, chunk_end, id
         if len(parameters) == 1:
             reducer = reducer.setOutputs(parameters)
 
+        # Reproject FeatureCollection to EPSG:4326 (required by GEE)
+        ee_fc_4326 = ee_fc.map(lambda f: f.transform(ee.Projection('EPSG:4326'), 1))
+
         # Define the mapping function
         def reduce_regions(image):
             timestamp = image.date().format('YYYY-MM-dd')
             reduced = image.reduceRegions(
-                collection=ee_fc,
+                collection=ee_fc_4326,
                 reducer=reducer,
-                scale=scale
+                scale=scale,
+                crs='EPSG:4326'
             )
 
             def add_timestamp(feature):
@@ -1077,51 +983,73 @@ def _export_chunk_data(ee_fc, dataset_id, parameters, chunk_start, chunk_end, id
         # Set up selectors (columns to export)
         selectors = parameters + ['timestamp', identifier_field]
 
-        # TRY LOCAL EXPORT (only if preference allows)
+        # ── PRE-FLIGHT ELEMENT ESTIMATE ──────────────────────────────────────
+        # Avoids the "Collection query aborted after accumulating over 5000
+        # elements" error by skipping getInfo() when the result would be too large.
+        chunk_days = (chunk_end - chunk_start).days + 1
+        estimated_images = _estimate_images_in_chunk(chunk_days, temporal_resolution)
+        estimated_elements = estimated_images * max(1, num_geometries)
+
+        # TRY LOCAL EXPORT (only if preference allows AND element count is safe)
         if export_preference == 'auto':
-            try:
-                with st.spinner(f"Attempting local download for {chunk_label}..."):
-                    # Direct getInfo call - NO FAKE TIMEOUT
-                    # This will either succeed quickly or fail with EE's own timeout
-                    data_dict = feature_collection.getInfo()
-                    data_list = data_dict['features']
+            if estimated_elements > LOCAL_ELEMENT_LIMIT:
+                st.info(
+                    f"⏭️ {chunk_label}: ~{estimated_elements:,} elements estimated "
+                    f"({estimated_images} images × {num_geometries} geometries) — "
+                    f"exceeds {LOCAL_ELEMENT_LIMIT:,} limit. Routing to Google Drive..."
+                )
+                local_failed_flag = True  # Skip local without attempting
+            else:
+                try:
+                    with st.spinner(
+                        f"Attempting local download for {chunk_label} "
+                        f"(~{estimated_elements:,} elements)..."
+                    ):
+                        data_dict = feature_collection.getInfo()
+                        data_list = data_dict['features']
 
-                    # Convert to DataFrame
-                    rows = []
-                    for feature in data_list:
-                        props = feature.get('properties', {})
-                        row = {key: props.get(key) for key in selectors if key in props}
-                        rows.append(row)
+                        # Convert to DataFrame
+                        rows = []
+                        for feature in data_list:
+                            props = feature.get('properties', {})
+                            row = {key: props.get(key) for key in selectors if key in props}
+                            rows.append(row)
 
-                    df = pd.DataFrame(rows)
+                        df = pd.DataFrame(rows)
 
-                    # Reorder columns
-                    cols = [identifier_field, 'timestamp'] + parameters
-                    df = df[[c for c in cols if c in df.columns]]
+                        # Reorder columns
+                        cols = [identifier_field, 'timestamp'] + parameters
+                        df = df[[c for c in cols if c in df.columns]]
 
-                    # Convert to CSV
-                    csv_data = df.to_csv(index=False)
+                        csv_data = df.to_csv(index=False)
+                        filename = f"multigeometry_{chunk_label}_{reducer_type}.csv"
 
-                    filename = f"multigeometry_{chunk_label}_{reducer_type}.csv"
+                        st.success(f"✅ {chunk_label}: Local download successful ({len(df):,} records)")
 
-                    st.success(f"✅ {chunk_label}: Local download successful ({len(df)} records)")
+                        return {
+                            'method': 'local',
+                            'chunk_label': chunk_label,
+                            'filename': filename,
+                            'data': csv_data,
+                            'records': len(df),
+                            'local_failed': False
+                        }
 
-                    return {
-                        'method': 'local',
-                        'chunk_label': chunk_label,
-                        'filename': filename,
-                        'data': csv_data,
-                        'records': len(df),
-                        'local_failed': False  # Success!
-                    }
-
-            except Exception as e:
-                error_msg = str(e)
-                st.warning(f"⚠️ {chunk_label}: Local download failed ({error_msg}). Submitting to Google Drive...")
-                # Return will include local_failed=True after Drive submission
-                local_failed_flag = True
+                except Exception as e:
+                    error_msg = str(e)
+                    if "5000 elements" in error_msg or "5,000 elements" in error_msg:
+                        st.warning(
+                            f"⚠️ {chunk_label}: Hit GEE 5,000-element limit. "
+                            f"Submitting to Google Drive..."
+                        )
+                    else:
+                        st.warning(
+                            f"⚠️ {chunk_label}: Local download failed ({error_msg}). "
+                            f"Submitting to Google Drive..."
+                        )
+                    local_failed_flag = True
         else:
-            local_failed_flag = False  # Didn't try local
+            local_failed_flag = False  # Didn't attempt local
 
         # EXPORT TO GOOGLE DRIVE
         with st.spinner(f"Submitting {chunk_label} to Google Drive..."):
@@ -1294,19 +1222,46 @@ def _export_year_data(ee_fc, dataset_id, parameters, year, identifier_field, red
         return None
 
 
-def _calculate_date_chunks(start_date, end_date):
+def _estimate_images_in_chunk(days, temporal_resolution='Daily'):
     """
-    Split a date range into manageable chunks for processing.
+    Estimate the number of images (time steps) in a date range.
 
-    Strategy:
-    - If range <= 365 days: single chunk
-    - If range > 365 days: split into ~yearly chunks
+    GEE flattens reduceRegions results so the total element count equals
+    num_images × num_geometries.  We use this to pre-flight the 5,000-element
+    limit before calling getInfo().
+    """
+    tr = str(temporal_resolution).lower()
+    if 'hourly' in tr or '1 hour' in tr:
+        return days * 24
+    elif '6-hour' in tr or '6 hour' in tr:
+        return days * 4
+    elif '3-hour' in tr or '3 hour' in tr:
+        return days * 8
+    elif '8-day' in tr or '8 day' in tr:
+        return max(1, days // 8)
+    elif '16-day' in tr or '16 day' in tr:
+        return max(1, days // 16)
+    elif 'monthly' in tr or 'month' in tr:
+        return max(1, days // 30)
+    elif 'annual' in tr or 'year' in tr or 'yearly' in tr:
+        return max(1, days // 365)
+    else:
+        return days  # Default: daily
 
-    Returns list of (chunk_start, chunk_end) tuples
+
+def _calculate_date_chunks(start_date, end_date, num_geometries=1, temporal_resolution='Daily'):
+    """
+    Split a date range into chunks that keep result element count safely
+    below Earth Engine's 5,000-element getInfo() limit.
+
+    element_count = num_images_in_chunk × num_geometries
+    Target:        element_count ≤ MAX_ELEMENTS (4,000 — 20 % safety margin)
+
+    Falls back to a minimum chunk of 7 days so we never loop forever.
     """
     from datetime import date, timedelta
 
-    # Ensure we're working with date objects
+    # Normalise to date objects
     if hasattr(start_date, 'date'):
         start_date = start_date.date()
     if hasattr(end_date, 'date'):
@@ -1314,20 +1269,45 @@ def _calculate_date_chunks(start_date, end_date):
 
     total_days = (end_date - start_date).days + 1
 
-    if total_days <= 365:
-        # Single chunk for short ranges
+    MAX_ELEMENTS = 4000  # Safety margin below EE's 5,000 limit
+
+    # Compute images-per-day for this dataset's temporal resolution
+    tr = str(temporal_resolution).lower()
+    if 'hourly' in tr or '1 hour' in tr:
+        images_per_day = 24.0
+    elif '6-hour' in tr or '6 hour' in tr:
+        images_per_day = 4.0
+    elif '3-hour' in tr or '3 hour' in tr:
+        images_per_day = 8.0
+    elif '8-day' in tr or '8 day' in tr:
+        images_per_day = 1 / 8.0
+    elif '16-day' in tr or '16 day' in tr:
+        images_per_day = 1 / 16.0
+    elif 'monthly' in tr or 'month' in tr:
+        images_per_day = 1 / 30.0
+    elif 'annual' in tr or 'year' in tr or 'yearly' in tr:
+        images_per_day = 1 / 365.0
+    else:
+        images_per_day = 1.0  # Default: daily
+
+    # Max days per chunk: stay under element limit
+    safe_geoms = max(1, num_geometries)
+    if images_per_day > 0:
+        max_days = int(MAX_ELEMENTS / safe_geoms / images_per_day)
+    else:
+        max_days = total_days
+
+    max_days = max(7, max_days)  # Minimum 1 week per chunk
+
+    # Entire range fits in one chunk
+    if total_days <= max_days:
         return [(start_date, end_date)]
 
-    # Split into yearly chunks
+    # Split into equally-sized chunks
     chunks = []
     chunk_start = start_date
-
     while chunk_start <= end_date:
-        # Calculate chunk end (approximately 1 year later or end_date)
-        chunk_end = min(
-            chunk_start + timedelta(days=364),  # ~1 year
-            end_date
-        )
+        chunk_end = min(chunk_start + timedelta(days=max_days - 1), end_date)
         chunks.append((chunk_start, chunk_end))
         chunk_start = chunk_end + timedelta(days=1)
 

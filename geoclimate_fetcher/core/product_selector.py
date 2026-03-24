@@ -583,7 +583,11 @@ class GriddedDataHandler:
     
     def _aggregate_sub_daily_to_daily(self, collection: 'ee.ImageCollection', ee_id: str,
                                         start_date: date, end_date: date, bands: List[str]) -> 'ee.ImageCollection':
-        """Aggregate sub-daily data to daily using GEE server-side functions
+        """Aggregate sub-daily data to daily using GEE server-side functions.
+
+        Uses the collection's *actual* dates (not a Python-generated calendar list) so
+        that days with no images are never processed — avoiding the zero-band error:
+        "Image.multiply: If one image has no bands, the other must also have no bands."
 
         Args:
             collection: Earth Engine ImageCollection with sub-daily data
@@ -612,50 +616,48 @@ class GriddedDataHandler:
 
             logging.info(f"Aggregating sub-daily data to daily for {ee_id} using {aggregation_method} method")
 
-            # Create list of dates to aggregate
-            from datetime import timedelta
-            date_list = []
-            current = start_date
-            while current <= end_date:
-                date_list.append(current)
-                current += timedelta(days=1)
+            # Select bands up-front on the full collection so that every subsequent
+            # per-day .sum()/.mean() always operates on non-empty band sets.
+            if bands and bands != ['auto-detect']:
+                collection = collection.select(bands)
 
-            # Convert to EE list of date strings
-            ee_dates = ee.List([d.strftime('%Y-%m-%d') for d in date_list])
+            # ── KEY FIX ────────────────────────────────────────────────────────────
+            # Derive unique calendar dates from the *actual* images in the collection
+            # instead of a Python-generated date list.  This guarantees that every
+            # date we iterate over has at least one image, so .sum() is never called
+            # on an empty collection (which returns a 0-band image and causes the
+            # band-count mismatch error when multiplied by a scalar).
+            unique_dates = (
+                collection
+                .map(lambda img: img.set('_day', img.date().format('YYYY-MM-dd')))
+                .aggregate_array('_day')
+                .distinct()
+            )
 
-            # Function to aggregate one day's worth of sub-daily data
-            def aggregate_day(date_str):
+            def aggregate_one_day(date_str):
                 date_str = ee.String(date_str)
                 day_start = ee.Date(date_str)
                 day_end = day_start.advance(1, 'day')
 
-                # Filter to this day only
-                daily_images = collection.filterDate(day_start, day_end)
+                # Every date here is guaranteed to have ≥1 image
+                daily = collection.filterDate(day_start, day_end)
 
-                # Select bands if specified
-                if bands and bands != ['auto-detect']:
-                    daily_images = daily_images.select(bands)
-
-                # Aggregate based on method
                 if aggregation_method == 'sum':
-                    # Sum all sub-daily values and multiply by time interval
-                    daily_total = daily_images.sum().multiply(rate_multiplier)
+                    result = daily.sum().multiply(rate_multiplier)
                 elif aggregation_method == 'mean':
-                    daily_total = daily_images.mean()
+                    result = daily.mean()
                 elif aggregation_method == 'max':
-                    daily_total = daily_images.max()
+                    result = daily.max()
                 elif aggregation_method == 'min':
-                    daily_total = daily_images.min()
+                    result = daily.min()
                 else:
-                    daily_total = daily_images.sum().multiply(rate_multiplier)
+                    result = daily.sum().multiply(rate_multiplier)
 
-                # Set the date property
-                return daily_total.set('system:time_start', day_start.millis()).set('date', date_str)
+                return result.set('system:time_start', day_start.millis()).set('date', date_str)
 
-            # Map over all dates to create daily collection
-            daily_collection = ee.ImageCollection.fromImages(ee_dates.map(aggregate_day))
+            daily_collection = ee.ImageCollection(unique_dates.map(aggregate_one_day))
 
-            logging.info(f"Aggregated to {len(date_list)} daily images")
+            logging.info(f"Sub-daily aggregation complete for {ee_id}")
             return daily_collection
 
         except Exception as e:

@@ -5,7 +5,9 @@
       "WebSearch",
       "Bash(conda run:*)",
       "Bash(python3:*)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(grep:*)",
+      "Bash(\"/c/Users/J01013381/AppData/Local/miniconda3/envs/fetcher/python.exe\" -c \"import ee; print\\('ee version:', ee.__version__\\)\" 2>&1 | grep -v chcp)"
     ]
   }
 }
