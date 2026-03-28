@@ -1146,7 +1146,7 @@ if st.session_state.app_mode is None:
                 <div class="stat-label">Climate Indices</div>
             </div>
             <div class="stat-item">
-                <div class="stat-number">8</div>
+                <div class="stat-number">9</div>
                 <div class="stat-label">Analysis Tools</div>
             </div>
         </div>
@@ -1322,6 +1322,28 @@ if st.session_state.app_mode is None:
         if st.button("🚀 Launch Snow Depth Analyzer", width="stretch", type="primary"):
             st.session_state.app_mode = "snow_depth"
             st.rerun()
+
+    col9, col10 = st.columns(2)
+
+    with col9:
+        st.markdown("""
+        <div class="tool-card">
+            <span class="tool-icon">🛰️</span>
+            <div class="tool-title">SERVES</div>
+            <div class="tool-description">
+                Satellite-based Environmental and Remote-sensing Visualization &amp; Estimation System
+                by Dr. Nawa Raj Pradhan (ERDC, US Army). Soil moisture retrieval, SWE estimation,
+                and land-surface analysis — now available as a Google Earth Engine App.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        if st.button("🚀 Launch SERVES", width="stretch", type="primary"):
+            st.session_state.app_mode = "serves"
+            st.rerun()
+
+    with col10:
+        st.empty()  # Placeholder for future tools
 
     # Author Section
     st.markdown('<h3>👨‍💻 About the Developer</h3>', unsafe_allow_html=True)

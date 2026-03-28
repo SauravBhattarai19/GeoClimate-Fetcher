@@ -43,6 +43,10 @@ def route_to_interface():
         from interface.snow_depth import render_snow_depth
         render_snow_depth()
 
+    elif app_mode == "serves":
+        from interface.serves import render_serves
+        render_serves()
+
     else:
         # Default case - should not happen, but handle gracefully
         st.error(f"❌ Unknown app mode: {app_mode}")

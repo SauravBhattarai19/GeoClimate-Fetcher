@@ -23,6 +23,7 @@ def render_global_navigation(clear_auth_func=None):
         ("🧮", "Raster Calc", "raster_calculator"),
         ("📊", "Visualizer", "data_visualizer"),
         ("❄️", "Snow Depth", "snow_depth"),
+        ("🛰️", "SERVES", "serves"),
         ("🚪", "Logout", "logout")
     ]
 
@@ -209,6 +210,7 @@ def get_current_tool_info():
         "raster_calculator": {"name": "Raster Calculator", "icon": "🧮", "description": "Band Math & Spectral Indices"},
         "data_visualizer": {"name": "Data Visualizer", "icon": "📊", "description": "Visualize Your Data"},
         "snow_depth": {"name": "Snow Depth", "icon": "❄️", "description": "Snow Depth Analysis & Comparison"},
+        "serves": {"name": "SERVES", "icon": "🛰️", "description": "Satellite-based Environmental Retrieval & Visualization"},
     }
 
     return tool_info.get(current_mode, {"name": "Unknown", "icon": "❓", "description": "Unknown Tool"})
