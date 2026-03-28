@@ -1146,7 +1146,7 @@ if st.session_state.app_mode is None:
                 <div class="stat-label">Climate Indices</div>
             </div>
             <div class="stat-item">
-                <div class="stat-number">7</div>
+                <div class="stat-number">8</div>
                 <div class="stat-label">Analysis Tools</div>
             </div>
         </div>
@@ -1307,7 +1307,21 @@ if st.session_state.app_mode is None:
             st.rerun()
 
     with col8:
-        st.empty()  # Placeholder for future tools
+        st.markdown("""
+        <div class="tool-card">
+            <span class="tool-icon">❄️</span>
+            <div class="tool-title">Snow Depth Analyzer</div>
+            <div class="tool-description">
+                Calculate monthly snow depth using MODIS and GLDAS data. Compare algorithm
+                outputs against reference data with comprehensive accuracy metrics (R², RMSE, MAE).
+                Supports seasonal, gamma inverse-fit, and sinusoidal density models.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        if st.button("🚀 Launch Snow Depth Analyzer", width="stretch", type="primary"):
+            st.session_state.app_mode = "snow_depth"
+            st.rerun()
 
     # Author Section
     st.markdown('<h3>👨‍💻 About the Developer</h3>', unsafe_allow_html=True)

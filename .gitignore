@@ -123,3 +123,16 @@ unwanted/
 RESTORATION_SUMMARY.md
 pyproject.toml
 *.txt
+
+# macOS metadata — never commit
+.DS_Store
+**/.DS_Store
+
+# Claude Code local settings — machine-specific, not for repo
+.claude/
+
+# Snow_Depth_ERDC — only snow_depth_app.py is needed by the main app.
+# Everything else (standalone scripts, docs, aux tools, data) is excluded.
+# Any future files added to this folder are automatically ignored too.
+Snow_Depth_ERDC/*
+!Snow_Depth_ERDC/snow_depth_app.py

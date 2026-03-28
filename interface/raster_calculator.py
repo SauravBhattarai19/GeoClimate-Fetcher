@@ -413,7 +413,7 @@ def _render_compute_and_export(
 
     with col_compute:
         compute_clicked = st.button("Compute", type="primary",
-                                    use_container_width=True)
+                                    width="stretch")
 
     # Compute
     if compute_clicked or st.session_state.rc_result_image is not None:
@@ -439,7 +439,7 @@ def _render_compute_and_export(
         # Preview — behind a button to avoid re-fetching on every widget interaction
         with st.expander("🗺️ Preview on Map (Optional)", expanded=True):
             if st.button("🗺️ Show Map Preview", type="secondary",
-                         key="rc_show_preview_btn", use_container_width=True):
+                         key="rc_show_preview_btn", width="stretch"):
                 with st.spinner("Generating map preview..."):
                     _render_preview(result_image, geometry, output_name)
 
@@ -594,7 +594,7 @@ def _render_export(result_image: ee.Image, geometry: ee.Geometry,
                 help="Auto tries local first and falls back to Drive for large files.",
             )
 
-        if st.button("🚀 Export GeoTIFF", type="primary", use_container_width=True,
+        if st.button("🚀 Export GeoTIFF", type="primary", width="stretch",
                      key="rc_export_btn_tiff"):
             with st.spinner("Exporting..."):
                 exporter = GEEExporter()
@@ -628,7 +628,7 @@ def _render_export(result_image: ee.Image, geometry: ee.Geometry,
                 logger.error("Raster calculator export failed: %s", result.get('message'))
 
     elif export_format == "CSV (Zonal Stats)":
-        if st.button("🚀 Compute & Download CSV", type="primary", use_container_width=True,
+        if st.button("🚀 Compute & Download CSV", type="primary", width="stretch",
                      key="rc_export_btn_csv"):
             with st.spinner("Computing zonal statistics..."):
                 csv_data = _export_zonal_csv(result_image, geometry, scale, filename, output_name)
@@ -668,7 +668,7 @@ def _render_download_results(output_name: str):
         file_name=results['filename'],
         mime=results['mime_type'],
         type="primary",
-        use_container_width=True,
+        width="stretch",
         key="rc_redownload_btn",
     )
 
@@ -677,13 +677,13 @@ def _render_download_results(output_name: str):
 
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("🔄 Export Again / Change Format", use_container_width=True,
+        if st.button("🔄 Export Again / Change Format", width="stretch",
                      key="rc_reset_export_btn"):
             st.session_state.rc_download_complete = False
             st.session_state.rc_download_results = None
             st.rerun()
     with col2:
-        if st.button("🆕 New Calculation", use_container_width=True,
+        if st.button("🆕 New Calculation", width="stretch",
                      key="rc_new_calc_btn"):
             for k in ['rc_download_complete', 'rc_download_results',
                       'rc_result_image', 'rc_geometry_complete',

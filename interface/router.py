@@ -39,6 +39,10 @@ def route_to_interface():
         from interface.raster_calculator import render_raster_calculator
         render_raster_calculator()
 
+    elif app_mode == "snow_depth":
+        from interface.snow_depth import render_snow_depth
+        render_snow_depth()
+
     else:
         # Default case - should not happen, but handle gracefully
         st.error(f"❌ Unknown app mode: {app_mode}")

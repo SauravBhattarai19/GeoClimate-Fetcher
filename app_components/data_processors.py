@@ -203,8 +203,14 @@ class DataFormatDetector:
                 try:
                     if src.count > 0:
                         sample_data = src.read(1, masked=True)
-                        # Calculate statistics with NaN handling
-                        valid_data = sample_data[~np.isnan(sample_data)]
+                        # Convert masked array → plain ndarray (masked/nodata → NaN),
+                        # then drop NaN so statistics are computed on real values only.
+                        data_array = (
+                            sample_data.filled(np.nan)
+                            if hasattr(sample_data, 'filled')
+                            else np.array(sample_data, dtype=float)
+                        )
+                        valid_data = data_array[~np.isnan(data_array)]
 
                         if len(valid_data) > 0:
                             format_info['metadata']['statistics'] = {
