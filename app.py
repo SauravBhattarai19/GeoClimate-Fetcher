@@ -1310,7 +1310,7 @@ if st.session_state.app_mode is None:
         st.markdown("""
         <div class="tool-card">
             <span class="tool-icon">❄️</span>
-            <div class="tool-title">Snow Depth Analyzer</div>
+            <div class="tool-title">GLOBAL-SAM</div>
             <div class="tool-description">
                 Calculate monthly snow depth using MODIS and GLDAS data. Compare algorithm
                 outputs against reference data with comprehensive accuracy metrics (R², RMSE, MAE).
@@ -1319,7 +1319,7 @@ if st.session_state.app_mode is None:
         </div>
         """, unsafe_allow_html=True)
 
-        if st.button("🚀 Launch Snow Depth Analyzer", width="stretch", type="primary"):
+        if st.button("🚀 Launch GLOBAL-SAM", width="stretch", type="primary"):
             st.session_state.app_mode = "snow_depth"
             st.rerun()
 

@@ -22,7 +22,7 @@ def render_global_navigation(clear_auth_func=None):
         ("🎯", "Product Selector", "product_selector"),
         ("🧮", "Raster Calc", "raster_calculator"),
         ("📊", "Visualizer", "data_visualizer"),
-        ("❄️", "Snow Depth", "snow_depth"),
+        ("❄️", "GLOBAL-SAM", "snow_depth"),
         ("🛰️", "SERVES", "serves"),
         ("🚪", "Logout", "logout")
     ]
@@ -209,7 +209,7 @@ def get_current_tool_info():
         "product_selector": {"name": "Product Selector", "icon": "🎯", "description": "Compare Data Sources"},
         "raster_calculator": {"name": "Raster Calculator", "icon": "🧮", "description": "Band Math & Spectral Indices"},
         "data_visualizer": {"name": "Data Visualizer", "icon": "📊", "description": "Visualize Your Data"},
-        "snow_depth": {"name": "Snow Depth", "icon": "❄️", "description": "Snow Depth Analysis & Comparison"},
+        "snow_depth": {"name": "GLOBAL-SAM", "icon": "❄️", "description": "Snow Depth Analysis & Comparison"},
         "serves": {"name": "SERVES", "icon": "🛰️", "description": "Satellite-based Environmental Retrieval & Visualization"},
     }
 

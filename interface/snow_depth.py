@@ -444,7 +444,7 @@ def render_snow_depth():
     GEE is already initialised by the main app, so this function goes
     straight to the analysis UI — no auth gate.
     """
-    st.markdown("## ❄️ Snow Depth Analysis & Comparison Tool")
+    st.markdown("## ❄️ GLOBAL-SAM — Snow Depth Analysis & Comparison Tool")
     st.markdown(
         "Calculate monthly snow depth using MODIS and GLDAS data from "
         "Google Earth Engine, with algorithm comparison capabilities."
