@@ -116,6 +116,7 @@ output/
 *.shx
 *.dbf
 *.prj
+*.tex
 
 # Project-specific ignores
 backups/
