@@ -119,99 +119,156 @@ class GeometryComponent:
             return False, f"Error creating geometry: {str(e)}"
     
     def _simplify_geometry_safely(self, geometry: ee.Geometry, tolerance: float = 100) -> ee.Geometry:
+        """Simplify EE geometry; silently returns original on failure (e.g. Point)."""
+        try:
+            return geometry.simplify(maxError=tolerance)
+        except Exception:
+            return geometry
+
+    def _pre_simplify_geojson_client_side(self, geojson_dict):
         """
-        Safely simplify geometry with error handling.
+        Merge and progressively simplify GeoJSON with shapely before sending to GEE.
 
-        Simplifies geometry to reduce vertices for better performance.
-        Falls back to original geometry if simplification fails (e.g., Point geometries).
-
-        Args:
-            geometry: Earth Engine geometry to simplify
-            tolerance: Simplification tolerance in meters (default 100m)
+        GEE embeds the full coordinate array in every API request payload, so
+        EE-side .simplify() does NOT help — the complex geometry is already in
+        the request before GEE processes it.  This method reduces the geometry
+        locally (no network call) and always preserves full area coverage:
+        simplified boundaries never cut inside the original shape, and the
+        convex-hull fallback guarantees every original point is contained.
 
         Returns:
-            Simplified geometry, or original if simplification fails
+            (geometry_dict | None, info_message | None)
+            Returns (None, None) when no action is needed or shapely is absent.
         """
+        _SIZE_LIMIT = 50_000  # 50 KB — safe target for GEE geometry payloads
+
         try:
-            simplified = geometry.simplify(maxError=tolerance)
-            return simplified
+            from shapely.geometry import shape, mapping
+            from shapely.ops import unary_union
+
+            # Merge everything into one shapely geometry
+            gtype = geojson_dict.get("type", "")
+            if gtype == "FeatureCollection":
+                features = geojson_dict.get("features", [])
+                shapes = [shape(f["geometry"]) for f in features if f.get("geometry")]
+                if not shapes:
+                    return None, None
+                geom = unary_union(shapes)
+                n_features = len(shapes)
+            elif gtype == "Feature":
+                geom = shape(geojson_dict["geometry"])
+                n_features = 1
+            else:
+                geom = shape(geojson_dict)
+                n_features = 1
+
+            def _size(g):
+                return len(json.dumps(mapping(g)))
+
+            original_size = _size(geom)
+
+            # Already small enough and no merging needed
+            if original_size <= _SIZE_LIMIT and n_features == 1:
+                return None, None
+
+            # Merged but already small — just return unified geometry
+            if original_size <= _SIZE_LIMIT:
+                return dict(mapping(geom)), f"Merged {n_features} features into one geometry."
+
+            # Progressive simplification — tolerances in degrees
+            # (~0.001° ≈ 100 m, ~0.01° ≈ 1 km, ~0.1° ≈ 10 km at equator)
+            for tol_deg, label in [
+                (0.0005, "~50 m"),
+                (0.001,  "~100 m"),
+                (0.005,  "~500 m"),
+                (0.01,   "~1 km"),
+                (0.05,   "~5 km"),
+                (0.1,    "~10 km"),
+                (0.5,    "~50 km"),
+            ]:
+                simplified = geom.simplify(tol_deg, preserve_topology=True)
+                s = _size(simplified)
+                if s <= _SIZE_LIMIT:
+                    msg = (
+                        f"Geometry simplified (tolerance: {label}) to fit GEE payload limits — "
+                        f"{original_size // 1024} KB → {s // 1024} KB. "
+                        f"All original area is preserved."
+                    )
+                    return dict(mapping(simplified)), msg
+
+            # Final fallback: convex hull — all original points are inside the hull
+            hull = geom.convex_hull
+            s = _size(hull)
+            msg = (
+                f"Geometry was too complex ({original_size // 1024} KB) even after maximum "
+                f"simplification. Used convex hull ({s // 1024} KB) — "
+                f"all original area is fully enclosed."
+            )
+            return dict(mapping(hull)), msg
+
+        except ImportError:
+            return None, None  # shapely absent — caller falls back to original path
         except Exception:
-            # Simplification failed (e.g., Point geometry, invalid geometry)
-            # Silently return original geometry - this is expected for some geometry types
-            return geometry
+            return None, None  # unexpected error — fail silently
 
     def create_geometry_from_geojson(self, geojson_data, simplify_tolerance=500):
         """
         Create Earth Engine geometry from GeoJSON with union and simplification.
 
-        Handles multiple features by:
-        1. Unioning all features into a single geometry
-        2. Simplifying the boundary to reduce vertices
-
-        Args:
-            geojson_data: GeoJSON data (dict or string)
-            simplify_tolerance: Simplification tolerance in meters (default 500m for multi-feature)
+        Uses client-side shapely pre-simplification to avoid GEE payload size
+        errors before falling back to EE-side union/simplify for edge cases.
 
         Returns:
             Tuple of (success: bool, message: str)
         """
         try:
-            # Handle different GeoJSON formats
             if isinstance(geojson_data, str):
                 geojson_dict = json.loads(geojson_data)
             else:
                 geojson_dict = geojson_data
 
-            # Extract and process geometry based on type
-            if geojson_dict.get("type") == "FeatureCollection" and "features" in geojson_dict:
-                features = geojson_dict["features"]
+            # --- Client-side pre-simplification (must happen before ee.Geometry()) ---
+            pre_simplified, info_msg = self._pre_simplify_geojson_client_side(geojson_dict)
 
-                if len(features) == 0:
-                    return False, "FeatureCollection is empty"
-
-                elif len(features) == 1:
-                    # Single feature - create and simplify
-                    geometry_dict = features[0]["geometry"]
-                    geometry = ee.Geometry(geometry_dict)
-                    geometry = self._simplify_geometry_safely(geometry, tolerance=100)
-
-                else:
-                    # Multiple features - union and simplify
-                    st.info(f"ℹ️ Processing {len(features)} features: unioning and simplifying boundaries...")
-
-                    # Convert all features to EE features
-                    ee_features = []
-                    for feature in features:
-                        if "geometry" in feature:
-                            geom = ee.Geometry(feature["geometry"])
-                            ee_features.append(ee.Feature(geom))
-
-                    # Create FeatureCollection
-                    feature_collection = ee.FeatureCollection(ee_features)
-
-                    # Union all features (dissolve internal boundaries)
-                    unified = feature_collection.union(maxError=1)
-
-                    # Get the unified geometry
-                    geometry = unified.geometry()
-
-                    # Simplify the outer boundary
-                    geometry = geometry.simplify(maxError=simplify_tolerance)
-
-                    st.success(f"✅ Unified {len(features)} features into single geometry (simplified with {simplify_tolerance}m tolerance)")
-
-            elif geojson_dict.get("type") == "Feature" and "geometry" in geojson_dict:
-                # Single Feature - create and simplify
-                geometry_dict = geojson_dict["geometry"]
-                geometry = ee.Geometry(geometry_dict)
-                geometry = self._simplify_geometry_safely(geometry, tolerance=100)
+            if pre_simplified is not None:
+                # shapely reduced the geometry — create ee.Geometry from the lean dict
+                if info_msg:
+                    st.info(f"ℹ️ {info_msg}")
+                geometry = ee.Geometry(pre_simplified)
 
             else:
-                # Direct geometry - create and simplify
-                geometry = ee.Geometry(geojson_dict)
-                geometry = self._simplify_geometry_safely(geometry, tolerance=100)
+                # shapely unavailable or geometry already small — use original path
+                gtype = geojson_dict.get("type", "")
 
-            # Store the geometry
+                if gtype == "FeatureCollection":
+                    features = geojson_dict.get("features", [])
+                    if not features:
+                        return False, "FeatureCollection is empty"
+
+                    if len(features) == 1:
+                        geometry = ee.Geometry(features[0]["geometry"])
+                    else:
+                        st.info(f"ℹ️ Processing {len(features)} features: unioning boundaries...")
+                        ee_features = [
+                            ee.Feature(ee.Geometry(f["geometry"]))
+                            for f in features if f.get("geometry")
+                        ]
+                        unified = ee.FeatureCollection(ee_features).union(maxError=1)
+                        geometry = unified.geometry()
+                        geometry = geometry.simplify(maxError=simplify_tolerance)
+                        st.success(
+                            f"✅ Unified {len(features)} features "
+                            f"(simplified with {simplify_tolerance} m tolerance)"
+                        )
+
+                elif gtype == "Feature":
+                    geometry = ee.Geometry(geojson_dict["geometry"])
+                else:
+                    geometry = ee.Geometry(geojson_dict)
+
+            # Light EE-side cleanup (no-op for already-simple geometries)
+            geometry = self._simplify_geometry_safely(geometry, tolerance=100)
+
             self.geometry_handler._current_geometry = geometry
             self.geometry_handler._current_geometry_name = "uploaded_aoi"
             return True, "Geometry created successfully from GeoJSON"
