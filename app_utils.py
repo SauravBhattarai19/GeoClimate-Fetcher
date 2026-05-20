@@ -191,9 +191,11 @@ def download_ee_data_simple(dataset, bands, geometry, start_date, end_date, expo
             temp_path = temp_file.name
 
         # Process based on dataset type
-        if snippet_type == 'ImageCollection':
+        temporal_resolution = dataset.get('temporal_resolution', '') or ''
+        if snippet_type and snippet_type.lower() == 'imagecollection':
             return _download_image_collection_simple(
-                ee_id, bands, geometry, start_date, end_date, temp_path, export_format, scale
+                ee_id, bands, geometry, start_date, end_date, temp_path, export_format, scale,
+                temporal_resolution=temporal_resolution
             )
         else:
             return _download_image_simple(
@@ -309,7 +311,7 @@ def _download_image_simple(ee_id, bands, geometry, temp_path, export_format, sca
                 pass
 
 
-def _download_image_collection_simple(ee_id, bands, geometry, start_date, end_date, temp_path, export_format, scale):
+def _download_image_collection_simple(ee_id, bands, geometry, start_date, end_date, temp_path, export_format, scale, temporal_resolution=''):
     """Download Earth Engine ImageCollection using simplified approach"""
     try:
         # Load the collection
@@ -337,15 +339,26 @@ def _download_image_collection_simple(ee_id, bands, geometry, start_date, end_da
         if bands:
             collection = collection.select(bands)
 
-        # Check collection size
+        # Check collection size; for tile-mosaic GeoTIFF datasets (empty temporal_resolution)
+        # the date filter may exclude all tiles — fall back to geometry-only in that case.
         collection_size = collection.size().getInfo()
         if collection_size == 0:
-            return {
-                'success': False,
-                'file_path': None,
-                'file_data': None,
-                'message': "No images found for the specified date range and region"
-            }
+            tr_lower = (temporal_resolution or '').lower().strip()
+            is_time_series = any(x in tr_lower for x in
+                                 ['hour', 'day', 'week', 'month', 'year', 'annual'])
+            if export_format == 'GeoTIFF' and not is_time_series:
+                # Tile-mosaic: ignore date filter and use all tiles intersecting geometry
+                collection = ee.ImageCollection(ee_id).filterBounds(geometry)
+                if bands:
+                    collection = collection.select(bands)
+                collection_size = collection.size().getInfo()
+            if collection_size == 0:
+                return {
+                    'success': False,
+                    'file_path': None,
+                    'file_data': None,
+                    'message': "No images found for the specified date range and region"
+                }
 
         if export_format == 'CSV':
             # Use the new chunked processing system
@@ -376,24 +389,47 @@ def _download_image_collection_simple(ee_id, bands, geometry, start_date, end_da
                 }
 
         elif export_format == 'GeoTIFF':
-            # Use the new chunked processing system for GeoTIFF
+            # Create a single composite image and export it.
+            # Time-series datasets (daily/hourly/monthly) → median composite.
+            # Tile-mosaic datasets (DEM, land cover, irregular) → mosaic, which
+            # preserves actual pixel values and matches the GEE documentation
+            # pattern: elevation.mosaic().setDefaultProjection(proj).
             try:
-                from geoclimate_fetcher.core.download_utils import process_image_collection_chunked
+                tr_lower = (temporal_resolution or '').lower().strip()
+                is_time_series = any(x in tr_lower for x in
+                                     ['hour', 'day', 'week', 'month', 'year', 'annual'])
+                if is_time_series:
+                    composite = collection.median()
+                else:
+                    composite = collection.mosaic()
 
-                # Detect temporal resolution (basic heuristic)
-                temporal_resolution = _detect_temporal_resolution(ee_id)
+                composite = composite.clip(geometry)
 
-                return process_image_collection_chunked(
-                    collection=collection,
-                    bands=bands,
-                    geometry=geometry,
-                    start_date=start_date,
-                    end_date=end_date,
-                    export_format='GeoTIFF',
+                geemap.ee_export_image(
+                    composite,
+                    filename=temp_path,
                     scale=scale,
-                    temporal_resolution=temporal_resolution,
-                    ee_id=ee_id
+                    region=geometry,
+                    file_per_band=False
                 )
+
+                if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
+                    with open(temp_path, 'rb') as f:
+                        file_data = f.read()
+                    file_size_mb = len(file_data) / (1024 * 1024)
+                    return {
+                        'success': True,
+                        'file_path': temp_path,
+                        'file_data': file_data,
+                        'message': f"GeoTIFF exported ({file_size_mb:.1f} MB)"
+                    }
+                else:
+                    return {
+                        'success': False,
+                        'file_path': None,
+                        'file_data': None,
+                        'message': "Export failed - no file generated"
+                    }
             except Exception as tiff_error:
                 return {
                     'success': False,

@@ -1532,16 +1532,41 @@ def _render_geemap_preview_lazy(start_date, end_date):
                     from branca.colormap import LinearColormap
                     # No upfront .select(bands) — avoids heterogeneous-collection errors
                     # on datasets where band count differs by year (e.g. CGLS-LC100)
-                    img = (
+                    # Build collection first — .first() on an empty collection returns EE
+                    # null, and .clip(null) raises "Parameter 'input' is required" before
+                    # the band_names guard can fire.
+                    filtered_col = (
                         ee.ImageCollection(selected_dataset['ee_id'])
                         .filterDate(filter_start, filter_end)
                         .filterBounds(geometry)
-                        .first()
-                        .clip(geometry)
                     )
-                    band_names = img.bandNames().getInfo()
+                    if filtered_col.size().getInfo() == 0:
+                        # Widen to the full user-selected date range as fallback
+                        full_col = (
+                            ee.ImageCollection(selected_dataset['ee_id'])
+                            .filterDate(str(start_date), str(end_date + timedelta(days=1)))
+                            .filterBounds(geometry)
+                        )
+                        if full_col.size().getInfo() == 0:
+                            st.error(
+                                "❌ No imagery found for this area in the selected date range. "
+                                "Try a different location or wider date range."
+                            )
+                            filtered_col = None
+                        else:
+                            st.info(
+                                f"ℹ️ No exact match for **{label}** — "
+                                f"showing the most recent available image instead."
+                            )
+                            filtered_col = full_col
+                    if filtered_col is not None:
+                        img = filtered_col.first().clip(geometry)
+                        band_names = img.bandNames().getInfo()
+                    else:
+                        band_names = []
                     if not band_names:
-                        st.error("❌ No image found for this period. Try a different selection.")
+                        if filtered_col is not None:
+                            st.error("❌ No image found for this period. Try a different selection.")
                     else:
                         actual_band = viz_band if viz_band in band_names else band_names[0]
                         if actual_band != viz_band:
@@ -1876,54 +1901,39 @@ def _render_download_interface():
             except (ValueError, TypeError):
                 native_resolution = 100
 
-        if export_format == 'CSV':
-            base_options = [1000, 5000, 10000, 25000, 50000]
-            recommended_default = 10000
-            st.caption("Higher = faster processing for CSV")
-        else:
-            base_options = [30, 100, 250, 500, 1000, 5000, 10000]
-            recommended_default = 100
+        # Default and minimum both anchor to native resolution (or 30m fallback)
+        min_scale = native_resolution if native_resolution else 30
+        default_scale = min_scale
 
-        if native_resolution and native_resolution not in base_options:
-            scale_options = sorted(base_options + [native_resolution])
-        else:
-            scale_options = base_options
-
-        if export_format == 'CSV':
-            default_index = scale_options.index(recommended_default) if recommended_default in scale_options else 2
-        else:
-            if native_resolution and native_resolution in scale_options:
-                default_index = scale_options.index(native_resolution)
-            else:
-                default_index = scale_options.index(100) if 100 in scale_options else 1
-
-        scale = st.selectbox(
-            "Spatial resolution:",
-            scale_options,
-            index=default_index,
-            key="dl_scale_selectbox",
-            format_func=lambda x: f"{x}m ({'Fast' if x >= 10000 else 'Medium' if x >= 1000 else 'Detailed'})"
+        scale = st.number_input(
+            "Spatial resolution (meters):",
+            min_value=min_scale,
+            max_value=100000,
+            value=default_scale,
+            step=1,
+            key="dl_scale_input",
+            help=f"Minimum is the dataset's native resolution ({min_scale}m). Going finer adds no detail and wastes compute."
         )
+        scale = int(scale)
 
         if export_format == 'CSV':
-            if scale >= 10000:
-                st.success(f"🚀 {scale}m — fast")
-            elif scale >= 1000:
-                st.warning(f"⚡ {scale}m — moderate speed")
+            if scale == min_scale:
+                st.info(
+                    f"ℹ️ Native resolution ({min_scale}m) selected. Since CSV averages values over "
+                    f"your drawn area, a coarser resolution (e.g. {min_scale * 10}m–{min_scale * 100}m) "
+                    f"gives nearly identical results but processes much faster."
+                )
+            elif scale >= min_scale * 100:
+                st.success(f"🚀 {scale}m — fast processing")
+            elif scale >= min_scale * 10:
+                st.success(f"✅ {scale}m — good balance of speed and accuracy")
             else:
-                st.error(f"🐌 {scale}m — slow; consider 10km+")
+                st.warning(f"⚡ {scale}m — finer than needed for CSV; consider {min_scale * 10}m+ for speed")
         else:
-            if dataset_pixel_size:
-                try:
-                    native_res = int(float(dataset_pixel_size))
-                    if scale == native_res:
-                        st.success(f"✅ Native resolution ({native_res}m)")
-                    elif scale < native_res:
-                        st.warning(f"⚠️ Finer than native ({native_res}m) — no extra detail")
-                    else:
-                        st.info(f"ℹ️ Coarser than native ({native_res}m) — smaller file")
-                except (ValueError, TypeError):
-                    pass
+            if scale == min_scale:
+                st.success(f"✅ Native resolution ({min_scale}m)")
+            else:
+                st.info(f"ℹ️ Coarser than native ({min_scale}m) — smaller file, less detail")
 
     # Smart Download Interface
     st.markdown("---")
@@ -2421,7 +2431,7 @@ def _process_download(export_format, scale):
             from app_utils import download_ee_data_simple
 
             # Process based on dataset type
-            if snippet_type == 'ImageCollection':
+            if snippet_type and snippet_type.lower() == 'imagecollection':
                 st.info("📊 Processing ImageCollection - this dataset contains multiple images over time.")
             else:
                 st.info("🗺️ Processing static Image - this dataset contains a single image.")
@@ -3063,13 +3073,41 @@ def _process_smart_download(export_format, scale, export_preference):
                         return _process_download(export_format, scale)
 
                 else:
-                    # For GeoTIFF format, create a median composite for smart download.
+                    # For GeoTIFF format, create a single composite image.
                     # Handle heterogeneous collections (e.g. CGLS-LC100: 2015 has 14
                     # bands, 2016–2019 have 15 — calling .median() on a mix fails with
                     # "Expected a homogeneous image collection" error).
                     # Use only bands present in the first image as the common denominator.
+                    #
+                    # Composite method depends on dataset structure:
+                    # • Time-series (daily/hourly/monthly) → median for cloud/noise removal
+                    # • Tile-mosaic (DEM, land cover, irregular cadence) → mosaic, which
+                    #   preserves actual pixel values (matches GEE docs: elevation.mosaic())
+                    _tr = (dataset.get('temporal_resolution', '') or '').lower().strip()
+                    _is_ts = any(x in _tr for x in ['hour', 'day', 'week', 'month', 'year', 'annual'])
+
+                    # Start with the date-filtered collection; if it's empty (sparse tile
+                    # datasets like ALOS DSM may have no images for certain date windows)
+                    # fall back to a geometry-only filter so the mosaic still captures tiles.
+                    composite_collection = fetcher.collection
+                    if composite_collection.size().getInfo() == 0:
+                        st.info(
+                            "ℹ️ No images found for the selected date range — "
+                            "using all available tiles for this region instead."
+                        )
+                        composite_collection = (
+                            ee.ImageCollection(dataset['ee_id'])
+                            .filterBounds(geometry)
+                        )
+                        if composite_collection.size().getInfo() == 0:
+                            st.error(
+                                "❌ No imagery found for this region. "
+                                "Try a different or larger area of interest."
+                            )
+                            return
+
                     try:
-                        first_bands = fetcher.collection.first().bandNames().getInfo()
+                        first_bands = composite_collection.first().bandNames().getInfo()
                         safe_bands = [b for b in bands if b in first_bands]
                         if set(safe_bands) != set(bands):
                             excluded = [b for b in bands if b not in first_bands]
@@ -3081,7 +3119,10 @@ def _process_smart_download(export_format, scale, export_preference):
                             )
                     except Exception:
                         safe_bands = bands
-                    composite_image = fetcher.collection.select(safe_bands).median()
+                    if _is_ts:
+                        composite_image = composite_collection.select(safe_bands).median()
+                    else:
+                        composite_image = composite_collection.select(safe_bands).mosaic()
 
                     # Generate filename
                     from datetime import datetime

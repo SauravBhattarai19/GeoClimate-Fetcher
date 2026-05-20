@@ -1,0 +1,44 @@
+name: Refresh STAC Snapshot
+
+on:
+  schedule:
+    - cron: '0 3 * * *'   # 03:00 UTC daily (off-peak)
+  workflow_dispatch:        # allow manual trigger from GitHub UI
+
+permissions:
+  contents: write           # needed to push the updated snapshot files
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Generate STAC snapshot
+        run: python scripts/generate_stac_snapshot.py
+
+      - name: Commit and push if snapshot changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add geoclimate_fetcher/data/stac_snapshot.pkl \
+                  geoclimate_fetcher/data/stac_snapshot.json.gz \
+                  geoclimate_fetcher/data/stac_snapshot_metadata.json
+          if git diff --cached --quiet; then
+            echo "No changes to snapshot — skipping commit."
+          else
+            git commit -m "chore: refresh STAC snapshot [skip ci]"
+            git push
+          fi
