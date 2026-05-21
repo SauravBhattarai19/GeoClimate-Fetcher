@@ -25,6 +25,7 @@ jobs:
 
       - name: Install dependencies
         run: pip install requests earthengine-api
+        run: pip install earthengine-api
 
       - name: Generate STAC snapshot
         run: python scripts/generate_stac_snapshot.py
