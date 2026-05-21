@@ -8,6 +8,11 @@ on:
 permissions:
   contents: write           # needed to push the updated snapshot files
 
+# Prevent concurrent runs from racing and causing non-fast-forward push failures
+concurrency:
+  group: refresh-stac-snapshot-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   refresh:
     runs-on: ubuntu-latest
@@ -43,5 +48,7 @@ jobs:
             echo "No changes to snapshot — skipping commit."
           else
             git commit -m "chore: refresh STAC snapshot [skip ci]"
-            git push
+            # Rebase on latest remote to avoid non-fast-forward push failures
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push origin HEAD:"${GITHUB_REF_NAME}"
           fi
