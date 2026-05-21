@@ -197,13 +197,16 @@ class DownloadHelper:
             return False
 
     def render_smart_download_options(self, estimated_size_mb: float = None,
-                                     export_format: str = None) -> str:
+                                     export_format: str = None,
+                                     key: str = None) -> str:
         """
         Render smart download options UI for user preference selection.
 
         Args:
             estimated_size_mb: Not used anymore - size estimation removed
             export_format: Format being exported ('CSV', 'GeoTIFF', etc.)
+            key: Optional unique key for the radio widget (required when this
+                 method is called more than once on the same Streamlit page)
 
         Returns:
             Selected export preference: 'auto', 'local', or 'drive'
@@ -241,22 +244,25 @@ class DownloadHelper:
         # Create radio button options
         option_labels = []
         option_keys = []
-        for key, option in export_options.items():
+        for opt_key, option in export_options.items():
             label = option['title']
-            if key == recommended:
+            if opt_key == recommended:
                 label += ' ⭐'
             option_labels.append(label)
-            option_keys.append(key)
+            option_keys.append(opt_key)
 
         # Default to recommended option
         default_index = option_keys.index(recommended)
 
-        selected_label = st.radio(
-            "Choose export method:",
-            option_labels,
+        radio_kwargs = dict(
+            label="Choose export method:",
+            options=option_labels,
             index=default_index,
-            help="Select how you want to receive your data"
+            help="Select how you want to receive your data",
         )
+        if key is not None:
+            radio_kwargs["key"] = key
+        selected_label = st.radio(**radio_kwargs)
 
         # Get the selected key
         selected_key = option_keys[option_labels.index(selected_label)]
