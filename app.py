@@ -1233,8 +1233,8 @@ if st.session_state.app_mode is None:
             <span class="tool-icon">🔍</span>
             <div class="tool-title">GeoData Explorer</div>
             <div class="tool-description">
-                Browse and download from 33+ Earth Engine datasets with interactive geemap preview.
-                Adaptive temporal aggregation handles hourly to yearly data. Export to GeoTIFF, NetCDF, and CSV.
+                Search and download from thousands of datasets via the STAC API and Google Earth Engine catalog.
+                Interactive map preview, flexible AOI selection, and export to GeoTIFF, NetCDF, and CSV.
             </div>
         </div>
         """, unsafe_allow_html=True)
