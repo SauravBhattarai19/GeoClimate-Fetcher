@@ -1021,7 +1021,7 @@ if not st.session_state.get('auth_complete', False):
             st.markdown("""
             <div style="padding-left: 8px; padding-top: 4px;">
                 <strong style="color: #0a4d68;">Dr. Nawa Raj Pradhan</strong><br>
-                <span style="font-size: 0.82rem; color: #555;">ERDC / CHL, U.S. Army Corps of Engineers</span>
+                <span style="font-size: 0.82rem; color: #555;">Hydraulic Engineer<br>U.S. Army ERDC, Coastal and Hydraulics Laboratory (CHL)</span>
             </div>
             """, unsafe_allow_html=True)
 
@@ -1375,7 +1375,7 @@ if st.session_state.app_mode is None:
             <div class="tool-title">SERVES</div>
             <div class="tool-description">
                 Satellite-based Environmental and Remote-sensing Visualization &amp; Estimation System
-                by Dr. Nawa Raj Pradhan (ERDC, US Army). Soil moisture retrieval, SWE estimation,
+                by Dr. Nawa Raj Pradhan (Hydraulic Engineer, ERDC/CHL, U.S. Army). Soil moisture retrieval, SWE estimation,
                 and land-surface analysis — now available as a Google Earth Engine App.
             </div>
         </div>
@@ -1444,8 +1444,8 @@ if st.session_state.app_mode is None:
             <div style="padding-top: 4px;">
                 <strong style="font-size:1rem; color:#0a4d68;">Dr. Nawa Raj Pradhan</strong><br>
                 <span style="color:#555; font-size:0.85rem;">
-                    Research Civil Engineer<br>
-                    ERDC / CHL, U.S. Army Corps of Engineers
+                    Hydraulic Engineer<br>
+                    U.S. Army ERDC, Coastal and Hydraulics Laboratory (CHL)
                 </span>
             </div>
             """, unsafe_allow_html=True)
