@@ -86,27 +86,82 @@ VIS_PARAMS = {
             "#78C679", "#41AB5D", "#238443", "#006837", "#004529",
         ],
     },
+    "soil_moisture_stddev": {
+        "min": 0.0,
+        "max": 0.10,
+        "palette": [
+            "#F7FBFF", "#DEEBF7", "#C6DBEF", "#9ECAE1",
+            "#6BAED6", "#4292C6", "#2171B5", "#08519C", "#08306B",
+        ],
+    },
+    "soil_moisture_cv": {
+        "min": 0,
+        "max": 50,
+        "palette": [
+            "#1a9850", "#66bd63", "#a6d96a", "#d9ef8b",
+            "#ffffbf", "#fee08b", "#fdae61", "#f46d43", "#d73027",
+        ],
+    },
 }
 
 # Predefined region bounding boxes [west, south, east, north]
 PREDEFINED_REGION_COORDS = {
-    "globe":         [-180, -60,  180,  85],
-    "europe":        [ -10,  35,   40,  71],
-    "asia":          [  60, -10,  150,  55],
-    "north_america": [-170,  15,  -50,  72],
-    "south_america": [ -82, -56,  -34,  13],
-    "africa":        [ -18, -35,   52,  37],
-    "australia":     [ 113, -44,  154, -10],
+    # ── Continents ──────────────────────────────────────────────────────────
+    "globe":            [-180, -60,  180,   85],
+    "europe":           [ -10,  35,   40,   71],
+    "asia":             [  60, -10,  150,   55],
+    "north_america":    [-170,  15,  -50,   72],
+    "south_america":    [ -82, -56,  -34,   13],
+    "africa":           [ -18, -35,   52,   37],
+    "australia":        [ 113, -44,  154,  -10],
+
+    # ── Sub-continental / regional ───────────────────────────────────────────
+    "western_europe":   [ -10,  36,   20,   60],   # UK, France, Iberia, W. Germany
+    "eastern_europe":   [  14,  44,   45,   72],   # Poland, Ukraine, Balkans, Baltics
+    "russia":           [  30,  50,  180,   75],   # Russia / Siberia
+    "south_asia":       [  60,   5,  100,   38],   # India, Pakistan, Bangladesh, Nepal
+    "southeast_asia":   [  92, -10,  141,   28],   # SE Asia incl. Indonesia, Philippines
+    "east_asia":        [ 100,  18,  148,   55],   # China, Japan, Korea
+    "central_asia":     [  44,  35,   92,   56],   # Kazakhstan, Uzbekistan, Stans
+    "middle_east":      [  34,  12,   65,   42],   # Arabian Peninsula, Levant, Iran
+    "west_africa":      [ -18,   4,   25,   25],   # Sahel + Guinea Coast
+    "east_africa":      [  25, -12,   52,   22],   # East Africa + Horn
+    "southern_africa":  [  10, -35,   52,   -5],   # Southern Africa
+    "central_africa":   [   5, -12,   35,   12],   # Congo Basin + Central Africa
+    "amazon":           [ -73, -18,  -44,    5],   # Amazon Basin
+    "central_america":  [ -92,   7,  -60,   24],   # Central America + Caribbean
+    "great_plains":     [-108,  28,  -85,   52],   # US / Canadian Great Plains
+    "sahel":            [ -18,   9,   42,   20],   # Sahel transition zone
+    "mekong":           [  95,  10,  110,   28],   # Mekong Basin (SE Asia)
 }
 
 PREDEFINED_REGION_LABELS = {
-    "globe":         "🌍 Global",
-    "europe":        "🇪🇺 Europe",
-    "asia":          "🌏 Asia",
-    "north_america": "🌎 North America",
-    "south_america": "🌍 South America",
-    "africa":        "🌍 Africa",
-    "australia":     "🌏 Australia",
+    # Continents
+    "globe":            "🌍 Global",
+    "europe":           "🌍 Europe (continent)",
+    "asia":             "🌏 Asia (continent)",
+    "north_america":    "🌎 North America (continent)",
+    "south_america":    "🌍 South America (continent)",
+    "africa":           "🌍 Africa (continent)",
+    "australia":        "🌏 Australia",
+    # Sub-continental
+    "western_europe":   "🇪🇺 Western Europe",
+    "eastern_europe":   "🏔️ Eastern Europe",
+    "russia":           "🌨️ Russia / Siberia",
+    "south_asia":       "🌏 South Asia",
+    "southeast_asia":   "🌴 Southeast Asia",
+    "east_asia":        "🌏 East Asia",
+    "central_asia":     "🏜️ Central Asia",
+    "middle_east":      "🌵 Middle East",
+    "west_africa":      "🌍 West Africa",
+    "east_africa":      "🌍 East Africa",
+    "southern_africa":  "🌍 Southern Africa",
+    "central_africa":   "🌳 Central Africa",
+    "amazon":           "🌳 Amazon Basin",
+    "central_america":  "🌎 Central America & Caribbean",
+    "great_plains":     "🌾 Great Plains (N. America)",
+    "sahel":            "🏜️ Sahel (Africa)",
+    "mekong":           "🌊 Mekong Basin",
 }
 
 
@@ -117,7 +172,10 @@ def get_month_name(month_num: int) -> str:
 def get_predefined_region(name: str):
     """Return ee.Geometry.Rectangle for a named predefined region."""
     coords = PREDEFINED_REGION_COORDS[name]
-    return ee.Geometry.Rectangle(coords)
+    # geodesic=False required for axis-aligned bounding boxes.
+    # Critical for "globe": west=-180 and east=180 are the same meridian,
+    # so geodesic=True resolves to zero-width; geodesic=False spans the full globe.
+    return ee.Geometry.Rectangle(coords, geodesic=False)
 
 
 # ==================================================================================
@@ -133,12 +191,14 @@ def load_soil_data_soilgrids(study_area, depth_band: str = "b30") -> dict:
         .select(soil_band)
         .rename("field_capacity")
         .clip(study_area)
+        .unmask(DEFAULT_FIELD_CAPACITY)   # gap-fill with Dr. Nawa's uniform default
     )
     wilting_point = (
         ee.Image("ISRIC/SoilGrids250m/v2_0/wv1500")
         .select(soil_band)
         .rename("wilting_point")
         .clip(study_area)
+        .unmask(DEFAULT_WILTING_POINT)    # gap-fill with Dr. Nawa's uniform default
     )
     return {
         "field_capacity": field_capacity,
@@ -674,16 +734,179 @@ def run_serves_multi_year_annual(study_area, start_year: int, end_year: int,
     }
 
 
-def run_serves_regional_climatology(region_name: str, start_year: int, end_year: int,
-                                     month: int, options: dict = None) -> dict:
-    """Regional climatology — forces MODIS satellite for large-scale analysis."""
-    options = dict(options or {})
-    options["satellite"] = "modis"  # Force MODIS for continental scale
+def run_serves_temporal_variability(
+    study_area,
+    start_year: int,
+    end_year: int,
+    options: dict = None,
+) -> dict:
+    """
+    Total temporal variability of soil moisture via per-calendar-month composites.
 
-    study_area = get_predefined_region(region_name)
+    Loads the NDVI collection, soil data, and optional masks ONCE for the full
+    period, then filters per calendar month (lazy GEE filter — no server
+    round-trips in the Python loop).  Empty months produce all-masked SM images
+    that are automatically excluded from the collection reducers.
+
+    Returns mean, std_dev, and CV (= std_dev / mean × 100 %) images, all with
+    band name 'soil_moisture'.
+
+    Scientific rationale:
+        CV normalises for baseline wetness so semi-arid and humid regions are
+        directly comparable.  Operating on monthly composites removes individual-
+        scene noise (cloud artefacts, variable revisit) while retaining the full
+        seasonal cycle + inter-annual signal — the two dominant drivers of
+        temporal SM fluctuation at the landscape scale.
+    """
+    options = options or {}
+    satellite = options.get("satellite", "landsat")
+
+    assign_water_to_fc    = options.get("assign_water_to_fc", True)
+    assign_neg_ndvi_to_fc = options.get("assign_negative_ndvi_to_fc", True)
+
+    # ── Load expensive GEE assets ONCE for the entire period ────────────────
+    start_ee      = ee.Date.fromYMD(start_year, 1, 1)
+    end_ee        = ee.Date.fromYMD(end_year + 1, 1, 1)
+    full_ndvi_col = get_ndvi_collection(study_area, start_ee, end_ee, satellite, options)
+    soil_data     = load_soil_data(study_area, options)
+    fc  = soil_data["field_capacity"]
+    wp  = soil_data["wilting_point"]
+    paw = fc.subtract(wp)
+
+    water_mask = create_water_mask(study_area) if assign_water_to_fc else None
+
+    # ── Build one SM image per calendar month (lazy, no getInfo per month) ──
     images = []
     for year in range(start_year, end_year + 1):
-        dr     = get_month_date_range(year, month)
+        for month in range(1, 13):
+            dr = get_month_date_range(year, month)
+            # filterDate is a lazy GEE filter — fast, no server round-trip
+            month_ndvi = (
+                full_ndvi_col
+                .filterDate(dr["start"], dr["end"])
+                .median()
+                .rename("NDVI")
+            )
+            # Empty month → all-masked NDVI → all-masked SM → excluded from reducers
+            et_frac = month_ndvi.multiply(NDVI_COEFFICIENT).add(NDVI_INTERCEPT).clamp(0, 1)
+            sm = et_frac.multiply(paw).add(wp).rename("soil_moisture")
+            sm = sm.where(sm.lt(wp), wp)
+            sm = sm.where(sm.gt(fc), fc)
+
+            if assign_neg_ndvi_to_fc:
+                sm = sm.where(month_ndvi.lt(0), fc)
+            if assign_water_to_fc and water_mask is not None:
+                sm = sm.where(water_mask, fc)
+
+            images.append(
+                sm.set("year", year)
+                  .set("month", month)
+                  .set("system:time_start", ee.Date.fromYMD(year, month, 1).millis())
+            )
+
+    collection = ee.ImageCollection(images)
+    mean    = collection.mean().rename("soil_moisture")
+    std_dev = collection.reduce(ee.Reducer.stdDev()).rename("soil_moisture")
+    # Guard near-zero mean to prevent CV exploding in barren/desert pixels
+    cv = std_dev.divide(mean.max(ee.Image.constant(0.001))).multiply(100).rename("soil_moisture")
+
+    return {
+        "mean":         mean,
+        "std_dev":      std_dev,
+        "cv":           cv,
+        "collection":   collection,
+        "total_months": len(images),
+        "start_year":   start_year,
+        "end_year":     end_year,
+    }
+
+
+def run_serves_longterm_stats(
+    study_area,
+    start_year: int,
+    end_year: int,
+    options: dict = None,
+    period_type: str = "annual",
+    month: int = 1,
+    season: str = "summer",
+    hemisphere: str = "north",
+) -> dict:
+    """
+    Pixel-wise long-term statistics over per-year SERVES composites.
+
+    Fully lazy — zero .getInfo() calls. One composite is built per year and
+    stacked into an ImageCollection. GEE's reducers exclude masked pixels
+    per-pixel, so years with no imagery produce masked output naturally.
+    All output images use band name 'soil_moisture' for VIS_PARAMS compatibility.
+    """
+    options = options or {}
+    images = []
+
+    for year in range(start_year, end_year + 1):
+        if period_type == "monthly":
+            dr = get_month_date_range(year, month)
+        elif period_type == "seasonal":
+            dr = get_season_date_range(year, season, hemisphere)
+        else:
+            dr = {
+                "start": ee.Date.fromYMD(year, 1, 1),
+                "end":   ee.Date.fromYMD(year + 1, 1, 1),
+            }
+
+        result = run_serves_for_period(study_area, dr["start"], dr["end"], options)
+        images.append(
+            result["soil_moisture"]
+            .rename("soil_moisture")
+            .set("year", year)
+        )
+
+    collection = ee.ImageCollection(images)
+
+    # ee.Reducer.stdDev() appends "_stdDev" to band name — rename to keep band consistent
+    std_dev = collection.reduce(ee.Reducer.stdDev()).rename("soil_moisture")
+
+    return {
+        "mean":       collection.mean().rename("soil_moisture"),
+        "min":        collection.min().rename("soil_moisture"),
+        "max":        collection.max().rename("soil_moisture"),
+        "median":     collection.median().rename("soil_moisture"),
+        "std_dev":    std_dev,
+        "collection": collection,
+        "year_count": len(images),
+        "start_year": start_year,
+        "end_year":   end_year,
+        "period_type": period_type,
+        "month":      month if period_type == "monthly" else None,
+        "season":     season if period_type == "seasonal" else None,
+    }
+
+
+def run_serves_regional_climatology(region_name: str, start_year: int, end_year: int,
+                                     month: int, options: dict = None,
+                                     study_area=None,
+                                     period_type: str = "monthly",
+                                     season: str = "summer",
+                                     hemisphere: str = "north") -> dict:
+    """Multi-year regional climatology — monthly, seasonal, or full-year composites.
+
+    When a custom study_area is supplied (drawn polygon or uploaded shapefile),
+    the caller's satellite choice is preserved. For predefined regions the caller
+    also selects the satellite (MODIS is the UI default but not forced here).
+    """
+    options = dict(options or {})
+    if study_area is None:
+        study_area = get_predefined_region(region_name)
+    images = []
+    for year in range(start_year, end_year + 1):
+        if period_type == "annual":
+            dr = {
+                "start": ee.Date.fromYMD(year, 1, 1),
+                "end":   ee.Date.fromYMD(year + 1, 1, 1),
+            }
+        elif period_type == "seasonal":
+            dr = get_season_date_range(year, season, hemisphere)
+        else:  # monthly
+            dr = get_month_date_range(year, month)
         result = run_serves_for_period(study_area, dr["start"], dr["end"], options)
         images.append(result["soil_moisture"].set("year", year))
 

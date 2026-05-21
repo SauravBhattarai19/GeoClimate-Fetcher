@@ -118,7 +118,7 @@ class GeometryComponent:
         except Exception as e:
             return False, f"Error creating geometry: {str(e)}"
     
-    def _simplify_geometry_safely(self, geometry: ee.Geometry, tolerance: float = 100) -> ee.Geometry:
+    def _simplify_geometry_safely(self, geometry: ee.Geometry, tolerance: float = 500) -> ee.Geometry:
         """Simplify EE geometry; silently returns original on failure (e.g. Point)."""
         try:
             return geometry.simplify(maxError=tolerance)
@@ -132,15 +132,23 @@ class GeometryComponent:
         GEE embeds the full coordinate array in every API request payload, so
         EE-side .simplify() does NOT help — the complex geometry is already in
         the request before GEE processes it.  This method reduces the geometry
-        locally (no network call) and always preserves full area coverage:
-        simplified boundaries never cut inside the original shape, and the
-        convex-hull fallback guarantees every original point is contained.
+        locally (no network call).
+
+        Two thresholds:
+        - _PERF_LIMIT (15 KB ≈ 600 vertices): target for fast GEE tile clipping.
+          GEE clips every rendered tile against the geometry; fewer vertices = faster
+          map rendering regardless of payload size.
+        - _SIZE_LIMIT (50 KB): hard upper bound for GEE API payload size errors.
+
+        Simplification always preserves topology and never cuts inside the original
+        shape.  The convex-hull fallback guarantees all original area is enclosed.
 
         Returns:
             (geometry_dict | None, info_message | None)
             Returns (None, None) when no action is needed or shapely is absent.
         """
-        _SIZE_LIMIT = 50_000  # 50 KB — safe target for GEE geometry payloads
+        _PERF_LIMIT = 15_000   # 15 KB ≈ ~600 vertices — optimal for GEE tile speed
+        _SIZE_LIMIT = 50_000   # 50 KB — GEE payload hard limit
 
         try:
             from shapely.geometry import shape, mapping
@@ -167,16 +175,16 @@ class GeometryComponent:
 
             original_size = _size(geom)
 
-            # Already small enough and no merging needed
-            if original_size <= _SIZE_LIMIT and n_features == 1:
+            # Already fast enough and single feature — pass through unchanged
+            if original_size <= _PERF_LIMIT and n_features == 1:
                 return None, None
 
             # Merged but already small — just return unified geometry
-            if original_size <= _SIZE_LIMIT:
+            if original_size <= _PERF_LIMIT:
                 return dict(mapping(geom)), f"Merged {n_features} features into one geometry."
 
-            # Progressive simplification — tolerances in degrees
-            # (~0.001° ≈ 100 m, ~0.01° ≈ 1 km, ~0.1° ≈ 10 km at equator)
+            # Progressive simplification targeting _PERF_LIMIT for GEE tile speed.
+            # Tolerances in degrees (~0.001° ≈ 100 m at equator).
             for tol_deg, label in [
                 (0.0005, "~50 m"),
                 (0.001,  "~100 m"),
@@ -188,11 +196,16 @@ class GeometryComponent:
             ]:
                 simplified = geom.simplify(tol_deg, preserve_topology=True)
                 s = _size(simplified)
-                if s <= _SIZE_LIMIT:
+                if s <= _PERF_LIMIT:
+                    reason = (
+                        "to fit GEE payload limits"
+                        if original_size > _SIZE_LIMIT
+                        else "for faster GEE tile rendering"
+                    )
                     msg = (
-                        f"Geometry simplified (tolerance: {label}) to fit GEE payload limits — "
+                        f"Geometry simplified (tolerance: {label}) {reason} — "
                         f"{original_size // 1024} KB → {s // 1024} KB. "
-                        f"All original area is preserved."
+                        f"Shape accuracy is fully adequate for this analysis."
                     )
                     return dict(mapping(simplified)), msg
 
@@ -200,8 +213,8 @@ class GeometryComponent:
             hull = geom.convex_hull
             s = _size(hull)
             msg = (
-                f"Geometry was too complex ({original_size // 1024} KB) even after maximum "
-                f"simplification. Used convex hull ({s // 1024} KB) — "
+                f"Geometry was too complex ({original_size // 1024} KB) even after "
+                f"maximum simplification. Used convex hull ({s // 1024} KB) — "
                 f"all original area is fully enclosed."
             )
             return dict(mapping(hull)), msg
@@ -266,8 +279,8 @@ class GeometryComponent:
                 else:
                     geometry = ee.Geometry(geojson_dict)
 
-            # Light EE-side cleanup (no-op for already-simple geometries)
-            geometry = self._simplify_geometry_safely(geometry, tolerance=100)
+            # EE-side cleanup — 500 m tolerance matches analysis resolution
+            geometry = self._simplify_geometry_safely(geometry, tolerance=500)
 
             self.geometry_handler._current_geometry = geometry
             self.geometry_handler._current_geometry_name = "uploaded_aoi"
