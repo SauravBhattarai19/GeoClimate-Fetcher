@@ -23,6 +23,7 @@ import pickle
 from datetime import datetime
 from geoclimate_fetcher.core.stac_client import STACClient
 from geoclimate_fetcher.core.stac_cache import STACCache
+import ee
 
 
 def generate_snapshot():
