@@ -24,7 +24,11 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install requests earthengine-api
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install requests earthengine-api
+          python -m pip show earthengine-api
+          python -c "import ee; print('ee import OK:', ee.__version__)"
         
       - name: Generate STAC snapshot
         run: python scripts/generate_stac_snapshot.py
