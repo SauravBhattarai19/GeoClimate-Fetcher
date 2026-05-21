@@ -1138,16 +1138,16 @@ if st.session_state.app_mode is None:
         </div>
         <div class="hero-stats">
             <div class="stat-item">
-                <div class="stat-number">33+</div>
-                <div class="stat-label">Datasets</div>
-            </div>
-            <div class="stat-item">
-                <div class="stat-number">25+</div>
-                <div class="stat-label">Climate Indices</div>
-            </div>
-            <div class="stat-item">
                 <div class="stat-number">9</div>
                 <div class="stat-label">Analysis Tools</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number">STAC</div>
+                <div class="stat-label">1000s of Datasets</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number">GEE</div>
+                <div class="stat-label">Cloud Processing</div>
             </div>
         </div>
     </div>
