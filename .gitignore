@@ -125,6 +125,12 @@ RESTORATION_SUMMARY.md
 pyproject.toml
 *.txt
 
+# Accidental backup / copy files
+* copy.*
+*_copy.*
+*_backup.*
+*_bak.*
+
 # macOS metadata — never commit
 .DS_Store
 **/.DS_Store
