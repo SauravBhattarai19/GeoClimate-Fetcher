@@ -963,7 +963,7 @@ if not st.session_state.get('auth_complete', False):
     </div>
     """, unsafe_allow_html=True)
 
-    # Developer card with photo using columns
+    # ── Developer row ────────────────────────────────────────────────────────
     col_photo, col_info = st.columns([1, 3])
 
     with col_photo:
@@ -978,9 +978,8 @@ if not st.session_state.get('auth_complete', False):
         st.markdown("""
         <div style="padding-left: 20px;">
             <h2 style="color: #0a4d68; margin: 0 0 0.5rem 0; font-size: 1.8rem; font-weight: 700;">Saurav Bhattarai</h2>
-            <p style="color: #088395; font-size: 1.1rem; font-weight: 500; margin: 0 0 0.8rem 0;">🏗️ Civil Engineer & Geospatial Developer</p>
-            <p style="color: #666; font-size: 0.9rem; font-style: italic; margin: 0 0 1rem 0;">Under supervision of Dr. Rocky Talchabhadel & Dr. Nawaraj Pradhan</p>
-            <div style="display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 1rem;">
+            <p style="color: #088395; font-size: 1.1rem; font-weight: 500; margin: 0 0 0.8rem 0;">🏗️ Civil Engineer &amp; Geospatial Developer</p>
+            <div style="display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 0.5rem;">
                 <a href="mailto:saurav.bhattarai.1999@gmail.com" class="contact-link" style="display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; background: linear-gradient(135deg, #088395, #05bfdb); color: white; text-decoration: none; border-radius: 25px; font-size: 0.9rem; font-weight: 500; box-shadow: 0 4px 10px rgba(8, 131, 149, 0.3);">
                     📧 Email
                 </a>
@@ -996,6 +995,47 @@ if not st.session_state.get('auth_complete', False):
             </div>
         </div>
         """, unsafe_allow_html=True)
+
+    # ── Supervisors row ───────────────────────────────────────────────────────
+    st.markdown("""
+    <div style="margin-top: 1.5rem; padding: 1rem 1.5rem; border-radius: 12px;
+                background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+                border: 1px solid rgba(8,131,149,0.2);">
+        <p style="margin: 0 0 0.6rem 0; color: #088395; font-size: 0.85rem;
+                  font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">
+            🎓 Under Supervision of
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    sup_col1, sup_col2 = st.columns(2)
+
+    with sup_col1:
+        sc1, sc2 = st.columns([1, 3])
+        with sc1:
+            try:
+                st.image("pictures/NawaRaj.jpg", width=80)
+            except Exception:
+                st.markdown("🎓")
+        with sc2:
+            st.markdown("""
+            <div style="padding-left: 8px; padding-top: 4px;">
+                <strong style="color: #0a4d68;">Dr. Nawa Raj Pradhan</strong><br>
+                <span style="font-size: 0.82rem; color: #555;">ERDC / CHL, U.S. Army Corps of Engineers</span>
+            </div>
+            """, unsafe_allow_html=True)
+
+    with sup_col2:
+        sc3, sc4 = st.columns([1, 3])
+        with sc3:
+            st.markdown('<div style="font-size:2.2rem; text-align:center;">🎓</div>', unsafe_allow_html=True)
+        with sc4:
+            st.markdown("""
+            <div style="padding-left: 8px; padding-top: 4px;">
+                <strong style="color: #0a4d68;">Dr. Rocky Talchabhadel</strong><br>
+                <span style="font-size: 0.82rem; color: #555;">Jackson State University</span>
+            </div>
+            """, unsafe_allow_html=True)
 
     st.markdown("""
     <style>
@@ -1345,28 +1385,85 @@ if st.session_state.app_mode is None:
     with col10:
         st.empty()  # Placeholder for future tools
 
-    # Author Section
-    st.markdown('<h3>👨‍💻 About the Developer</h3>', unsafe_allow_html=True)
+    # ── Development Team Section ─────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown('<h3 style="margin-bottom:1.2rem;">👥 Development Team</h3>', unsafe_allow_html=True)
 
-    # Create two columns for photo and info
-    col_photo, col_info = st.columns([1, 3])
+    dev_col, sup_col = st.columns([1, 1], gap="large")
 
-    with col_photo:
-        # Display developer photo
-        st.image("pictures/Saurav.png", width=150, caption="Saurav Bhattarai")
-
-    with col_info:
+    # ── Developer ────────────────────────────────────────────────────────────
+    with dev_col:
         st.markdown("""
-        <div class="developer-info" style="padding-left: 20px;">
-            <h3><strong>Saurav Bhattarai</strong></h3>
-            <p><strong>Civil Engineer & Geospatial Developer</strong></p>
-            <p>Under Supervision of Dr. Rocky Talchabhadel and Dr. Nawaraj Pradhan</p>
-            <p>📧 Email: <a href="mailto:saurav.bhattarai.1999@gmail.com">saurav.bhattarai.1999@gmail.com</a></p>
-            <p>🌐 Website: <a href="https://sauravbhattarai19.github.io/" target="_blank">sauravbhattarai19.github.io</a></p>
-            <p>🔗 <a href="https://github.com/sauravbhattarai19" target="_blank">GitHub</a> |
-               <a href="https://www.linkedin.com/in/saurav-bhattarai-7133a3176/" target="_blank">LinkedIn</a></p>
-        </div>
+        <p style="color:#088395; font-weight:600; font-size:0.8rem; text-transform:uppercase;
+                  letter-spacing:0.06em; margin-bottom:0.8rem;">👨‍💻 Developer</p>
         """, unsafe_allow_html=True)
+
+        d1, d2 = st.columns([1, 2])
+        with d1:
+            try:
+                st.image("pictures/Saurav.png", width=120)
+            except Exception:
+                st.markdown("👨‍💻")
+        with d2:
+            st.markdown("""
+            <div style="padding-top: 4px;">
+                <strong style="font-size:1.1rem; color:#0a4d68;">Saurav Bhattarai</strong><br>
+                <span style="color:#088395; font-size:0.9rem;">Civil Engineer &amp; Geospatial Developer</span><br><br>
+                <a href="mailto:saurav.bhattarai.1999@gmail.com"
+                   style="color:#088395; font-size:0.85rem;">📧 saurav.bhattarai.1999@gmail.com</a><br>
+                <a href="https://sauravbhattarai19.github.io/" target="_blank"
+                   style="color:#088395; font-size:0.85rem;">🌐 sauravbhattarai19.github.io</a><br>
+                <span style="font-size:0.85rem;">
+                    🔗 <a href="https://github.com/sauravbhattarai19" target="_blank"
+                          style="color:#088395;">GitHub</a> &nbsp;|&nbsp;
+                    <a href="https://www.linkedin.com/in/saurav-bhattarai-7133a3176/" target="_blank"
+                       style="color:#088395;">LinkedIn</a>
+                </span>
+            </div>
+            """, unsafe_allow_html=True)
+
+    # ── Supervisors ───────────────────────────────────────────────────────────
+    with sup_col:
+        st.markdown("""
+        <p style="color:#088395; font-weight:600; font-size:0.8rem; text-transform:uppercase;
+                  letter-spacing:0.06em; margin-bottom:0.8rem;">🎓 Supervisors</p>
+        """, unsafe_allow_html=True)
+
+        # Dr. Nawaraj Pradhan
+        s1, s2 = st.columns([1, 2])
+        with s1:
+            try:
+                st.image("pictures/NawaRaj.jpg", width=110)
+            except Exception:
+                st.markdown("🎓")
+        with s2:
+            st.markdown("""
+            <div style="padding-top: 4px;">
+                <strong style="font-size:1rem; color:#0a4d68;">Dr. Nawa Raj Pradhan</strong><br>
+                <span style="color:#555; font-size:0.85rem;">
+                    Research Civil Engineer<br>
+                    ERDC / CHL, U.S. Army Corps of Engineers
+                </span>
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.markdown("<div style='margin-top:1rem;'></div>", unsafe_allow_html=True)
+
+        # Dr. Rocky Talchabhadel
+        s3, s4 = st.columns([1, 2])
+        with s3:
+            st.markdown('<div style="font-size:3rem; text-align:center; padding-top:8px;">🎓</div>',
+                        unsafe_allow_html=True)
+        with s4:
+            st.markdown("""
+            <div style="padding-top: 4px;">
+                <strong style="font-size:1rem; color:#0a4d68;">Dr. Rocky Talchabhadel</strong><br>
+                <span style="color:#555; font-size:0.85rem;">
+                    Assistant Professor<br>
+                    Jackson State University
+                </span>
+            </div>
+            """, unsafe_allow_html=True)
 
     st.markdown("""
     <div class="acknowledgments" style="margin-top: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 10px;">
