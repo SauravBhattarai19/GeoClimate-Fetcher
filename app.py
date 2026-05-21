@@ -1028,7 +1028,10 @@ if not st.session_state.get('auth_complete', False):
     with sup_col2:
         sc3, sc4 = st.columns([1, 3])
         with sc3:
-            st.markdown('<div style="font-size:2.2rem; text-align:center;">🎓</div>', unsafe_allow_html=True)
+            try:
+                st.image("pictures/RockyTalchabhadel.jpg", width=80)
+            except Exception:
+                st.markdown("🎓")
         with sc4:
             st.markdown("""
             <div style="padding-left: 8px; padding-top: 4px;">
@@ -1452,8 +1455,10 @@ if st.session_state.app_mode is None:
         # Dr. Rocky Talchabhadel
         s3, s4 = st.columns([1, 2])
         with s3:
-            st.markdown('<div style="font-size:3rem; text-align:center; padding-top:8px;">🎓</div>',
-                        unsafe_allow_html=True)
+            try:
+                st.image("pictures/RockyTalchabhadel.jpg", width=110)
+            except Exception:
+                st.markdown("🎓")
         with s4:
             st.markdown("""
             <div style="padding-top: 4px;">
