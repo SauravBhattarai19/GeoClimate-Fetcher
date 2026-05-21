@@ -31,7 +31,7 @@ jobs:
       - name: Install package (and deps)
         run: |
           python -m pip install --upgrade pip
-          python -m pip install requests earthengine-api
+          python -m pip install requests earthengine-api pandas
           python -c "import sys; print('python:', sys.executable); import ee; print('ee import OK:', ee.__version__)"
 
       - name: Generate STAC snapshot
