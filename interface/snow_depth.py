@@ -44,6 +44,8 @@ from snow_depth_app import (
     create_chunks,
     download_chunk,
     merge_chunks,
+    run_snow_depth_period_stats,
+    run_snow_depth_temporal_variability,
 )
 
 from geoclimate_fetcher.core import GeometrySelectionWidget
@@ -69,6 +71,16 @@ _SD_VIS_PARAMS = {
         "#08519C",   # 1.6 m — deep
         "#08306B",   # 2.0 m+ — very deep
     ],
+}
+_SD_VIS_PARAMS_STDDEV = {
+    "min": 0.0,
+    "max": 0.5,
+    "palette": ["#f7f7f7", "#cccccc", "#969696", "#636363", "#252525"],
+}
+_SD_VIS_PARAMS_CV = {
+    "min": 0.0,
+    "max": 60.0,   # CV in %
+    "palette": ["#ffffcc", "#a1dab4", "#41b6c4", "#2c7fb8", "#253494"],
 }
 _SD_TILE_FAILED = "__FAILED__"   # sentinel cached on getMapId() failure
 
@@ -191,9 +203,12 @@ def _render_geometry_selection():
                 "snow_depth_centroid",
                 # ZIP cache
                 "sd_zip_data", "sd_zip_filename", "sd_zip_months_list",
-                # Visualization caches
+                # Monthly visualization caches
                 "sd_tile_cache", "sd_sample_cache", "sd_stats_cache",
                 "sd_params_key",
+                # Period Statistics caches
+                "sd_lt_results", "sd_lt_params_key",
+                "sd_lt_tile_cache", "sd_lt_sample_cache", "sd_lt_stats_cache",
             ]:
                 st.session_state.pop(key, None)
             st.rerun()
@@ -676,6 +691,600 @@ def _render_sd_preview_section(
     )
 
 
+# ===========================================================================
+# PERIOD STATISTICS MODE
+# ===========================================================================
+
+_SD_PERIOD_SUBTYPES = {
+    "interannual": "📊 Inter-annual  (one composite per year)",
+    "temporal_cv": "〰️ Temporal Variability / CV  (all monthly composites)",
+}
+
+_SD_PERIOD_TYPES = {
+    "annual":      "Full Year (all 12 months)",
+    "monthly":     "Specific Month",
+    "snow_season": "Snow Season  (Oct–Apr NH / Apr–Oct SH)",
+}
+
+
+def _sd_lt_params_key(subtype: str, start_year: int, end_year: int,
+                      period_type: str, month: int, hemisphere: str,
+                      scale: int, density_params: dict) -> str:
+    """MD5 fingerprint of all Period Statistics parameters — drives cache invalidation."""
+    import json as _json
+    safe_dp = {
+        k: (v if isinstance(v, (int, float, str, bool, type(None))) else str(v))
+        for k, v in density_params.items()
+        if k != "custom_monthly_densities"
+    }
+    cmd = density_params.get("custom_monthly_densities")
+    if cmd:
+        safe_dp["custom_monthly_densities"] = _json.dumps(
+            {str(k): v for k, v in cmd.items()}, sort_keys=True
+        )
+    area_km2 = st.session_state.get("snow_depth_area_km2", 0.0)
+    raw = (
+        f"{subtype}_{start_year}_{end_year}_{period_type}_{month}"
+        f"_{hemisphere}_{scale}_{area_km2:.2f}"
+        f"_{_json.dumps(safe_dp, sort_keys=True)}"
+    )
+    return hashlib.md5(raw.encode()).hexdigest()[:12]
+
+
+def _render_period_statistics(density_method, density_params):
+    """Render the Period Statistics mode — sidebar params + geometry + run/results."""
+    st.subheader("📈 Period Statistics — Snow Depth")
+    st.caption(
+        "Aggregate snow depth across years: pixel-wise mean / min / max / median / "
+        "std dev, or coefficient of variation across all monthly composites."
+    )
+
+    # ── Sidebar ───────────────────────────────────────────────────────────
+    st.sidebar.header("📈 Period Statistics")
+
+    st.sidebar.subheader("📊 Statistics Type")
+    subtype_labels = list(_SD_PERIOD_SUBTYPES.values())
+    subtype_keys   = list(_SD_PERIOD_SUBTYPES.keys())
+    sel_subtype    = st.sidebar.radio(
+        "Type:", subtype_labels, index=0, key="sd_lt_subtype"
+    )
+    subtype = subtype_keys[subtype_labels.index(sel_subtype)]
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("📅 Year Range")
+    today    = datetime.date.today()
+    y_opts   = list(range(today.year, 1999, -1))
+    default_sy = 2015 if 2015 in y_opts else y_opts[-1]
+    default_ey = 2023 if 2023 in y_opts else y_opts[0]
+
+    start_year = st.sidebar.selectbox(
+        "Start Year:", y_opts,
+        index=y_opts.index(default_sy), key="sd_lt_start_year"
+    )
+    end_year = st.sidebar.selectbox(
+        "End Year:", y_opts,
+        index=y_opts.index(default_ey), key="sd_lt_end_year"
+    )
+
+    # ── Period-within-year (inter-annual only) ───────────────────────────
+    period_type = "annual"
+    month       = 1
+    hemisphere  = "north"
+
+    if subtype == "interannual":
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("📆 Period within each year")
+        pt_labels = list(_SD_PERIOD_TYPES.values())
+        pt_keys   = list(_SD_PERIOD_TYPES.keys())
+        sel_pt    = st.sidebar.selectbox(
+            "Period:", pt_labels, index=0, key="sd_lt_period_type"
+        )
+        period_type = pt_keys[pt_labels.index(sel_pt)]
+
+        if period_type == "monthly":
+            month = st.sidebar.selectbox(
+                "Month:", range(1, 13),
+                format_func=lambda m: datetime.date(2000, m, 1).strftime("%B"),
+                index=0, key="sd_lt_month"
+            )
+        if period_type == "snow_season":
+            hemi_label = st.sidebar.radio(
+                "Hemisphere:", ["Northern", "Southern"],
+                index=0, key="sd_lt_hemi"
+            )
+            hemisphere = "north" if hemi_label == "Northern" else "south"
+
+        st.sidebar.caption(
+            "⚠️ One composite per year. Each year may compute 1–12 monthly images lazily."
+        )
+    else:
+        n_months = (end_year - start_year + 1) * 12
+        st.sidebar.caption(
+            f"⚠️ Builds {n_months} monthly composites "
+            f"({start_year}–{end_year}). All GEE ops are lazy — tiles render on-demand."
+        )
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("💾 Resolution")
+    scale = st.sidebar.number_input(
+        "Resolution (m):", min_value=100, max_value=5000,
+        value=500, step=100, key="sd_lt_scale",
+        help="Pixel resolution for map preview and export."
+    )
+
+    # ── Cache invalidation ────────────────────────────────────────────────
+    lt_key = _sd_lt_params_key(
+        subtype, start_year, end_year, period_type, month, hemisphere, scale, density_params
+    )
+    if st.session_state.get("sd_lt_params_key") != lt_key:
+        for k in ("sd_lt_results", "sd_lt_tile_cache",
+                  "sd_lt_sample_cache", "sd_lt_stats_cache"):
+            st.session_state.pop(k, None)
+        st.session_state["sd_lt_params_key"] = lt_key
+
+    # ── Geometry selection ────────────────────────────────────────────────
+    geometry_ready = _render_geometry_selection()
+    if not geometry_ready:
+        return
+
+    st.divider()
+
+    # ── Run / Clear buttons ───────────────────────────────────────────────
+    period_label = _sd_lt_period_label(
+        subtype, start_year, end_year, period_type, month, hemisphere
+    )
+    col_run, col_clr = st.columns([3, 1])
+    with col_run:
+        run_clicked = st.button(
+            f"▶ Run Period Statistics — {period_label}",
+            type="primary", width="stretch", key="sd_lt_run_btn"
+        )
+    with col_clr:
+        if st.button("🗑️ Clear Results", key="sd_lt_clear_btn"):
+            for k in ("sd_lt_results", "sd_lt_tile_cache",
+                      "sd_lt_sample_cache", "sd_lt_stats_cache"):
+                st.session_state.pop(k, None)
+            st.rerun()
+
+    if run_clicked:
+        if start_year >= end_year:
+            st.error("❌ Start Year must be before End Year.")
+        else:
+            _execute_period_stats(
+                subtype, start_year, end_year, period_type,
+                month, hemisphere, scale, density_params,
+                st.session_state["snow_depth_geometry"],
+                period_label,
+            )
+
+    if st.session_state.get("sd_lt_results"):
+        _render_period_stats_results()
+
+
+def _sd_lt_period_label(subtype, start_year, end_year, period_type, month, hemisphere):
+    """Build a short human-readable label for the current Period Statistics parameters."""
+    yr_range = f"{start_year}–{end_year}"
+    if subtype == "temporal_cv":
+        return f"Temporal CV · Monthly · {yr_range}"
+    if period_type == "monthly":
+        mon_name = datetime.date(2000, month, 1).strftime("%B")
+        return f"Inter-annual · {mon_name} · {yr_range}"
+    if period_type == "snow_season":
+        hemi_label = "NH" if hemisphere == "north" else "SH"
+        return f"Inter-annual · Snow Season ({hemi_label}) · {yr_range}"
+    return f"Inter-annual · Annual · {yr_range}"
+
+
+def _execute_period_stats(
+    subtype, start_year, end_year, period_type,
+    month, hemisphere, scale, density_params, aoi, period_label
+):
+    """Run the GEE computation and store results in session state."""
+    calculator = _sd_build_calculator(scale, density_params)
+
+    with st.spinner("❄️ Computing snow depth statistics on Google Earth Engine…"):
+        try:
+            if subtype == "temporal_cv":
+                result = run_snow_depth_temporal_variability(
+                    calculator, aoi, start_year, end_year
+                )
+            else:
+                result = run_snow_depth_period_stats(
+                    calculator, aoi, start_year, end_year,
+                    period_type=period_type,
+                    month=month,
+                    hemisphere=hemisphere,
+                )
+
+            st.session_state["sd_lt_results"] = {
+                "subtype":      subtype,
+                "result":       result,
+                "scale":        scale,
+                "period_label": period_label,
+                "aoi":          aoi,
+                "density_params": density_params,
+            }
+            st.rerun()
+
+        except Exception as exc:
+            st.error(f"❌ Period Statistics failed: {exc}")
+            st.info(
+                "Tips: reduce the AOI, narrow the year range, or increase the resolution. "
+                "For very large areas switch to Google Drive export mode."
+            )
+
+
+def _render_period_stats_results():
+    """Dispatch cached Period Statistics results to the appropriate sub-renderer."""
+    cached  = st.session_state["sd_lt_results"]
+    subtype = cached["subtype"]
+    result  = cached["result"]
+    aoi     = cached["aoi"]
+    scale   = cached["scale"]
+    label   = cached["period_label"]
+    params  = cached["density_params"]
+
+    st.success(f"✅ Period Statistics complete: **{label}**")
+
+    if subtype == "temporal_cv":
+        _render_temporal_cv_snow_results(result, aoi, scale, params, label)
+    else:
+        _render_interannual_snow_results(result, aoi, scale, params, label)
+
+
+def _sd_lt_get_tile_url(image: ee.Image, vis_params: dict, cache_key: str) -> str:
+    """Register an ee.Image with GEE once, cache the tile URL in sd_lt_tile_cache."""
+    cache = st.session_state.setdefault("sd_lt_tile_cache", {})
+    if cache_key not in cache:
+        try:
+            map_id = image.getMapId(vis_params)
+            cache[cache_key] = map_id["tile_fetcher"].url_format
+        except Exception as exc:
+            cache[cache_key] = _SD_TILE_FAILED
+            raise RuntimeError(str(exc)) from exc
+    url = cache[cache_key]
+    if url == _SD_TILE_FAILED:
+        raise RuntimeError(
+            "Map preview unavailable (cached failure). "
+            "Use **💾 Export** below — batch export has higher memory limits."
+        )
+    return url
+
+
+def _render_sd_lt_map(image: ee.Image, vis_params: dict, aoi, layer_key: str,
+                      caption: str = "Snow Depth (m)", sample_scale: int = 500) -> bool:
+    """Folium map for Period Statistics layers — mirrors _render_sd_map() but uses
+    sd_lt_tile_cache and sd_lt_sample_cache so results don't pollute monthly caches."""
+    cached_centroid = st.session_state.get("snow_depth_centroid")
+    if cached_centroid:
+        init_lon, init_lat = cached_centroid[0], cached_centroid[1]
+    else:
+        try:
+            centroid = aoi.centroid(maxError=1).coordinates().getInfo()
+            init_lon, init_lat = centroid[0], centroid[1]
+            st.session_state["snow_depth_centroid"] = centroid
+        except Exception:
+            init_lat, init_lon = 45.0, -100.0
+
+    area_km2  = st.session_state.get("snow_depth_area_km2", 10_000)
+    init_zoom = 9 if area_km2 < 1_000 else (7 if area_km2 < 50_000 else 4)
+
+    _map_state_key = f"sd_lt_map_state_{layer_key}"
+    saved   = st.session_state.get(_map_state_key, {})
+    ctr_lat = saved.get("lat", init_lat)
+    ctr_lon = saved.get("lon", init_lon)
+    zoom    = saved.get("zoom", init_zoom)
+
+    m = folium.Map(location=[ctr_lat, ctr_lon], zoom_start=zoom, tiles="OpenStreetMap")
+    folium.TileLayer(
+        tiles="https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
+        attr="Google Satellite", name="Google Satellite",
+        overlay=False, control=True, show=False,
+    ).add_to(m)
+
+    layer_ok = False
+    try:
+        tile_url = _sd_lt_get_tile_url(image, vis_params, layer_key)
+        folium.TileLayer(
+            tiles=tile_url, attr="Google Earth Engine",
+            name="Snow Depth Layer", overlay=True, control=True,
+        ).add_to(m)
+        layer_ok = True
+    except Exception as exc:
+        err_str = str(exc).lower()
+        if "memory" in err_str or "limit" in err_str or "quota" in err_str:
+            st.warning(
+                "🚫 **Map preview unavailable** — GEE memory limit exceeded. "
+                "Use **💾 Export** below — batch export runs on GEE's higher-limit "
+                "infrastructure and will succeed."
+            )
+        else:
+            st.warning(f"Could not render map layer: {exc}")
+
+    LinearColormap(
+        colors=vis_params["palette"],
+        vmin=vis_params["min"], vmax=vis_params["max"],
+        caption=caption,
+    ).add_to(m)
+    folium.LayerControl().add_to(m)
+
+    _folium_key = "sd_lt_folium_" + "".join(c if c.isalnum() else "_" for c in layer_key)
+    map_data = st_folium(m, width=700, height=480,
+                         returned_objects=["last_clicked"], key=_folium_key)
+
+    if map_data:
+        _c = map_data.get("center")
+        _z = map_data.get("zoom")
+        if _c and _z:
+            st.session_state[_map_state_key] = {
+                "lat": _c["lat"], "lon": _c["lng"], "zoom": int(_z)
+            }
+
+    if layer_ok and map_data:
+        clicked = map_data.get("last_clicked")
+        if clicked:
+            clat, clng = clicked["lat"], clicked["lng"]
+            _sample_cache = st.session_state.setdefault("sd_lt_sample_cache", {})
+            _sk = f"{layer_key}::{clat:.4f}::{clng:.4f}"
+            if _sk not in _sample_cache:
+                with st.spinner("Sampling pixel…"):
+                    try:
+                        pt = ee.Geometry.Point([clng, clat])
+                        val_dict = (
+                            image.sample(pt, scale=sample_scale)
+                            .first().toDictionary().getInfo()
+                        )
+                        val = next(
+                            (v for v in val_dict.values() if isinstance(v, (int, float))),
+                            None,
+                        )
+                        _sample_cache[_sk] = val
+                    except Exception:
+                        _sample_cache[_sk] = None
+            val = _sample_cache.get(_sk)
+            if val is not None:
+                st.caption(f"📍 **{clat:.4f}°, {clng:.4f}°**  →  **{val:.3f} m**")
+            else:
+                st.caption(
+                    f"📍 **{clat:.4f}°, {clng:.4f}°**  →  No data at this location "
+                    "(pixel outside AOI or fully masked)"
+                )
+        else:
+            st.caption("🖱️ Click anywhere on the map to inspect the pixel value.")
+
+    return layer_ok
+
+
+def _render_sd_lt_statistics(image: ee.Image, aoi, layer_key: str, scale: int,
+                              value_label: str = "Snow Depth (m)") -> None:
+    """Mean / min / max / std dev statistics for a Period Statistics layer."""
+    stats_cache = st.session_state.setdefault("sd_lt_stats_cache", {})
+    if layer_key not in stats_cache:
+        with st.spinner("Computing statistics…"):
+            try:
+                raw = image.reduceRegion(
+                    reducer=(
+                        ee.Reducer.mean()
+                        .combine(ee.Reducer.minMax(), "", True)
+                        .combine(ee.Reducer.stdDev(), "", True)
+                    ),
+                    geometry=aoi,
+                    scale=scale,
+                    maxPixels=1e9,
+                    bestEffort=True,
+                ).getInfo()
+                stats_cache[layer_key] = raw
+            except Exception:
+                stats_cache[layer_key] = {}
+
+    raw      = stats_cache.get(layer_key, {})
+    band     = "snow_depth"
+    mean_val = raw.get(f"{band}_mean")
+    min_val  = raw.get(f"{band}_min")
+    max_val  = raw.get(f"{band}_max")
+    std_val  = raw.get(f"{band}_stdDev")
+
+    if any(v is not None for v in [mean_val, min_val, max_val, std_val]):
+        mc1, mc2, mc3, mc4 = st.columns(4)
+        if mean_val is not None: mc1.metric(f"Mean {value_label}", f"{mean_val:.3f}")
+        if min_val  is not None: mc2.metric(f"Min {value_label}",  f"{min_val:.3f}")
+        if max_val  is not None: mc3.metric(f"Max {value_label}",  f"{max_val:.3f}")
+        if std_val  is not None: mc4.metric("Std Dev",             f"{std_val:.3f}")
+    else:
+        st.info("No statistics available for this layer.")
+
+
+def _render_sd_lt_export(image: ee.Image, aoi, scale: int, label: str,
+                          export_key_suffix: str) -> None:
+    """Smart GeoTIFF export for a Period Statistics image."""
+    helper      = DownloadHelper()
+    export_pref = helper.render_smart_download_options(
+        export_format="GeoTIFF",
+        key=f"sd_lt_export_mode_{export_key_suffix}",
+    )
+    import re
+    filename = re.sub(r"[^\w\-]", "_", f"snow_depth_{label}_{scale}m")[:80]
+
+    if st.button(
+        f"📥 Export {label} GeoTIFF",
+        type="primary", width="stretch",
+        key=f"sd_lt_export_btn_{export_key_suffix}",
+    ):
+        with st.spinner("Exporting…"):
+            result = helper.execute_smart_download(
+                image=image, filename=filename, region=aoi,
+                scale=scale, export_preference=export_pref, crs="EPSG:4326",
+            )
+            if not result.get("success"):
+                st.error(f"❌ Export failed: {result.get('message', 'Unknown error')}")
+
+
+def _render_interannual_snow_results(result: dict, aoi, scale: int,
+                                      density_params: dict, label: str) -> None:
+    """Display Mean / Min / Max / Std Dev tabs for inter-annual statistics."""
+    params_key = st.session_state.get("sd_lt_params_key", "lt")
+
+    sc1, sc2, sc3 = st.columns(3)
+    sc1.metric("Valid Years",  str(result["year_count"]))
+    sc2.metric("Year Range",   f"{result['start_year']} – {result['end_year']}")
+    sc3.metric("Period Type",  _SD_PERIOD_TYPES.get(result["period_type"], result["period_type"]))
+
+    st.markdown("#### 🗺️ Pixel-wise Statistical Maps")
+    st.caption(
+        "Statistics computed across **annual composites** — captures inter-annual "
+        "variability (year-to-year shifts). Maps render via live GEE tile fetching."
+    )
+
+    _MAP_UNAVAILABLE = (
+        "Map unavailable — GEE memory limit exceeded. "
+        "Use **💾 Drive Export** below — batch export has higher limits."
+    )
+
+    tab_mean, tab_min, tab_max, tab_std = st.tabs(
+        ["📊 Mean", "⬇️ Minimum", "⬆️ Maximum", "〰️ Std Dev"]
+    )
+
+    with tab_mean:
+        st.caption("Long-term **mean** snow depth — typical snow accumulation pattern.")
+        ok_mean = _render_sd_lt_map(
+            result["mean"], _SD_VIS_PARAMS, aoi,
+            f"lt_{params_key}::mean", "Mean Snow Depth (m)", max(scale, 500)
+        )
+
+    with tab_min:
+        st.caption("Pixel-wise **minimum** annual mean — driest/lightest-snow year.")
+        if ok_mean:
+            _render_sd_lt_map(
+                result["min"], _SD_VIS_PARAMS, aoi,
+                f"lt_{params_key}::min", "Min Annual Mean Snow Depth (m)", max(scale, 500)
+            )
+        else:
+            st.info(_MAP_UNAVAILABLE)
+
+    with tab_max:
+        st.caption("Pixel-wise **maximum** annual mean — deepest-snow year.")
+        if ok_mean:
+            _render_sd_lt_map(
+                result["max"], _SD_VIS_PARAMS, aoi,
+                f"lt_{params_key}::max", "Max Annual Mean Snow Depth (m)", max(scale, 500)
+            )
+        else:
+            st.info(_MAP_UNAVAILABLE)
+
+    with tab_std:
+        st.caption(
+            "**Std dev across annual means** — inter-annual variability. "
+            "High = unstable year-to-year snow depth."
+        )
+        if ok_mean:
+            _render_sd_lt_map(
+                result["std_dev"], _SD_VIS_PARAMS_STDDEV, aoi,
+                f"lt_{params_key}::std", "Std Dev of Annual Means (m)", max(scale, 500)
+            )
+        else:
+            st.info(_MAP_UNAVAILABLE)
+
+    st.markdown("---")
+    st.markdown("#### 💾 Export a statistical image as GeoTIFF")
+    stat_choice = st.selectbox(
+        "Statistic to export:",
+        ["Mean", "Minimum", "Maximum", "Std Deviation"],
+        key="sd_lt_ia_export_choice",
+    )
+    img_map = {
+        "Mean":          result["mean"],
+        "Minimum":       result["min"],
+        "Maximum":       result["max"],
+        "Std Deviation": result["std_dev"],
+    }
+    import re
+    safe_label = re.sub(r"[^\w\-]", "_", f"{stat_choice}_{label}")
+    _render_sd_lt_export(img_map[stat_choice], aoi, scale,
+                          safe_label, f"ia_{stat_choice.lower()[:3]}")
+
+
+def _render_temporal_cv_snow_results(result: dict, aoi, scale: int,
+                                      density_params: dict, label: str) -> None:
+    """Display Long-term Mean / Temporal Std Dev / CV tabs for temporal variability."""
+    params_key = st.session_state.get("sd_lt_params_key", "lt")
+
+    sc1, sc2, sc3 = st.columns(3)
+    sc1.metric("Monthly Composites", str(result["total_months"]))
+    sc2.metric("Year Range",         f"{result['start_year']} – {result['end_year']}")
+    sc3.metric("Method",             "Temporal CV")
+
+    st.markdown("#### 🗺️ Temporal Variability Maps")
+    st.caption(
+        "Statistics computed across **all monthly composites** — captures total temporal "
+        "variability (seasonal amplitude + inter-annual shifts). "
+        "CV normalises for baseline snow depth so deep-snow and shallow-snow "
+        "pixels are directly comparable."
+    )
+
+    _MAP_UNAVAILABLE = (
+        "Map unavailable — GEE memory limit exceeded. "
+        "Use **💾 Drive Export** below — batch export has higher limits."
+    )
+
+    tab_mean, tab_std, tab_cv = st.tabs(
+        ["📊 Long-term Mean", "〰️ Temporal Std Dev", "📉 CV (%)"]
+    )
+
+    with tab_mean:
+        st.caption(
+            "Long-term mean snow depth across all monthly composites — "
+            "multi-year climatological average."
+        )
+        ok_mean = _render_sd_lt_map(
+            result["mean"], _SD_VIS_PARAMS, aoi,
+            f"lt_{params_key}::cv_mean", "Long-term Mean Snow Depth (m)", max(scale, 500)
+        )
+
+    with tab_std:
+        st.caption(
+            "**Total temporal std dev** across all monthly composites — "
+            "combines seasonal amplitude and inter-annual variability."
+        )
+        if ok_mean:
+            _render_sd_lt_map(
+                result["std_dev"], _SD_VIS_PARAMS_STDDEV, aoi,
+                f"lt_{params_key}::cv_std", "Temporal Std Dev (m)", max(scale, 500)
+            )
+        else:
+            st.info(_MAP_UNAVAILABLE)
+
+    with tab_cv:
+        st.caption(
+            "**CV = σ/μ × 100 %** — relative fluctuation independent of baseline depth. "
+            "High CV (> 30 %) = snow depth highly variable; "
+            "Low CV (< 10 %) = consistently deep or consistently shallow."
+        )
+        if ok_mean:
+            _render_sd_lt_map(
+                result["cv"], _SD_VIS_PARAMS_CV, aoi,
+                f"lt_{params_key}::cv_cv", "Temporal CV of Snow Depth (%)", max(scale, 500)
+            )
+        else:
+            st.info(_MAP_UNAVAILABLE)
+
+    st.markdown("---")
+    st.markdown("#### 💾 Export a variability image as GeoTIFF")
+    stat_choice = st.selectbox(
+        "Layer to export:",
+        ["Long-term Mean", "Temporal Std Dev", "CV (%)"],
+        key="sd_lt_cv_export_choice",
+    )
+    img_map = {
+        "Long-term Mean":  result["mean"],
+        "Temporal Std Dev": result["std_dev"],
+        "CV (%)":          result["cv"],
+    }
+    import re
+    safe_label = re.sub(r"[^\w\-]", "_", f"{stat_choice}_{label}")
+    _render_sd_lt_export(img_map[stat_choice], aoi, scale,
+                          safe_label, f"cv_{stat_choice[:3].lower()}")
+
+
 # ---------------------------------------------------------------------------
 # Monthly Analysis mode
 # ---------------------------------------------------------------------------
@@ -1023,26 +1632,44 @@ def render_snow_depth():
     # ── Mode selector ──────────────────────────────────────────────────────
     mode = st.radio(
         "Choose mode:",
-        ["📊 Monthly Analysis", "🔍 Algorithm Comparison"],
+        ["📊 Monthly Analysis", "📈 Period Statistics", "🔍 Algorithm Comparison"],
         horizontal=True,
         key="sd_mode",
         help=(
             "Monthly Analysis: preview snow depth maps by month/year, then export GeoTIFFs. "
+            "Period Statistics: aggregate across years — mean/min/max/std or temporal CV. "
             "Algorithm Comparison: validate against a reference TIFF."
         ),
     )
 
     if mode == "📊 Monthly Analysis":
         _render_monthly_analysis(density_method, density_params)
+    elif mode == "📈 Period Statistics":
+        _render_period_statistics(density_method, density_params)
     else:
         _render_algorithm_comparison(density_method, density_params)
 
     display_comparison_results()
 
     # ── About ──────────────────────────────────────────────────────────────
+
     with st.expander("ℹ️ About this tool"):
         st.markdown("""
         This tool provides **monthly snow depth analysis** and **algorithm comparison** capabilities.
+
+        ## 📈 Period Statistics Mode
+
+        Aggregate snow depth across multiple years without downloading individual months.
+
+        **Inter-annual sub-mode** — builds one composite per year, then computes pixel-wise
+        **Mean / Min / Max / Median / Std Dev** across those year-composites. Period options:
+        - *Full Year* (all 12 months averaged), *Specific Month*, or *Snow Season* (Oct–Apr NH / Apr–Oct SH)
+
+        **Temporal Variability / CV sub-mode** — builds one composite per calendar-month per year,
+        then computes **Long-term Mean**, **Temporal Std Dev**, and **CV (%)** across all composites.
+
+        All maps use the same GEE tile-caching and pixel inspector as Monthly Analysis.
+        Results can be exported as GeoTIFF (Auto / Local / Google Drive).
 
         ## 📊 Monthly Analysis Mode
 

@@ -657,6 +657,132 @@ def process_monthly_data(calculator: SnowDepthCalculator, aoi_geom,
     
     return zip_buffer.getvalue()
 
+
+# ---------------------------------------------------------------------------
+# Temporal aggregation — Period Statistics & Temporal Variability
+# ---------------------------------------------------------------------------
+
+def _get_snow_season_months(year: int, hemisphere: str = "north") -> list:
+    """Return (year, month) tuples covering the snow season for a given year label.
+
+    Northern hemisphere: Oct–Dec of `year` + Jan–Apr of `year+1`.
+    Southern hemisphere: Apr–Oct of `year`.
+    """
+    if hemisphere == "north":
+        return (
+            [(year, m) for m in (10, 11, 12)]
+            + [(year + 1, m) for m in (1, 2, 3, 4)]
+        )
+    else:
+        return [(year, m) for m in range(4, 11)]
+
+
+def run_snow_depth_period_stats(
+    calculator,
+    aoi,
+    start_year: int,
+    end_year: int,
+    period_type: str = "annual",
+    month: int = 1,
+    hemisphere: str = "north",
+) -> dict:
+    """Pixel-wise statistics (mean/min/max/median/std) across per-year snow depth composites.
+
+    For each year in [start_year, end_year]:
+      - Build a list of monthly (year, month) pairs per `period_type`
+      - Compute `calculate_monthly_snow_depth` for each pair (lazy GEE calls)
+      - Reduce to one year-composite via ee.ImageCollection.mean()
+    Then stack all year-composites and reduce pixel-wise across years.
+
+    period_type options:
+      "annual"      — all 12 calendar months
+      "monthly"     — single calendar `month` repeated across years
+      "snow_season" — Oct–Apr (north) or Apr–Oct (south)
+    """
+    images = []
+    for year in range(start_year, end_year + 1):
+        if period_type == "monthly":
+            ym_list = [(year, month)]
+        elif period_type == "snow_season":
+            ym_list = _get_snow_season_months(year, hemisphere)
+        else:
+            ym_list = [(year, m) for m in range(1, 13)]
+
+        month_imgs = []
+        for yr, mo in ym_list:
+            img = (
+                calculator.calculate_monthly_snow_depth(aoi, yr, mo)
+                .rename("snow_depth")
+            )
+            month_imgs.append(img)
+
+        if month_imgs:
+            year_composite = (
+                ee.ImageCollection(month_imgs)
+                .mean()
+                .set("year", year)
+            )
+            images.append(year_composite)
+
+    if not images:
+        raise ValueError("No data found for the specified period and AOI.")
+
+    col = ee.ImageCollection(images)
+    return {
+        "mean":       col.mean().rename("snow_depth"),
+        "min":        col.min().rename("snow_depth"),
+        "max":        col.max().rename("snow_depth"),
+        "median":     col.median().rename("snow_depth"),
+        "std_dev":    col.reduce(ee.Reducer.stdDev()).rename("snow_depth"),
+        "collection": col,
+        "year_count": len(images),
+        "start_year": start_year,
+        "end_year":   end_year,
+        "period_type": period_type,
+        "month":      month,
+        "hemisphere": hemisphere,
+    }
+
+
+def run_snow_depth_temporal_variability(
+    calculator,
+    aoi,
+    start_year: int,
+    end_year: int,
+) -> dict:
+    """Mean, std dev, and CV across all monthly snow depth composites.
+
+    Builds one composite per calendar month per year (total = years × 12),
+    then reduces across all composites.  CV = std_dev / mean × 100 %.
+    All operations are lazy — no .getInfo() calls in the loop.
+    """
+    images = []
+    for year in range(start_year, end_year + 1):
+        for mo in range(1, 13):
+            img = (
+                calculator.calculate_monthly_snow_depth(aoi, year, mo)
+                .rename("snow_depth")
+                .set("year", year)
+                .set("month", mo)
+            )
+            images.append(img)
+
+    col     = ee.ImageCollection(images)
+    mean    = col.mean().rename("snow_depth")
+    std_dev = col.reduce(ee.Reducer.stdDev()).rename("snow_depth")
+    cv      = std_dev.divide(mean.max(ee.Image.constant(0.001))).multiply(100)
+
+    return {
+        "mean":         mean,
+        "std_dev":      std_dev,
+        "cv":           cv,
+        "collection":   col,
+        "total_months": len(images),
+        "start_year":   start_year,
+        "end_year":     end_year,
+    }
+
+
 def extract_bounds_from_tiff(tiff_file) -> tuple:
     """Extract bounds from uploaded TIFF file in EPSG:4326"""
     try:
