@@ -40,6 +40,7 @@ from geoclimate_fetcher.serves_calculator import (
     SOIL_DEPTH_MAPPING,
     DEFAULT_FIELD_CAPACITY,
     DEFAULT_WILTING_POINT,
+    WATER_THRESHOLD as DEFAULT_WATER_THRESHOLD,
     get_month_name,
     get_predefined_region,
     run_serves,
@@ -322,6 +323,17 @@ def _render_sidebar() -> dict:
     params["mask_non_veg"]  = st.sidebar.checkbox(
         "Mask non-vegetated areas", value=False, key="serves_mask_nonveg"
     )
+    if params["assign_water_to_fc"] or params["mask_water"]:
+        params["water_threshold"] = st.sidebar.slider(
+            "Water occurrence threshold (%):", 0, 95, DEFAULT_WATER_THRESHOLD, step=5,
+            key="serves_water_threshold",
+            help=(
+                "A pixel counts as water when JRC Global Surface Water occurrence "
+                "(% of 1984–2021 observations) exceeds this value. 0 (original SERVES) "
+                "includes anything ever observed as water, e.g. occasionally flooded land; "
+                "50 keeps only pixels that are water most of the time."
+            ),
+        )
 
     # ── Export Scale ──────────────────────────────────────────────────────
     st.sidebar.markdown("---")
@@ -1589,6 +1601,7 @@ def _build_options(params: dict) -> dict:
         "assign_negative_ndvi_to_fc": params.get("assign_negative_ndvi_to_fc", True),
         "mask_water":              params.get("mask_water", False),
         "mask_non_veg":            params.get("mask_non_veg", False),
+        "water_threshold":         params.get("water_threshold", DEFAULT_WATER_THRESHOLD),
     }
 
 

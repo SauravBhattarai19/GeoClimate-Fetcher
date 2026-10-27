@@ -80,7 +80,9 @@ _SD_VIS_PARAMS_STDDEV = {
 }
 _SD_VIS_PARAMS_CV = {
     "min": 0.0,
-    "max": 60.0,   # CV in %
+    # CV in %. Monthly composites include snow-free months, so snow-depth CV is
+    # typically ~110–250 % (persistent snowpack → low end, ephemeral snow → high end).
+    "max": 250.0,
     "palette": ["#ffffcc", "#a1dab4", "#41b6c4", "#2c7fb8", "#253494"],
 }
 _SD_TILE_FAILED_MSG = (
@@ -308,12 +310,6 @@ def _sd_params_key(scale: int, density_params: dict) -> str:
     return hashlib.md5(raw.encode()).hexdigest()[:12]
 
 
-def _sd_get_tile_url(image: ee.Image, cache_key: str) -> str:
-    """Register an ee.Image with GEE and cache the tile URL in sd_tile_cache."""
-    return get_ee_tile_url(image, _SD_VIS_PARAMS, "sd_tile_cache", cache_key,
-                           failed_msg=_SD_TILE_FAILED_MSG)
-
-
 def _sd_build_calculator(scale: int, density_params: dict) -> SnowDepthCalculator:
     """Instantiate a SnowDepthCalculator from sidebar density params."""
     if density_params["method"] == "original":
@@ -375,16 +371,22 @@ def _render_sd_single_month_export(
                 )
 
 
-def _render_sd_map(
+def _render_snow_map(
     image: ee.Image,
+    vis_params: dict,
     aoi,
-    params_key: str,
     layer_key: str,
+    cache_prefix: str,
+    caption: str = "Snow Depth (m)",
+    value_unit: str = "m",
+    value_suffix: str = "",
     sample_scale: int = 500,
 ) -> bool:
     """
-    Build a Folium map with GEE snow-depth tile layer, colorbar, and pixel inspector.
+    Build a Folium map with a GEE tile layer, colorbar, and pixel inspector.
     Saves/restores pan+zoom so selector reruns don't reset the viewport.
+    All session-state caches are namespaced by cache_prefix ("sd" for monthly
+    preview, "sd_lt" for Period Statistics) so the two never share entries.
     Returns True if the GEE layer rendered successfully.
     """
     # ── Centre & zoom ────────────────────────────────────────────────────
@@ -403,7 +405,7 @@ def _render_sd_map(
     init_zoom = 9 if area_km2 < 1_000 else (7 if area_km2 < 50_000 else 4)
 
     # ── Restore saved viewport ───────────────────────────────────────────
-    _map_state_key = f"sd_map_state_{layer_key}"
+    _map_state_key = f"{cache_prefix}_map_state_{layer_key}"
     saved   = st.session_state.get(_map_state_key, {})
     ctr_lat = saved.get("lat", init_lat)
     ctr_lon = saved.get("lon", init_lon)
@@ -421,14 +423,15 @@ def _render_sd_map(
         show=False,
     ).add_to(m)
 
-    # ── Snow depth tile layer (URL cached — never re-calls getMapId on re-render) ──
+    # ── GEE tile layer (URL cached — never re-calls getMapId on re-render) ──
     layer_ok = False
     try:
-        tile_url = _sd_get_tile_url(image, layer_key)
+        tile_url = get_ee_tile_url(image, vis_params, f"{cache_prefix}_tile_cache", layer_key,
+                                   failed_msg=_SD_TILE_FAILED_MSG)
         folium.TileLayer(
             tiles=tile_url,
             attr="Google Earth Engine",
-            name="Snow Depth (m)",
+            name=caption,
             overlay=True,
             control=True,
         ).add_to(m)
@@ -446,16 +449,16 @@ def _render_sd_map(
 
     # ── Colorbar ─────────────────────────────────────────────────────────
     LinearColormap(
-        colors=_SD_VIS_PARAMS["palette"],
-        vmin=_SD_VIS_PARAMS["min"],
-        vmax=_SD_VIS_PARAMS["max"],
-        caption="Snow Depth (m)",
+        colors=vis_params["palette"],
+        vmin=vis_params["min"],
+        vmax=vis_params["max"],
+        caption=caption,
     ).add_to(m)
 
     folium.LayerControl().add_to(m)
 
     # ── Render — unique key per layer_key so month-switches don't share state ──
-    _folium_key = "sd_folium_" + "".join(
+    _folium_key = f"{cache_prefix}_folium_" + "".join(
         c if c.isalnum() else "_" for c in layer_key
     )
     map_data = st_folium(
@@ -480,7 +483,7 @@ def _render_sd_map(
         clicked = map_data.get("last_clicked")
         if clicked:
             clat, clng = clicked["lat"], clicked["lng"]
-            _sample_cache = st.session_state.setdefault("sd_sample_cache", {})
+            _sample_cache = st.session_state.setdefault(f"{cache_prefix}_sample_cache", {})
             _sk = f"{layer_key}::{clat:.4f}::{clng:.4f}"
             if _sk not in _sample_cache:
                 with st.spinner("Sampling pixel…"):
@@ -503,7 +506,7 @@ def _render_sd_map(
             val = _sample_cache.get(_sk)
             if val is not None:
                 st.caption(
-                    f"📍 **{clat:.4f}°, {clng:.4f}°**  →  **{val:.3f} m** snow depth"
+                    f"📍 **{clat:.4f}°, {clng:.4f}°**  →  **{val:.3f} {value_unit}**{value_suffix}"
                 )
             else:
                 st.caption(
@@ -514,6 +517,20 @@ def _render_sd_map(
             st.caption("🖱️ Click anywhere on the map to inspect the pixel value.")
 
     return layer_ok
+
+
+def _render_sd_map(
+    image: ee.Image,
+    aoi,
+    params_key: str,
+    layer_key: str,
+    sample_scale: int = 500,
+) -> bool:
+    """Monthly-preview snow depth map (uses the sd_* caches)."""
+    return _render_snow_map(
+        image, _SD_VIS_PARAMS, aoi, layer_key, cache_prefix="sd",
+        caption="Snow Depth (m)", value_suffix=" snow depth", sample_scale=sample_scale,
+    )
 
 
 def _render_sd_statistics(
@@ -917,115 +934,14 @@ def _render_period_stats_results():
         _render_interannual_snow_results(result, aoi, scale, params, label)
 
 
-def _sd_lt_get_tile_url(image: ee.Image, vis_params: dict, cache_key: str) -> str:
-    """Register an ee.Image with GEE and cache the tile URL in sd_lt_tile_cache."""
-    return get_ee_tile_url(image, vis_params, "sd_lt_tile_cache", cache_key,
-                           failed_msg=_SD_TILE_FAILED_MSG)
-
-
 def _render_sd_lt_map(image: ee.Image, vis_params: dict, aoi, layer_key: str,
-                      caption: str = "Snow Depth (m)", sample_scale: int = 500) -> bool:
-    """Folium map for Period Statistics layers — mirrors _render_sd_map() but uses
-    sd_lt_tile_cache and sd_lt_sample_cache so results don't pollute monthly caches."""
-    cached_centroid = st.session_state.get("snow_depth_centroid")
-    if cached_centroid:
-        init_lon, init_lat = cached_centroid[0], cached_centroid[1]
-    else:
-        try:
-            centroid = aoi.centroid(maxError=1).coordinates().getInfo()
-            init_lon, init_lat = centroid[0], centroid[1]
-            st.session_state["snow_depth_centroid"] = centroid
-        except Exception:
-            init_lat, init_lon = 45.0, -100.0
-
-    area_km2  = st.session_state.get("snow_depth_area_km2", 10_000)
-    init_zoom = 9 if area_km2 < 1_000 else (7 if area_km2 < 50_000 else 4)
-
-    _map_state_key = f"sd_lt_map_state_{layer_key}"
-    saved   = st.session_state.get(_map_state_key, {})
-    ctr_lat = saved.get("lat", init_lat)
-    ctr_lon = saved.get("lon", init_lon)
-    zoom    = saved.get("zoom", init_zoom)
-
-    m = folium.Map(location=[ctr_lat, ctr_lon], zoom_start=zoom, tiles="OpenStreetMap")
-    folium.TileLayer(
-        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-        attr="Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community",
-        name="Satellite (Esri)",
-        overlay=False, control=True, show=False,
-    ).add_to(m)
-
-    layer_ok = False
-    try:
-        tile_url = _sd_lt_get_tile_url(image, vis_params, layer_key)
-        folium.TileLayer(
-            tiles=tile_url, attr="Google Earth Engine",
-            name="Snow Depth Layer", overlay=True, control=True,
-        ).add_to(m)
-        layer_ok = True
-    except Exception as exc:
-        err_str = str(exc).lower()
-        if "memory" in err_str or "limit" in err_str or "quota" in err_str:
-            st.warning(
-                "🚫 **Map preview unavailable** — GEE memory limit exceeded. "
-                "Use **💾 Export** below — batch export runs on GEE's higher-limit "
-                "infrastructure and will succeed."
-            )
-        else:
-            st.warning(f"Could not render map layer: {exc}")
-
-    LinearColormap(
-        colors=vis_params["palette"],
-        vmin=vis_params["min"], vmax=vis_params["max"],
-        caption=caption,
-    ).add_to(m)
-    folium.LayerControl().add_to(m)
-
-    _folium_key = "sd_lt_folium_" + "".join(c if c.isalnum() else "_" for c in layer_key)
-    map_data = st_folium(m, width=700, height=480,
-                         returned_objects=["last_clicked"], key=_folium_key)
-
-    if map_data:
-        _c = map_data.get("center")
-        _z = map_data.get("zoom")
-        if _c and _z:
-            st.session_state[_map_state_key] = {
-                "lat": _c["lat"], "lon": _c["lng"], "zoom": int(_z)
-            }
-
-    if layer_ok and map_data:
-        clicked = map_data.get("last_clicked")
-        if clicked:
-            clat, clng = clicked["lat"], clicked["lng"]
-            _sample_cache = st.session_state.setdefault("sd_lt_sample_cache", {})
-            _sk = f"{layer_key}::{clat:.4f}::{clng:.4f}"
-            if _sk not in _sample_cache:
-                with st.spinner("Sampling pixel…"):
-                    try:
-                        pt = ee.Geometry.Point([clng, clat])
-                        val_dict = (
-                            image.sample(pt, scale=sample_scale)
-                            .first().toDictionary().getInfo()
-                        )
-                        val = next(
-                            (v for v in val_dict.values() if isinstance(v, (int, float))),
-                            None,
-                        )
-                        _sample_cache[_sk] = val
-                    except Exception:
-                        _sample_cache[_sk] = None
-            val = _sample_cache.get(_sk)
-            if val is not None:
-                st.caption(f"📍 **{clat:.4f}°, {clng:.4f}°**  →  **{val:.3f} m**")
-            else:
-                st.caption(
-                    f"📍 **{clat:.4f}°, {clng:.4f}°**  →  No data at this location "
-                    "(pixel outside AOI or fully masked)"
-                )
-        else:
-            st.caption("🖱️ Click anywhere on the map to inspect the pixel value.")
-
-    return layer_ok
+                      caption: str = "Snow Depth (m)", sample_scale: int = 500,
+                      value_unit: str = "m") -> bool:
+    """Period Statistics map — uses the sd_lt_* caches so results don't pollute monthly caches."""
+    return _render_snow_map(
+        image, vis_params, aoi, layer_key, cache_prefix="sd_lt",
+        caption=caption, value_unit=value_unit, sample_scale=sample_scale,
+    )
 
 
 def _render_sd_lt_statistics(image: ee.Image, aoi, layer_key: str, scale: int,
@@ -1113,8 +1029,8 @@ def _render_interannual_snow_results(result: dict, aoi, scale: int,
         "Use **💾 Drive Export** below — batch export has higher limits."
     )
 
-    tab_mean, tab_min, tab_max, tab_std = st.tabs(
-        ["📊 Mean", "⬇️ Minimum", "⬆️ Maximum", "〰️ Std Dev"]
+    tab_mean, tab_median, tab_min, tab_max, tab_std = st.tabs(
+        ["📊 Mean", "➗ Median", "⬇️ Minimum", "⬆️ Maximum", "〰️ Std Dev"]
     )
 
     with tab_mean:
@@ -1123,6 +1039,16 @@ def _render_interannual_snow_results(result: dict, aoi, scale: int,
             result["mean"], _SD_VIS_PARAMS, aoi,
             f"lt_{params_key}::mean", "Mean Snow Depth (m)", max(scale, 500)
         )
+
+    with tab_median:
+        st.caption("Pixel-wise **median** of annual means — typical year, robust to outlier years.")
+        if ok_mean:
+            _render_sd_lt_map(
+                result["median"], _SD_VIS_PARAMS, aoi,
+                f"lt_{params_key}::median", "Median Annual Mean Snow Depth (m)", max(scale, 500)
+            )
+        else:
+            st.info(_MAP_UNAVAILABLE)
 
     with tab_min:
         st.caption("Pixel-wise **minimum** annual mean — driest/lightest-snow year.")
@@ -1161,11 +1087,12 @@ def _render_interannual_snow_results(result: dict, aoi, scale: int,
     st.markdown("#### 💾 Export a statistical image as GeoTIFF")
     stat_choice = st.selectbox(
         "Statistic to export:",
-        ["Mean", "Minimum", "Maximum", "Std Deviation"],
+        ["Mean", "Median", "Minimum", "Maximum", "Std Deviation"],
         key="sd_lt_ia_export_choice",
     )
     img_map = {
         "Mean":          result["mean"],
+        "Median":        result["median"],
         "Minimum":       result["min"],
         "Maximum":       result["max"],
         "Std Deviation": result["std_dev"],
@@ -1229,13 +1156,15 @@ def _render_temporal_cv_snow_results(result: dict, aoi, scale: int,
     with tab_cv:
         st.caption(
             "**CV = σ/μ × 100 %** — relative fluctuation independent of baseline depth. "
-            "High CV (> 30 %) = snow depth highly variable; "
-            "Low CV (< 10 %) = consistently deep or consistently shallow."
+            "Because snow-free months are included, values of ~100–250 % are typical: "
+            "lower CV (≈ 100–150 %) = persistent seasonal snowpack; "
+            "higher CV (> 200 %) = ephemeral, short-lived snow cover."
         )
         if ok_mean:
             _render_sd_lt_map(
                 result["cv"], _SD_VIS_PARAMS_CV, aoi,
-                f"lt_{params_key}::cv_cv", "Temporal CV of Snow Depth (%)", max(scale, 500)
+                f"lt_{params_key}::cv_cv", "Temporal CV of Snow Depth (%)", max(scale, 500),
+                value_unit="%",
             )
         else:
             st.info(_MAP_UNAVAILABLE)
@@ -1466,7 +1395,7 @@ def _render_algorithm_comparison(density_method, density_params):
     comparison_year = st.sidebar.number_input(
         "Year",
         min_value=2000,
-        max_value=2024,
+        max_value=datetime.date.today().year,
         value=2020,
         key="sd_comp_year",
         help="Year for the comparison data",

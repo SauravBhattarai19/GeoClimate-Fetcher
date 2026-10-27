@@ -285,12 +285,13 @@ def calculate_mean_fsc_for_months(aoi, year_range: tuple = (2018, 2023)) -> Dict
             # Collect FSC data for this month across multiple years
             for year in range(year_range[0], year_range[1] + 1):
                 try:
+                    # end_date is exclusive in GEE filterDate → first day of next month
                     start_date = datetime.date(year, month, 1)
                     if month == 12:
-                        end_date = datetime.date(year + 1, 1, 1) - datetime.timedelta(days=1)
+                        end_date = datetime.date(year + 1, 1, 1)
                     else:
-                        end_date = datetime.date(year, month + 1, 1) - datetime.timedelta(days=1)
-                    
+                        end_date = datetime.date(year, month + 1, 1)
+
                     start_date_str = start_date.strftime('%Y-%m-%d')
                     end_date_str = end_date.strftime('%Y-%m-%d')
                     
@@ -360,12 +361,13 @@ class SnowDepthCalculator:
         
     def calculate_monthly_snow_depth(self, aoi, year: int, month: int):
         """Calculate snow depth for a specific month and year"""
-        # Create date range for the month
+        # Create date range for the month (end_date is exclusive in GEE filterDate,
+        # so use the first day of the next month to include the month's last day)
         start_date = datetime.date(year, month, 1)
         if month == 12:
-            end_date = datetime.date(year + 1, 1, 1) - datetime.timedelta(days=1)
+            end_date = datetime.date(year + 1, 1, 1)
         else:
-            end_date = datetime.date(year, month + 1, 1) - datetime.timedelta(days=1)
+            end_date = datetime.date(year, month + 1, 1)
         
         start_date_str = start_date.strftime('%Y-%m-%d')
         end_date_str = end_date.strftime('%Y-%m-%d')
@@ -386,11 +388,10 @@ class SnowDepthCalculator:
             .filterBounds(aoi) \
             .mean()
         
-        # Resample GLDAS
-        modisProjection = meanNDSI.projection()
-        gldasSWE_resampled = gldasSWE \
-            .resample("bilinear") \
-            .reproject(crs=modisProjection, scale=self.scale)
+        # Resample GLDAS (bilinear). No .reproject(): output resolution is set by the
+        # caller (export/download scale, or the map tile zoom). Forcing a fixed-scale
+        # reproject made large-AOI previews fail with "Image.reproject exceeds 2^31 pixels".
+        gldasSWE_resampled = gldasSWE.resample("bilinear")
         
         # Snow density calculation based on selected method
         if self.density_method == "original":

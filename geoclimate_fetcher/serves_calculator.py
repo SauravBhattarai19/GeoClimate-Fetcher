@@ -371,20 +371,17 @@ def get_ndvi_single_date(study_area, target_date, satellite: str, search_window:
             .map(mask_s2_clouds).map(calculate_ndvi_sentinel2)
         )
     elif satellite == "modis":
-        raw = (
+        # Clip BEFORE scaling: GEE fails on MOD13A2 multiply().clip()
+        # ("Image.clip: Unable to transform edge ... SR-ORG:6974").
+        coll = (
             ee.ImageCollection("MODIS/061/MOD13A2")
-            .filterBounds(study_area)
-            .filterDate(target.advance(-16, "day"), target.advance(16, "day"))
-        )
-        with_dist = raw.map(
-            lambda img: img.set(
-                "date_diff",
-                ee.Date(img.get("system:time_start")).difference(target, "day").abs()
+            .filterBounds(study_area).filterDate(start, end)
+            .map(
+                lambda img: img.select("NDVI").clip(study_area)
+                .multiply(0.0001).rename("NDVI")
+                .copyProperties(img, ["system:time_start"])
             )
         )
-        closest = ee.Image(with_dist.sort("date_diff").first())
-        ndvi_img = closest.select("NDVI").multiply(0.0001).rename("NDVI").clip(study_area)
-        return {"ndvi": ndvi_img, "image_count": raw.size(), "satellite": "MODIS Terra"}
     else:  # landsat
         l8 = (
             ee.ImageCollection("LANDSAT/LC08/C02/T1_L2")
@@ -459,9 +456,16 @@ def calculate_serves(ndvi_image, soil_data: dict) -> dict:
 # SECTION 7: QUALITY MASKS
 # ==================================================================================
 
-def create_water_mask(study_area):
-    water = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence").clip(study_area)
-    return water.gt(WATER_THRESHOLD).rename("water_mask")
+def create_water_mask(study_area, threshold=None):
+    """1 where JRC water occurrence (% of observations, 1984–2021) > threshold."""
+    threshold = WATER_THRESHOLD if threshold is None else threshold
+    # JRC occurrence is masked where water was never observed — unmask to 0 so the
+    # result is a clean 0/1 image (otherwise water.Not() masks out all land).
+    water = (
+        ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence")
+        .unmask(0).clip(study_area)
+    )
+    return water.gt(threshold).rename("water_mask")
 
 
 def create_vegetation_mask(study_area):
@@ -469,33 +473,41 @@ def create_vegetation_mask(study_area):
     return wc.eq(10).Or(wc.eq(20)).Or(wc.eq(30)).Or(wc.eq(40)).rename("vegetation_mask")
 
 
+def build_quality_mask(study_area, options: dict = None):
+    """1/0 mask from the mask_water / mask_non_veg options (1 = keep pixel)."""
+    options = options or {}
+    combined_mask = ee.Image.constant(1)
+    if options.get("mask_water", False) and not options.get("assign_water_to_fc", True):
+        water_mask = create_water_mask(study_area, options.get("water_threshold"))
+        combined_mask = combined_mask.multiply(water_mask.Not())
+    if options.get("mask_non_veg", False):
+        combined_mask = combined_mask.multiply(create_vegetation_mask(study_area))
+    return combined_mask.rename("quality_mask")
+
+
+def assign_special_values(sm, ndvi, fc, water_mask, options: dict = None):
+    """v2.0 special values: water and negative-NDVI pixels → field capacity.
+
+    water_mask may be None when assign_water_to_fc is off.
+    """
+    options = options or {}
+    if options.get("assign_water_to_fc", True) and water_mask is not None:
+        sm = sm.where(water_mask, fc)
+    if options.get("assign_negative_ndvi_to_fc", True):
+        sm = sm.where(ndvi.lt(0), fc)
+    return sm
+
+
 def apply_quality_masks(serves_result: dict, study_area, options: dict = None) -> dict:
     """Apply water/veg masks and special value assignments (v2.0 logic)."""
     options = options or {}
-    mask_water              = options.get("mask_water", False)
-    mask_non_veg            = options.get("mask_non_veg", False)
-    assign_water_to_fc      = options.get("assign_water_to_fc", True)
-    assign_neg_ndvi_to_fc   = options.get("assign_negative_ndvi_to_fc", True)
-
-    sm   = serves_result["soil_moisture"]
-    ndvi = serves_result["ndvi"]
     fc   = serves_result["field_capacity"]
+    ndvi = serves_result["ndvi"]
 
-    water_mask   = create_water_mask(study_area)
-    veg_mask     = create_vegetation_mask(study_area)
-    neg_ndvi_mask = ndvi.lt(0)
-
-    if assign_water_to_fc:
-        sm = sm.where(water_mask, fc)
-
-    if assign_neg_ndvi_to_fc:
-        sm = sm.where(neg_ndvi_mask, fc)
-
-    combined_mask = ee.Image.constant(1)
-    if mask_water and not assign_water_to_fc:
-        combined_mask = combined_mask.multiply(water_mask.Not())
-    if mask_non_veg:
-        combined_mask = combined_mask.multiply(veg_mask)
+    water_mask = (create_water_mask(study_area, options.get("water_threshold"))
+                  if options.get("assign_water_to_fc", True) else None)
+    sm = assign_special_values(serves_result["soil_moisture"], ndvi, fc, water_mask, options)
+    combined_mask = build_quality_mask(study_area, options)
 
     return {
         "soil_moisture":            sm.updateMask(combined_mask),
@@ -586,6 +598,7 @@ def run_serves_for_period(study_area, start_date, end_date, options: dict = None
         "mask_non_veg":             options.get("mask_non_veg", False),
         "assign_water_to_fc":       options.get("assign_water_to_fc", True),
         "assign_negative_ndvi_to_fc": options.get("assign_negative_ndvi_to_fc", True),
+        "water_threshold":          options.get("water_threshold"),
     }
     serves_struct = {
         "soil_moisture":           sm_mean,
@@ -613,6 +626,41 @@ def run_serves_for_period(study_area, start_date, end_date, options: dict = None
     }
 
 
+def _window_median_ndvi(ndvi_col, start, end):
+    """Median NDVI in [start, end); a fully-masked image if the window is empty.
+
+    A plain .median() of an empty collection has no bands, which breaks every
+    later band operation (and the whole time series / collection reducer).
+    """
+    window = ndvi_col.filterDate(start, end)
+    empty  = ee.Image.constant(0).rename("NDVI").updateMask(0)
+    return ee.Image(ee.Algorithms.If(window.size().gt(0), window.median(), empty)).rename("NDVI")
+
+
+def _time_series_windows(start_date: str, end_date: str, interval: str) -> list:
+    """(label_date, window_start, window_end) per step; window_end is exclusive.
+
+    monthly → calendar months; 16day / weekly → ±8 days around each step date
+    (16 days so Landsat's revisit still yields a scene; weekly windows overlap).
+    """
+    fmt    = "%Y-%m-%d"
+    cur    = datetime.datetime.strptime(start_date, fmt)
+    end_dt = datetime.datetime.strptime(end_date,   fmt)
+    steps  = []
+    if interval == "monthly":
+        cur = cur.replace(day=1)
+        while cur <= end_dt:
+            nxt = (cur.replace(day=28) + datetime.timedelta(days=4)).replace(day=1)
+            steps.append((cur, cur, nxt))
+            cur = nxt
+    else:
+        interval_days = 7 if interval == "weekly" else 16
+        while cur <= end_dt:
+            steps.append((cur, cur - datetime.timedelta(days=8), cur + datetime.timedelta(days=8)))
+            cur += datetime.timedelta(days=interval_days)
+    return [tuple(d.strftime(fmt) for d in s) for s in steps]
+
+
 def run_serves_time_series(study_area, start_date: str, end_date: str,
                             interval: str, options: dict = None) -> dict:
     """Time series SERVES at monthly / bi-weekly / weekly intervals."""
@@ -623,36 +671,33 @@ def run_serves_time_series(study_area, start_date: str, end_date: str,
     fc = soil_data["field_capacity"]
     wp = soil_data["wilting_point"]
 
-    ndvi_col = get_ndvi_collection(study_area, start_date, end_date, satellite, options)
-
-    interval_days = 7 if interval == "weekly" else (16 if interval == "16day" else 30)
-
-    fmt = "%Y-%m-%d"
-    current = datetime.datetime.strptime(start_date, fmt)
-    end_dt  = datetime.datetime.strptime(end_date,   fmt)
+    steps = _time_series_windows(start_date, end_date, interval)
 
     images = []
-    while current <= end_dt:
-        date_str     = current.strftime(fmt)
-        window_start = (current - datetime.timedelta(days=8)).strftime(fmt)
-        window_end   = (current + datetime.timedelta(days=8)).strftime(fmt)
+    if steps:
+        # Load NDVI over the full span of all windows (edge windows extend past start/end)
+        ndvi_col = get_ndvi_collection(study_area, steps[0][1], steps[-1][2], satellite, options)
+        water_mask   = (create_water_mask(study_area, options.get("water_threshold"))
+                  if options.get("assign_water_to_fc", True) else None)
+        quality_mask = build_quality_mask(study_area, options)
+        paw = fc.subtract(wp)
 
-        ndvi_filtered = ndvi_col.filterDate(window_start, window_end)
-        ndvi_median   = ndvi_filtered.median()
+        for date_str, window_start, window_end in steps:
+            ndvi_median = _window_median_ndvi(ndvi_col, window_start, window_end)
 
-        et_frac = ndvi_median.multiply(NDVI_COEFFICIENT).add(NDVI_INTERCEPT).clamp(0, 1)
-        paw     = fc.subtract(wp)
-        sm      = et_frac.multiply(paw).add(wp)
-        sm      = sm.where(sm.lt(wp), wp)
-        sm      = sm.where(sm.gt(fc), fc)
+            et_frac = ndvi_median.multiply(NDVI_COEFFICIENT).add(NDVI_INTERCEPT).clamp(0, 1)
+            sm      = et_frac.multiply(paw).add(wp)
+            sm      = sm.where(sm.lt(wp), wp)
+            sm      = sm.where(sm.gt(fc), fc)
+            sm      = assign_special_values(sm, ndvi_median, fc, water_mask, options)
 
-        img = (
-            sm.rename("soil_moisture")
-            .set("system:time_start", ee.Date(date_str).millis())
-            .set("date", date_str)
-        )
-        images.append(img)
-        current += datetime.timedelta(days=interval_days)
+            img = (
+                sm.updateMask(quality_mask)
+                .rename("soil_moisture")
+                .set("system:time_start", ee.Date(date_str).millis())
+                .set("date", date_str)
+            )
+            images.append(img)
 
     ts_collection = ee.ImageCollection(images) if images else ee.ImageCollection([])
 
@@ -761,9 +806,6 @@ def run_serves_temporal_variability(
     options = options or {}
     satellite = options.get("satellite", "landsat")
 
-    assign_water_to_fc    = options.get("assign_water_to_fc", True)
-    assign_neg_ndvi_to_fc = options.get("assign_negative_ndvi_to_fc", True)
-
     # ── Load expensive GEE assets ONCE for the entire period ────────────────
     start_ee      = ee.Date.fromYMD(start_year, 1, 1)
     end_ee        = ee.Date.fromYMD(end_year + 1, 1, 1)
@@ -773,7 +815,9 @@ def run_serves_temporal_variability(
     wp  = soil_data["wilting_point"]
     paw = fc.subtract(wp)
 
-    water_mask = create_water_mask(study_area) if assign_water_to_fc else None
+    water_mask   = (create_water_mask(study_area, options.get("water_threshold"))
+                  if options.get("assign_water_to_fc", True) else None)
+    quality_mask = build_quality_mask(study_area, options)
 
     # ── Build one SM image per calendar month (lazy, no getInfo per month) ──
     images = []
@@ -781,25 +825,18 @@ def run_serves_temporal_variability(
         for month in range(1, 13):
             dr = get_month_date_range(year, month)
             # filterDate is a lazy GEE filter — fast, no server round-trip
-            month_ndvi = (
-                full_ndvi_col
-                .filterDate(dr["start"], dr["end"])
-                .median()
-                .rename("NDVI")
-            )
             # Empty month → all-masked NDVI → all-masked SM → excluded from reducers
+            month_ndvi = _window_median_ndvi(full_ndvi_col, dr["start"], dr["end"])
             et_frac = month_ndvi.multiply(NDVI_COEFFICIENT).add(NDVI_INTERCEPT).clamp(0, 1)
             sm = et_frac.multiply(paw).add(wp).rename("soil_moisture")
             sm = sm.where(sm.lt(wp), wp)
             sm = sm.where(sm.gt(fc), fc)
-
-            if assign_neg_ndvi_to_fc:
-                sm = sm.where(month_ndvi.lt(0), fc)
-            if assign_water_to_fc and water_mask is not None:
-                sm = sm.where(water_mask, fc)
+            sm = assign_special_values(sm, month_ndvi, fc, water_mask, options)
 
             images.append(
-                sm.set("year", year)
+                sm.updateMask(quality_mask)
+                  .rename("soil_moisture")
+                  .set("year", year)
                   .set("month", month)
                   .set("system:time_start", ee.Date.fromYMD(year, month, 1).millis())
             )
