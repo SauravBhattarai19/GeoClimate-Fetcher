@@ -33,6 +33,7 @@ from app_components.download_component import DownloadHelper
 from app_components.ee_tile_cache import get_ee_tile_url
 from geoclimate_fetcher.serves_calculator import (
     VIS_PARAMS,
+    STATISTIC_LABELS,
     PREDEFINED_REGION_COORDS,
     PREDEFINED_REGION_LABELS,
     MONTH_NAMES,
@@ -104,6 +105,71 @@ _INTERVAL_OPTIONS = {
     "16day":   "Bi-weekly (16-day)",
     "weekly":  "Weekly",
 }
+
+
+# Output products (band name → display config)
+_PRODUCTS = {
+    "soil_moisture": {
+        "label": "Soil Moisture", "noun": "soil moisture", "short": "SM", "unit": "cm³/cm³", "fmt": ".4f", "file": "sm",
+        "vis": VIS_PARAMS["soil_moisture"], "std_vis": VIS_PARAMS["soil_moisture_stddev"],
+    },
+    "ndvi": {
+        "label": "NDVI", "noun": "NDVI", "short": "NDVI", "unit": "", "fmt": ".3f", "file": "ndvi",
+        "vis": VIS_PARAMS["ndvi"], "std_vis": VIS_PARAMS["ndvi_stddev"],
+    },
+    "et_fraction": {
+        "label": "ET Fraction", "noun": "ET fraction", "short": "ETf", "unit": "", "fmt": ".3f", "file": "etf",
+        "vis": VIS_PARAMS["et_fraction"], "std_vis": VIS_PARAMS["et_fraction_stddev"],
+    },
+    "soil_moisture_deficit": {
+        "label": "Soil Moisture Deficit (FC − SM)", "noun": "soil moisture deficit", "short": "SM Deficit", "unit": "cm³/cm³",
+        "fmt": ".4f", "file": "smd",
+        "vis": VIS_PARAMS["soil_moisture_deficit"], "std_vis": VIS_PARAMS["soil_moisture_stddev"],
+    },
+}
+
+# Modes with a product choice / with a statistic over the scenes in a period
+_PRODUCT_MODES = {"single", "monthly", "seasonal", "annual", "custom_range", "regional", "longterm_stats"}
+_STAT_MODES    = {"monthly", "seasonal", "annual", "custom_range", "regional", "longterm_stats"}
+
+_STATISTIC_HELP = (
+    "Applied pixel-wise over **every satellite scene** in the period. "
+    "**Mean** = the original SERVES period average.\n\n"
+    "Multi-year composites apply the same statistic across years "
+    "(e.g. Maximum = highest value in any year). Regional Climatology and Long-term "
+    "Statistics reduce each year with this statistic, then summarise across years."
+)
+
+
+def _product_caption(product: str) -> str:
+    """Map / colorbar caption, e.g. 'Soil Moisture (cm³/cm³)' or 'NDVI'."""
+    cfg = _PRODUCTS[product]
+    return f"{cfg['label']} ({cfg['unit']})" if cfg["unit"] else cfg["label"]
+
+
+def _uses_statistic(params: dict) -> bool:
+    """True when the statistic-over-scenes option applies to the current mode."""
+    if params["mode"] == "longterm_stats":
+        return params.get("lt_stats_subtype", "interannual") == "interannual"
+    return params["mode"] in _STAT_MODES
+
+
+def _output_prefix(params: dict) -> str:
+    """Short product/statistic tag for labels and file names, e.g. 'Maximum SM'."""
+    short = _PRODUCTS[params.get("product", "soil_moisture")]["short"]
+    if _uses_statistic(params):
+        return f"{STATISTIC_LABELS[params.get('statistic', 'mean')]} {short}"
+    return short
+
+
+def _composite_name(period_type: str, month: int, season: str, statistic: str) -> str:
+    """What each year is reduced to, e.g. 'annual maximum', 'July mean', 'summer median'."""
+    stat = STATISTIC_LABELS[statistic].lower()
+    if period_type == "monthly":
+        return f"{get_month_name(month)} {stat}"
+    if period_type == "seasonal":
+        return f"{SEASON_LABELS.get(season, season).split(' (')[0].lower()} {stat}"
+    return f"annual {stat}"
 
 
 def _get_min_year(satellite: str) -> int:
@@ -263,6 +329,28 @@ def _render_sidebar() -> dict:
     else:
         params["composite_method"] = "median"
         params["search_window"]    = 16
+
+    # ── Output: product + statistic ────────────────────────────────────────
+    temporal_cv = mode == "longterm_stats" and params.get("lt_stats_subtype") == "temporal_cv"
+    params["product"]   = "soil_moisture"
+    params["statistic"] = "mean"
+    if mode in _PRODUCT_MODES and not temporal_cv:
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("📦 Output")
+        params["product"] = st.sidebar.selectbox(
+            "Product:", list(_PRODUCTS), format_func=_product_caption, key="serves_product",
+        )
+        if _uses_statistic(params):
+            stat_label = (
+                "Statistic within each year's period:"
+                if mode in ("regional", "longterm_stats") else "Statistic over scenes:"
+            )
+            params["statistic"] = st.sidebar.selectbox(
+                stat_label, list(STATISTIC_LABELS), format_func=STATISTIC_LABELS.get,
+                key="serves_statistic", help=_STATISTIC_HELP,
+            )
+    elif mode in ("time_series", "longterm_stats"):
+        st.sidebar.caption("ℹ️ This mode reports soil moisture from period medians/means.")
 
     # ── Soil Parameters ────────────────────────────────────────────────────
     st.sidebar.markdown("---")
@@ -682,12 +770,14 @@ def _execute_analysis(params: dict, study_area):
     """Run the SERVES computation and cache results in session state."""
     mode    = params["mode"]
     options = _build_options(params)
+    product = params.get("product", "soil_moisture")
+    prefix  = _output_prefix(params)
 
     with st.spinner("🌍 Running SERVES analysis on Google Earth Engine…"):
         try:
             if mode == "single":
                 result = run_serves(study_area, params["target_date"], options)
-                image  = result["soil_moisture"]
+                image  = result[product].rename(product)
                 count  = result["metadata"]["image_count"].getInfo()
                 if not count:
                     st.error("❌ No satellite images found for this date/window. "
@@ -697,11 +787,12 @@ def _execute_analysis(params: dict, study_area):
                     "type":         "single",
                     "image":        image,
                     "full_image":   result["image"],
-                    "ndvi":         result["ndvi"],
+                    "ndvi":         result["ndvi"] if product != "ndvi" else None,
                     "et_fraction":  result["et_fraction"],
                     "metadata":     result["metadata"],
                     "params":       params,
-                    "period_label": params["target_date"],
+                    "period_label": f"{prefix} · {params['target_date']}",
+                    "product":      product,
                 }
 
             elif mode == "monthly":
@@ -709,7 +800,7 @@ def _execute_analysis(params: dict, study_area):
                     result = run_serves_multi_year_monthly(
                         study_area,
                         params["start_year"], params["end_year"], params["month"],
-                        options,
+                        options, product=product,
                     )
                     period = f"{get_month_name(params['month'])} {params['start_year']}–{params['end_year']}"
                     count  = result["image_count"]
@@ -719,9 +810,10 @@ def _execute_analysis(params: dict, study_area):
                     period = f"{get_month_name(params['month'])} {params['year']}"
 
                 st.session_state["serves_results"] = {
-                    "type": "period", "image": result["soil_moisture"],
-                    "ndvi": result.get("ndvi"), "period_label": period,
-                    "params": params,
+                    "type": "period", "image": result[product],
+                    "ndvi": result.get("ndvi") if product != "ndvi" else None,
+                    "period_label": f"{prefix} · {period}",
+                    "params": params, "product": product,
                 }
 
             elif mode == "seasonal":
@@ -731,7 +823,7 @@ def _execute_analysis(params: dict, study_area):
                     result = run_serves_multi_year_seasonal(
                         study_area,
                         params["start_year"], params["end_year"],
-                        season, hemi, options,
+                        season, hemi, options, product=product,
                     )
                     period = (f"{SEASON_LABELS[season]} "
                               f"{params['start_year']}–{params['end_year']}")
@@ -742,15 +834,17 @@ def _execute_analysis(params: dict, study_area):
                     period = f"{SEASON_LABELS[season]} {params['year']}"
 
                 st.session_state["serves_results"] = {
-                    "type": "period", "image": result["soil_moisture"],
-                    "ndvi": result.get("ndvi"), "period_label": period,
-                    "params": params,
+                    "type": "period", "image": result[product],
+                    "ndvi": result.get("ndvi") if product != "ndvi" else None,
+                    "period_label": f"{prefix} · {period}",
+                    "params": params, "product": product,
                 }
 
             elif mode == "annual":
                 if params.get("multi_year"):
                     result = run_serves_multi_year_annual(
-                        study_area, params["start_year"], params["end_year"], options
+                        study_area, params["start_year"], params["end_year"], options,
+                        product=product,
                     )
                     period = f"Annual {params['start_year']}–{params['end_year']}"
                     count  = result["image_count"]
@@ -761,9 +855,10 @@ def _execute_analysis(params: dict, study_area):
                     period = f"Year {params['year']}"
 
                 st.session_state["serves_results"] = {
-                    "type": "period", "image": result["soil_moisture"],
-                    "ndvi": result.get("ndvi"), "period_label": period,
-                    "params": params,
+                    "type": "period", "image": result[product],
+                    "ndvi": result.get("ndvi") if product != "ndvi" else None,
+                    "period_label": f"{prefix} · {period}",
+                    "params": params, "product": product,
                 }
 
             elif mode == "custom_range":
@@ -772,9 +867,10 @@ def _execute_analysis(params: dict, study_area):
                 )
                 period = f"{params['start_date']} → {params['end_date']}"
                 st.session_state["serves_results"] = {
-                    "type": "period", "image": result["soil_moisture"],
-                    "ndvi": result.get("ndvi"), "period_label": period,
-                    "params": params,
+                    "type": "period", "image": result[product],
+                    "ndvi": result.get("ndvi") if product != "ndvi" else None,
+                    "period_label": f"{prefix} · {period}",
+                    "params": params, "product": product,
                 }
 
             elif mode == "time_series":
@@ -841,6 +937,7 @@ def _execute_analysis(params: dict, study_area):
                         month       = params.get("lt_month", 1),
                         season      = params.get("lt_season", "summer"),
                         hemisphere  = params.get("lt_hemisphere", "north"),
+                        product     = product,
                     )
                     st.session_state["serves_results"] = {
                         "type":             "longterm_stats",
@@ -853,6 +950,7 @@ def _execute_analysis(params: dict, study_area):
                         "std_dev":          result["std_dev"],
                         "collection":       result["collection"],
                         "year_count":       result["year_count"],
+                        "product":          product,
                         "period_label":     period,
                         "params":           params,
                     }
@@ -875,12 +973,10 @@ def _render_regional_mode(params: dict):
     """Render the run button and results for Regional Climatology mode."""
     aoi_source  = params.get("regional_aoi_source", "predefined")
     pt          = params.get("reg_period_type", "annual")
-    if pt == "monthly":
-        period_label = f"{get_month_name(params['month'])} {params['start_year']}–{params['end_year']}"
-    elif pt == "seasonal":
-        period_label = f"{SEASON_LABELS.get(params.get('reg_season','summer'))} {params['start_year']}–{params['end_year']}"
-    else:
-        period_label = f"Annual {params['start_year']}–{params['end_year']}"
+    composite   = _composite_name(pt, params.get("month", 1), params.get("reg_season", "summer"),
+                                  params.get("statistic", "mean"))
+    period_label = (f"{composite.capitalize()} {_PRODUCTS[params.get('product', 'soil_moisture')]['short']} "
+                    f"{params['start_year']}–{params['end_year']}")
 
     if aoi_source == "custom":
         # Show the standard AOI widget; bail if geometry not yet set
@@ -925,6 +1021,7 @@ def _render_regional_mode(params: dict):
                     period_type=params.get("reg_period_type", "annual"),
                     season=params.get("reg_season", "summer"),
                     hemisphere=params.get("reg_hemisphere", "north"),
+                    product=params.get("product", "soil_moisture"),
                 )
                 stat_key = params.get("regional_statistic", "median")
                 stat_map = {
@@ -941,6 +1038,8 @@ def _render_regional_mode(params: dict):
                     "period_label": f"{region_label} · {period_label}",
                     "stat_key":     stat_key,
                     "year_count":   result["year_count"],
+                    "composite":    composite,
+                    "product":      params.get("product", "soil_moisture"),
                     "params":       params,
                 }
                 st.rerun()
@@ -964,18 +1063,28 @@ def _render_regional_results():
     col2.metric("Years",     str(cached["year_count"]))
     col3.metric("Statistic", cached["stat_key"].capitalize())
 
-    st.markdown("#### 🗺️ Soil Moisture Map")
+    product   = cached.get("product", "soil_moisture")
+    cfg       = _PRODUCTS[product]
+    across    = {"std_dev": "Std Dev"}.get(cached["stat_key"], cached["stat_key"].capitalize())
+    composite = cached.get("composite", "annual mean")
+    st.markdown(f"#### 🗺️ {cfg['label']} Map")
+    st.caption(
+        f"Each year is reduced to its **{composite} {cfg['noun']}**; the map shows "
+        f"the **{across.lower()}** of those {cached['year_count']} yearly values."
+    )
     map_ok = _render_map_with_layer(
-        image, VIS_PARAMS["soil_moisture"], study_area,
-        f"SM {cached['stat_key'].capitalize()}",
+        image, cfg["std_vis"] if cached["stat_key"] == "std_dev" else cfg["vis"], study_area,
+        f"{cfg['short']} {across}",
         region_name=cached.get("region"),   # None for custom AOI → uses centroid
-        caption=f"Soil Moisture {cached['stat_key'].capitalize()} (cm³/cm³)",
+        caption=f"{across} of {composite} {_product_caption(product)}",
+        value_unit=cfg["unit"], value_fmt=cfg["fmt"],
     )
 
     # Export
     st.markdown("---")
     with st.expander("💾 Export GeoTIFF", expanded=not map_ok):
-        _render_export_section(image, study_area, params, label=cached["period_label"])
+        _render_export_section(image, study_area, params, label=cached["period_label"],
+                               product=product)
 
 
 # ===========================================================================
@@ -1008,82 +1117,65 @@ def _render_longterm_stats_results(cached: dict, study_area, params: dict):
 
 
 def _render_interannual_results(cached: dict, study_area, params: dict):
-    """Mean / min / max / std dev across annual composites — inter-annual variability."""
-    sc1, sc2, sc3 = st.columns(3)
-    sc1.metric("Valid Years",  str(cached["year_count"]))
-    sc2.metric("Year Range",   f"{params['lt_start_year']} – {params['lt_end_year']}")
-    sc3.metric("Period Type",  params["lt_period_type"].capitalize())
+    """Mean / median / min / max / std dev across per-year composites — inter-annual variability."""
+    product   = cached.get("product", "soil_moisture")
+    cfg       = _PRODUCTS[product]
+    composite = _composite_name(params["lt_period_type"], params.get("lt_month", 1),
+                                params.get("lt_season", "summer"), params.get("statistic", "mean"))
 
+    sc1, sc2, sc3 = st.columns(3)
+    sc1.metric("Valid Years",        str(cached["year_count"]))
+    sc2.metric("Year Range",         f"{params['lt_start_year']} – {params['lt_end_year']}")
+    sc3.metric("Per-year Composite", composite.capitalize())
 
     st.markdown("#### 🗺️ Pixel-wise Statistical Maps")
     st.caption(
-        "Statistics computed across **annual composites** — captures inter-annual variability "
-        "(year-to-year shifts in the annual mean). Maps render via GEE tiles."
-    )
-
-    tab_mean, tab_min, tab_max, tab_std = st.tabs(
-        ["📊 Mean", "⬇️ Minimum", "⬆️ Maximum", "〰️ Std Deviation"]
+        f"Each year is first reduced to its **{composite} {cfg['noun']}**; the tabs "
+        f"then summarise those {cached['year_count']} yearly values pixel by pixel. "
+        "Maps render via GEE tiles."
     )
 
     _MAP_UNAVAILABLE = "Map unavailable — GEE memory limit exceeded. Use **Drive Export** below."
 
-    with tab_mean:
-        st.caption("Long-term **mean** soil moisture — typical wet/dry spatial patterns.")
-        ok_mean = _render_map_with_layer(
-            cached["mean"], VIS_PARAMS["soil_moisture"], study_area,
-            "SM Mean", caption="Mean Soil Moisture (cm³/cm³)",
-        )
-    with tab_min:
-        st.caption("Pixel-wise **minimum annual mean** — driest year at each location.")
-        if ok_mean:
-            ok_min = _render_map_with_layer(
-                cached["min"], VIS_PARAMS["soil_moisture"], study_area,
-                "SM Minimum", caption="Minimum Annual Mean SM (cm³/cm³)",
+    # (cached key, tab title, across-years word, tab caption)
+    layers = [
+        ("mean",    "📊 Mean",          "Mean",    "Long-term **mean** of the yearly values — typical spatial pattern."),
+        ("median",  "➗ Median",        "Median",  "**Median** of the yearly values — typical year, robust to outlier years."),
+        ("min",     "⬇️ Minimum",       "Minimum", "Lowest yearly value at each location."),
+        ("max",     "⬆️ Maximum",       "Maximum", "Highest yearly value at each location."),
+        ("std_dev", "〰️ Std Deviation", "Std Dev", "**Std dev** of the yearly values — inter-annual variability. "
+                                                  "High = unstable year to year."),
+    ]
+    tabs = st.tabs([title for _, title, _, _ in layers])
+    ok_all, ok_mean = True, False
+    for tab, (key, _, across, caption) in zip(tabs, layers):
+        with tab:
+            st.caption(caption)
+            if key != "mean" and not ok_mean:
+                st.info(_MAP_UNAVAILABLE)
+                ok_all = False
+                continue
+            ok = _render_map_with_layer(
+                cached[key], cfg["std_vis"] if key == "std_dev" else cfg["vis"], study_area,
+                f"{cfg['short']} {across}",
+                caption=f"{across} of {composite} {_product_caption(product)}",
+                value_unit=cfg["unit"], value_fmt=cfg["fmt"],
             )
-        else:
-            st.info(_MAP_UNAVAILABLE)
-            ok_min = False
-    with tab_max:
-        st.caption("Pixel-wise **maximum annual mean** — wettest year at each location.")
-        if ok_mean:
-            ok_max = _render_map_with_layer(
-                cached["max"], VIS_PARAMS["soil_moisture"], study_area,
-                "SM Maximum", caption="Maximum Annual Mean SM (cm³/cm³)",
-            )
-        else:
-            st.info(_MAP_UNAVAILABLE)
-            ok_max = False
-    with tab_std:
-        st.caption(
-            "**Std dev across annual means** — inter-annual variability. "
-            "High = unstable year-to-year SM."
-        )
-        if ok_mean:
-            ok_std = _render_map_with_layer(
-                cached["std_dev"], VIS_PARAMS["soil_moisture_stddev"], study_area,
-                "SM Std Dev", caption="Std Dev of Annual Means (cm³/cm³)",
-            )
-        else:
-            st.info(_MAP_UNAVAILABLE)
-            ok_std = False
+            ok_all = ok_all and ok
+            if key == "mean":
+                ok_mean = ok
 
-    any_map_failed = not (ok_mean and ok_min and ok_max and ok_std)
     st.markdown("---")
-    with st.expander("💾 Export a statistical image as GeoTIFF", expanded=any_map_failed):
+    with st.expander("💾 Export a statistical image as GeoTIFF", expanded=not ok_all):
+        export_keys = {across: key for key, _, across, _ in layers}
         stat_choice = st.selectbox(
-            "Statistic to export:",
-            ["Mean", "Minimum", "Maximum", "Std Deviation"],
+            "Statistic to export:", list(export_keys),
             key="serves_lt_export_choice",
         )
-        img_map = {
-            "Mean":          cached["mean"],
-            "Minimum":       cached["min"],
-            "Maximum":       cached["max"],
-            "Std Deviation": cached["std_dev"],
-        }
         _render_export_section(
-            img_map[stat_choice], study_area, params,
-            label=f"{stat_choice}_{cached['period_label']}",
+            cached[export_keys[stat_choice]], study_area, params,
+            label=f"{stat_choice}_of_{composite}_{cached['period_label']}",
+            product=product,
         )
 
 
@@ -1170,16 +1262,19 @@ def _render_temporal_cv_results(cached: dict, study_area, params: dict):
 
 def _render_static_results(cached: dict, study_area, params: dict):
     """Render map + stats for single / period results."""
-    image = cached["image"]
-    ndvi  = cached.get("ndvi")
+    image   = cached["image"]
+    ndvi    = cached.get("ndvi")
+    product = cached.get("product", "soil_moisture")
+    cfg     = _PRODUCTS[product]
 
     # ── Map FIRST — fails fast via tile cache; export accessible immediately ──
-    st.markdown("#### 🗺️ Soil Moisture Map")
+    st.markdown(f"#### 🗺️ {cfg['label']} Map")
     map_ok = _render_map_with_layer(
-        image, VIS_PARAMS["soil_moisture"], study_area,
-        "Soil Moisture",
+        image, cfg["vis"], study_area,
+        cfg["label"],
         ndvi_image=ndvi,
-        caption="Soil Moisture (cm³/cm³)",
+        caption=_product_caption(product),
+        value_unit=cfg["unit"], value_fmt=cfg["fmt"],
     )
 
     # ── Statistics — only when map succeeded (same GEE computation) ──────────
@@ -1192,25 +1287,28 @@ def _render_static_results(cached: dict, study_area, params: dict):
                     cached["stats"] = get_image_statistics(
                         image, study_area,
                         scale=params.get("scale", 500),
-                        band="soil_moisture",
+                        band=product,
                     )
                 except Exception:
                     cached["stats"] = {}
         stats    = cached["stats"]
-        mean_val = stats.get("soil_moisture_mean") or stats.get("soil_moisture")
-        min_val  = stats.get("soil_moisture_min")
-        max_val  = stats.get("soil_moisture_max")
-        std_val  = stats.get("soil_moisture_stdDev")
+        mean_val = stats.get(f"{product}_mean") or stats.get(product)
+        min_val  = stats.get(f"{product}_min")
+        max_val  = stats.get(f"{product}_max")
+        std_val  = stats.get(f"{product}_stdDev")
+        unit     = f" ({cfg['unit']})" if cfg["unit"] else ""
+        fmt      = cfg["fmt"]
         if any(v is not None for v in [mean_val, min_val, max_val, std_val]):
+            st.caption("Spatial statistics of the map above across your area of interest.")
             mc1, mc2, mc3, mc4 = st.columns(4)
             if mean_val is not None:
-                mc1.metric("Mean SM (cm³/cm³)", f"{mean_val:.4f}")
+                mc1.metric(f"Mean {cfg['short']}{unit}", f"{mean_val:{fmt}}")
             if min_val is not None:
-                mc2.metric("Min SM (cm³/cm³)", f"{min_val:.4f}")
+                mc2.metric(f"Min {cfg['short']}{unit}", f"{min_val:{fmt}}")
             if max_val is not None:
-                mc3.metric("Max SM (cm³/cm³)", f"{max_val:.4f}")
+                mc3.metric(f"Max {cfg['short']}{unit}", f"{max_val:{fmt}}")
             if std_val is not None:
-                mc4.metric("Std Dev", f"{std_val:.4f}")
+                mc4.metric("Std Dev", f"{std_val:{fmt}}")
         else:
             st.info("Statistics could not be computed for this region/scale.")
 
@@ -1218,7 +1316,11 @@ def _render_static_results(cached: dict, study_area, params: dict):
     st.markdown("---")
     full_image = cached.get("full_image", image)
     with st.expander("💾 Export GeoTIFF", expanded=not map_ok):
-        _render_export_section(full_image, study_area, params, label=cached["period_label"])
+        if "full_image" in cached:
+            st.caption("Single-date export includes all bands: soil moisture, NDVI, ET fraction, "
+                       "deficit, FC, WP, plant-available water and quality mask.")
+        _render_export_section(full_image, study_area, params, label=cached["period_label"],
+                               product=None if "full_image" in cached else product)
 
 
 def _render_time_series_results(cached: dict, study_area, params: dict):
@@ -1300,7 +1402,9 @@ def _get_tile_url(image, vis_params: dict, cache_key: str) -> str:
 def _render_map_with_layer(image, vis_params: dict, region, layer_name: str,
                             ndvi_image=None, region_name: str = None,
                             caption: str = "Soil Moisture (cm³/cm³)",
-                            sample_scale: int = 500) -> bool:
+                            sample_scale: int = 500,
+                            value_unit: str = "cm³/cm³",
+                            value_fmt: str = ".4f") -> bool:
     """
     Build a Folium map with GEE tile layer, colorbar, and pixel inspector.
     Saves/restores pan+zoom so click reruns don't reset the viewport.
@@ -1444,7 +1548,7 @@ def _render_map_with_layer(image, vis_params: dict, region, layer_name: str,
             val = _sample_cache.get(_sk)
             if val is not None:
                 st.caption(
-                    f"📍 **{clat:.4f}°, {clng:.4f}°**  →  **{val:.4f} cm³/cm³**"
+                    f"📍 **{clat:.4f}°, {clng:.4f}°**  →  **{val:{value_fmt}} {value_unit}**"
                 )
             else:
                 st.caption(
@@ -1515,18 +1619,24 @@ def _render_time_series_chart(dates: list, means: list):
 # EXPORT SECTION
 # ===========================================================================
 
-def _render_export_section(image, region, params: dict, label: str = ""):
-    """Render smart download options and execute export."""
+def _render_export_section(image, region, params: dict, label: str = "",
+                           product: str = "soil_moisture"):
+    """Render smart download options and execute export.
+
+    product=None means a multi-band image (single-date export of all SERVES bands).
+    """
     helper = DownloadHelper()
     export_pref = helper.render_smart_download_options(export_format="GeoTIFF")
 
     safe_label = label.replace(" ", "_").replace("→", "to").replace("–", "-")
-    filename   = f"serves_sm_{safe_label}_{params.get('scale', 250)}m"
+    file_tag   = _PRODUCTS[product]["file"] if product else "allbands"
+    filename   = f"serves_{file_tag}_{safe_label}_{params.get('scale', 250)}m"
     # strip characters that are invalid in filenames
     import re
     filename = re.sub(r"[^\w\-]", "_", filename)[:80]
 
-    if st.button("💾 Export Soil Moisture GeoTIFF", type="primary",
+    button_name = _PRODUCTS[product]["label"] if product else "All-Band"
+    if st.button(f"💾 Export {button_name} GeoTIFF", type="primary",
                  width="stretch", key="serves_export_btn"):
         with st.spinner("Exporting…"):
             result = helper.execute_smart_download(
@@ -1569,6 +1679,14 @@ def _render_about_expander():
         | Water bodies | JRC Global Surface Water v1.4 |
         | Vegetation | ESA WorldCover v200 (2021) |
 
+        **Products & statistics:**
+        Maps and GeoTIFF downloads are available for **Soil Moisture**, **NDVI**,
+        **ET Fraction** and **Soil Moisture Deficit (FC − SM)**. In period modes the chosen
+        **Mean / Median / Maximum / Minimum** is applied pixel-wise over every satellite
+        scene in the period (Mean = the original SERVES period average). Multi-year
+        composites apply the same statistic across years; Regional Climatology and
+        Long-term Statistics reduce each year with it, then summarise across years.
+
         **v2.0 Enhancements over original SERVES:**
         - Default uniform soil parameters (FC=0.35, WP=0.09 cm³/cm³)
         - Water bodies assigned to field capacity
@@ -1601,15 +1719,25 @@ def _build_options(params: dict) -> dict:
         "assign_negative_ndvi_to_fc": params.get("assign_negative_ndvi_to_fc", True),
         "mask_water":              params.get("mask_water", False),
         "mask_non_veg":            params.get("mask_non_veg", False),
+        "statistic":               params.get("statistic", "mean"),
         "water_threshold":         params.get("water_threshold", DEFAULT_WATER_THRESHOLD),
     }
 
 
 def _build_period_label(params: dict) -> str:
     """Build a short human-readable label for the current parameters."""
-    mode = params["mode"]
+    mode   = params["mode"]
+    prefix = _output_prefix(params)
     if mode == "single":
-        return params.get("target_date", "")
+        return f"{prefix} · {params.get('target_date', '')}"
+    if mode in ("monthly", "seasonal", "annual", "custom_range"):
+        return f"{prefix} · {_build_base_period_label(params)}"
+    return _build_base_period_label(params)
+
+
+def _build_base_period_label(params: dict) -> str:
+    """Period part of the label (no product / statistic)."""
+    mode = params["mode"]
     if mode == "monthly":
         m = get_month_name(params.get("month", 7))
         if params.get("multi_year"):
@@ -1630,28 +1758,20 @@ def _build_period_label(params: dict) -> str:
         return f"{params.get('start_date')} → {params.get('end_date')}"
     if mode == "regional":
         r  = PREDEFINED_REGION_LABELS.get(params.get("region", "europe"), "Custom Area")
-        pt = params.get("reg_period_type", "annual")
         sy = params.get("start_year", "")
         ey = params.get("end_year", "")
-        if pt == "monthly":
-            sub = get_month_name(params.get("month", 1))
-        elif pt == "seasonal":
-            sub = SEASON_LABELS.get(params.get("reg_season", "summer"), "Season")
-        else:
-            sub = "Annual"
-        return f"{r} · {sub} {sy}–{ey}"
+        composite = _composite_name(params.get("reg_period_type", "annual"), params.get("month", 1),
+                                    params.get("reg_season", "summer"), params.get("statistic", "mean"))
+        short = _PRODUCTS[params.get("product", "soil_moisture")]["short"]
+        return f"{r} · {composite.capitalize()} {short} {sy}–{ey}"
     if mode == "longterm_stats":
         sy      = params.get("lt_start_year", "")
         ey      = params.get("lt_end_year", "")
         subtype = params.get("lt_stats_subtype", "interannual")
         if subtype == "temporal_cv":
             return f"Temporal CV · Monthly · {sy}–{ey}"
-        pt = params.get("lt_period_type", "annual")
-        if pt == "monthly":
-            sub = get_month_name(params.get("lt_month", 1))
-        elif pt == "seasonal":
-            sub = SEASON_LABELS.get(params.get("lt_season", "summer"), "Season")
-        else:
-            sub = "Annual"
-        return f"Inter-annual Stats · {sub} · {sy}–{ey}"
+        composite = _composite_name(params.get("lt_period_type", "annual"), params.get("lt_month", 1),
+                                    params.get("lt_season", "summer"), params.get("statistic", "mean"))
+        short = _PRODUCTS[params.get("product", "soil_moisture")]["short"]
+        return f"Inter-annual Stats · {composite.capitalize()} {short} · {sy}–{ey}"
     return mode

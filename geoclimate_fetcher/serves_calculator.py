@@ -42,6 +42,17 @@ SEASON_LABELS = {
     "fall":   "Fall (Sep–Nov)",
 }
 
+# Statistic applied over all satellite scenes within a period (mean = original SERVES)
+STATISTIC_LABELS = {
+    "mean":   "Mean",
+    "median": "Median",
+    "max":    "Maximum",
+    "min":    "Minimum",
+}
+
+# Output products (band names) available from the period / long-term functions
+SERVES_PRODUCTS = ("soil_moisture", "ndvi", "et_fraction", "soil_moisture_deficit")
+
 SOIL_DEPTH_MAPPING = {
     "b0":   "val_0_5cm_mean",
     "b10":  "val_5_15cm_mean",
@@ -89,6 +100,27 @@ VIS_PARAMS = {
     "soil_moisture_stddev": {
         "min": 0.0,
         "max": 0.10,
+        "palette": [
+            "#F7FBFF", "#DEEBF7", "#C6DBEF", "#9ECAE1",
+            "#6BAED6", "#4292C6", "#2171B5", "#08519C", "#08306B",
+        ],
+    },
+    "soil_moisture_deficit": {
+        "min": 0.0,
+        "max": 0.30,
+        "palette": ["#FFFFCC", "#FED976", "#FD8D3C", "#E31A1C", "#800026"],
+    },
+    "ndvi_stddev": {
+        "min": 0.0,
+        "max": 0.20,
+        "palette": [
+            "#F7FBFF", "#DEEBF7", "#C6DBEF", "#9ECAE1",
+            "#6BAED6", "#4292C6", "#2171B5", "#08519C", "#08306B",
+        ],
+    },
+    "et_fraction_stddev": {
+        "min": 0.0,
+        "max": 0.25,
         "palette": [
             "#F7FBFF", "#DEEBF7", "#C6DBEF", "#9ECAE1",
             "#6BAED6", "#4292C6", "#2171B5", "#08519C", "#08306B",
@@ -167,6 +199,19 @@ PREDEFINED_REGION_LABELS = {
 
 def get_month_name(month_num: int) -> str:
     return MONTH_NAMES[month_num - 1]
+
+
+def reduce_collection(collection, statistic: str = "mean"):
+    """Pixel-wise mean / median / max / min of an ImageCollection (band names kept)."""
+    reducers = {
+        "mean":   collection.mean,
+        "median": collection.median,
+        "max":    collection.max,
+        "min":    collection.min,
+    }
+    if statistic not in reducers:
+        raise ValueError(f"Unknown statistic: {statistic}")
+    return reducers[statistic]()
 
 
 def get_predefined_region(name: str):
@@ -508,11 +553,17 @@ def apply_quality_masks(serves_result: dict, study_area, options: dict = None) -
                   if options.get("assign_water_to_fc", True) else None)
     sm = assign_special_values(serves_result["soil_moisture"], ndvi, fc, water_mask, options)
     combined_mask = build_quality_mask(study_area, options)
+    # Pixels assigned field capacity (water / negative NDVI) have no deficit. Uses the
+    # assignment itself, not sm >= fc: with max/min statistics the reduced SM and the
+    # reduced deficit can come from different scenes.
+    assigned = assign_special_values(ee.Image.constant(0), ndvi, ee.Image.constant(1),
+                                     water_mask, options)
+    deficit = serves_result["soil_moisture_deficit"].where(assigned, 0)
 
     return {
         "soil_moisture":            sm.updateMask(combined_mask),
         "et_fraction_constrained":  serves_result["et_fraction_constrained"].updateMask(combined_mask),
-        "soil_moisture_deficit":    serves_result["soil_moisture_deficit"].updateMask(combined_mask),
+        "soil_moisture_deficit":    deficit.updateMask(combined_mask),
         "ndvi":                     ndvi.updateMask(combined_mask),
         "field_capacity":           fc,
         "wilting_point":            serves_result["wilting_point"],
@@ -571,27 +622,49 @@ def run_serves(study_area, target_date: str, options: dict = None) -> dict:
 
 
 def run_serves_for_period(study_area, start_date, end_date, options: dict = None) -> dict:
-    """Period-averaged SERVES analysis (monthly / seasonal / annual / custom range)."""
+    """Period SERVES analysis (monthly / seasonal / annual / custom range).
+
+    SERVES is applied to every satellite scene in the period, then each product is
+    reduced pixel-wise with options["statistic"] (mean — the original SERVES period
+    average — median, max or min). Deficit is computed per scene (FC − SM), so the
+    "max" deficit corresponds to the driest scene.
+    """
     options   = options or {}
     satellite = options.get("satellite", "landsat")
+    statistic = options.get("statistic", "mean")
 
     ndvi_col  = get_ndvi_collection(study_area, start_date, end_date, satellite, options)
     soil_data = load_soil_data(study_area, options)
     fc = soil_data["field_capacity"]
     wp = soil_data["wilting_point"]
+    paw = fc.subtract(wp)
 
     def apply_serves(image):
         ndvi    = image.select("NDVI")
         et_frac = ndvi.multiply(NDVI_COEFFICIENT).add(NDVI_INTERCEPT).clamp(0, 1)
-        paw     = fc.subtract(wp)
         sm      = et_frac.multiply(paw).add(wp)
         sm      = sm.where(sm.lt(wp), wp)
         sm      = sm.where(sm.gt(fc), fc)
-        return sm.rename("soil_moisture").copyProperties(image, ["system:time_start"])
+        return ee.Image.cat([
+            sm.rename("soil_moisture"),
+            et_frac.rename("et_fraction"),
+            fc.subtract(sm).rename("soil_moisture_deficit"),
+        ]).copyProperties(image, ["system:time_start"])
 
-    serves_col   = ndvi_col.map(apply_serves)
-    sm_mean      = serves_col.mean().rename("soil_moisture")
-    ndvi_mean    = ndvi_col.mean().rename("ndvi")
+    serves_col  = ndvi_col.map(apply_serves)
+    # A period with no scenes → fully-masked images instead of band-less ones (which
+    # break every later band operation). toDouble() on both branches keeps band types
+    # identical so multi-year collections of these composites can still be reduced.
+    no_scenes   = ee.Image.constant([0, 0, 0]).rename(
+        ["soil_moisture", "et_fraction", "soil_moisture_deficit"]).updateMask(0)
+    serves_stat = ee.Image(ee.Algorithms.If(
+        serves_col.size().gt(0), reduce_collection(serves_col, statistic), no_scenes
+    )).toDouble()
+    ndvi_stat   = ee.Image(ee.Algorithms.If(
+        ndvi_col.size().gt(0),
+        reduce_collection(ndvi_col.select("NDVI"), statistic),
+        ee.Image.constant(0).rename("NDVI").updateMask(0),
+    )).toDouble().rename("ndvi")
 
     mask_options = {
         "mask_water":               options.get("mask_water", False),
@@ -601,27 +674,30 @@ def run_serves_for_period(study_area, start_date, end_date, options: dict = None
         "water_threshold":          options.get("water_threshold"),
     }
     serves_struct = {
-        "soil_moisture":           sm_mean,
-        "ndvi":                    ndvi_mean,
-        "et_fraction_constrained": ee.Image.constant(0),
-        "soil_moisture_deficit":   ee.Image.constant(0),
+        "soil_moisture":           serves_stat.select("soil_moisture"),
+        "ndvi":                    ndvi_stat,
+        "et_fraction_constrained": serves_stat.select("et_fraction"),
+        "soil_moisture_deficit":   serves_stat.select("soil_moisture_deficit"),
         "field_capacity":          fc,
         "wilting_point":           wp,
-        "plant_available_water":   fc.subtract(wp),
+        "plant_available_water":   paw,
     }
     masked = apply_quality_masks(serves_struct, study_area, mask_options)
 
     return {
-        "soil_moisture": masked["soil_moisture"],
-        "ndvi":          masked["ndvi"],
-        "collection":    serves_col,
-        "image_count":   ndvi_col.size(),
-        "field_capacity": fc,
-        "wilting_point":  wp,
+        "soil_moisture":         masked["soil_moisture"],
+        "ndvi":                  masked["ndvi"],
+        "et_fraction":           masked["et_fraction_constrained"].rename("et_fraction"),
+        "soil_moisture_deficit": masked["soil_moisture_deficit"].rename("soil_moisture_deficit"),
+        "collection":            serves_col,
+        "image_count":           ndvi_col.size(),
+        "field_capacity":        fc,
+        "wilting_point":         wp,
         "metadata": {
             "satellite":   satellite,
             "soil_source": soil_data["source"],
             "mode":        "period",
+            "statistic":   statistic,
         },
     }
 
@@ -715,68 +791,73 @@ def run_serves_time_series(study_area, start_date: str, end_date: str,
     }
 
 
-def run_serves_multi_year_monthly(study_area, start_year: int, end_year: int,
-                                   month: int, options: dict = None) -> dict:
-    """Multi-year monthly composite (one image per year, then mean)."""
-    options = options or {}
+def _multi_year_composite(study_area, year_ranges: list, options: dict,
+                          product: str = "soil_moisture") -> dict:
+    """One period composite per year, then the same statistic across years.
+
+    year_ranges: [(year, start, end), ...]. With options["statistic"] = "max" this is
+    the maximum over all years' scenes (max of yearly maxima); "mean" keeps the
+    original mean of yearly means.
+    """
+    statistic = (options or {}).get("statistic", "mean")
     images = []
-    for year in range(start_year, end_year + 1):
-        dr     = get_month_date_range(year, month)
-        result = run_serves_for_period(study_area, dr["start"], dr["end"], options)
-        images.append(result["soil_moisture"].set("year", year))
+    for year, start, end in year_ranges:
+        result = run_serves_for_period(study_area, start, end, options)
+        images.append(result[product].rename(product).set("year", year))
 
     collection = ee.ImageCollection(images)
+    composite  = reduce_collection(collection, statistic).rename(product)
     return {
-        "soil_moisture": collection.mean().rename("soil_moisture"),
-        "collection":    collection,
-        "image_count":   len(images),
-        "start_year":    start_year,
-        "end_year":      end_year,
-        "month":         month,
+        "image":       composite,
+        product:       composite,
+        "collection":  collection,
+        "image_count": len(images),
+        "statistic":   statistic,
+        "product":     product,
     }
+
+
+def run_serves_multi_year_monthly(study_area, start_year: int, end_year: int,
+                                   month: int, options: dict = None,
+                                   product: str = "soil_moisture") -> dict:
+    """Multi-year monthly composite (one image per year, then the same statistic across years)."""
+    options = options or {}
+    ranges = []
+    for year in range(start_year, end_year + 1):
+        dr = get_month_date_range(year, month)
+        ranges.append((year, dr["start"], dr["end"]))
+    result = _multi_year_composite(study_area, ranges, options, product)
+    result.update({"start_year": start_year, "end_year": end_year, "month": month})
+    return result
 
 
 def run_serves_multi_year_seasonal(study_area, start_year: int, end_year: int,
                                     season: str, hemisphere: str = "north",
-                                    options: dict = None) -> dict:
+                                    options: dict = None,
+                                    product: str = "soil_moisture") -> dict:
     """Multi-year seasonal composite."""
     options = options or {}
-    images = []
+    ranges = []
     for year in range(start_year, end_year + 1):
-        dr     = get_season_date_range(year, season, hemisphere)
-        result = run_serves_for_period(study_area, dr["start"], dr["end"], options)
-        images.append(result["soil_moisture"].set("year", year))
-
-    collection = ee.ImageCollection(images)
-    return {
-        "soil_moisture": collection.mean().rename("soil_moisture"),
-        "collection":    collection,
-        "image_count":   len(images),
-        "start_year":    start_year,
-        "end_year":      end_year,
-        "season":        season,
-    }
+        dr = get_season_date_range(year, season, hemisphere)
+        ranges.append((year, dr["start"], dr["end"]))
+    result = _multi_year_composite(study_area, ranges, options, product)
+    result.update({"start_year": start_year, "end_year": end_year, "season": season})
+    return result
 
 
 def run_serves_multi_year_annual(study_area, start_year: int, end_year: int,
-                                  options: dict = None) -> dict:
+                                  options: dict = None,
+                                  product: str = "soil_moisture") -> dict:
     """Multi-year annual composite."""
     options = options or {}
-    images = []
-    for year in range(start_year, end_year + 1):
-        start  = ee.Date.fromYMD(year,     1, 1)
-        end    = ee.Date.fromYMD(year + 1, 1, 1)
-        result = run_serves_for_period(study_area, start, end, options)
-        images.append(result["soil_moisture"].set("year", year))
-
-    collection = ee.ImageCollection(images)
-    return {
-        "soil_moisture": collection.mean().rename("soil_moisture"),
-        "collection":    collection,
-        "image_count":   len(images),
-        "start_year":    start_year,
-        "end_year":      end_year,
-    }
+    ranges = [
+        (year, ee.Date.fromYMD(year, 1, 1), ee.Date.fromYMD(year + 1, 1, 1))
+        for year in range(start_year, end_year + 1)
+    ]
+    result = _multi_year_composite(study_area, ranges, options, product)
+    result.update({"start_year": start_year, "end_year": end_year})
+    return result
 
 
 def run_serves_temporal_variability(
@@ -867,14 +948,16 @@ def run_serves_longterm_stats(
     month: int = 1,
     season: str = "summer",
     hemisphere: str = "north",
+    product: str = "soil_moisture",
 ) -> dict:
     """
     Pixel-wise long-term statistics over per-year SERVES composites.
 
-    Fully lazy — zero .getInfo() calls. One composite is built per year and
+    Fully lazy — zero .getInfo() calls. One composite is built per year (the
+    options["statistic"] of that year's scenes — mean, median, max or min) and
     stacked into an ImageCollection. GEE's reducers exclude masked pixels
     per-pixel, so years with no imagery produce masked output naturally.
-    All output images use band name 'soil_moisture' for VIS_PARAMS compatibility.
+    All output images use the product name as band name.
     """
     options = options or {}
     images = []
@@ -892,22 +975,24 @@ def run_serves_longterm_stats(
 
         result = run_serves_for_period(study_area, dr["start"], dr["end"], options)
         images.append(
-            result["soil_moisture"]
-            .rename("soil_moisture")
+            result[product]
+            .rename(product)
             .set("year", year)
         )
 
     collection = ee.ImageCollection(images)
 
     # ee.Reducer.stdDev() appends "_stdDev" to band name — rename to keep band consistent
-    std_dev = collection.reduce(ee.Reducer.stdDev()).rename("soil_moisture")
+    std_dev = collection.reduce(ee.Reducer.stdDev()).rename(product)
 
     return {
-        "mean":       collection.mean().rename("soil_moisture"),
-        "min":        collection.min().rename("soil_moisture"),
-        "max":        collection.max().rename("soil_moisture"),
-        "median":     collection.median().rename("soil_moisture"),
+        "mean":       collection.mean().rename(product),
+        "min":        collection.min().rename(product),
+        "max":        collection.max().rename(product),
+        "median":     collection.median().rename(product),
         "std_dev":    std_dev,
+        "statistic":  options.get("statistic", "mean"),
+        "product":    product,
         "collection": collection,
         "year_count": len(images),
         "start_year": start_year,
@@ -923,8 +1008,12 @@ def run_serves_regional_climatology(region_name: str, start_year: int, end_year:
                                      study_area=None,
                                      period_type: str = "monthly",
                                      season: str = "summer",
-                                     hemisphere: str = "north") -> dict:
+                                     hemisphere: str = "north",
+                                     product: str = "soil_moisture") -> dict:
     """Multi-year regional climatology — monthly, seasonal, or full-year composites.
+
+    Each year is reduced with options["statistic"] (mean / median / max / min of that
+    year's scenes); mean / min / max / median / std_dev are then taken across years.
 
     When a custom study_area is supplied (drawn polygon or uploaded shapefile),
     the caller's satellite choice is preserved. For predefined regions the caller
@@ -945,15 +1034,17 @@ def run_serves_regional_climatology(region_name: str, start_year: int, end_year:
         else:  # monthly
             dr = get_month_date_range(year, month)
         result = run_serves_for_period(study_area, dr["start"], dr["end"], options)
-        images.append(result["soil_moisture"].set("year", year))
+        images.append(result[product].rename(product).set("year", year))
 
     collection = ee.ImageCollection(images)
     return {
-        "mean":       collection.mean().rename("mean_soil_moisture"),
-        "min":        collection.min().rename("min_soil_moisture"),
-        "max":        collection.max().rename("max_soil_moisture"),
-        "median":     collection.median().rename("median_soil_moisture"),
-        "std_dev":    collection.reduce(ee.Reducer.stdDev()).rename("stddev_soil_moisture"),
+        "mean":       collection.mean().rename(f"mean_{product}"),
+        "min":        collection.min().rename(f"min_{product}"),
+        "max":        collection.max().rename(f"max_{product}"),
+        "median":     collection.median().rename(f"median_{product}"),
+        "std_dev":    collection.reduce(ee.Reducer.stdDev()).rename(f"stddev_{product}"),
+        "statistic":  options.get("statistic", "mean"),
+        "product":    product,
         "collection": collection,
         "study_area": study_area,
         "region":     region_name,

@@ -359,41 +359,18 @@ class SnowDepthCalculator:
         self.rho_max = rho_max
         self.gamma_params = gamma_params or {}
         
-    def calculate_monthly_snow_depth(self, aoi, year: int, month: int):
-        """Calculate snow depth for a specific month and year"""
-        # Create date range for the month (end_date is exclusive in GEE filterDate,
-        # so use the first day of the next month to include the month's last day)
+    @staticmethod
+    def _month_range(year: int, month: int):
+        """(start, end) date strings for a month; end is exclusive (GEE filterDate)."""
         start_date = datetime.date(year, month, 1)
         if month == 12:
             end_date = datetime.date(year + 1, 1, 1)
         else:
             end_date = datetime.date(year, month + 1, 1)
-        
-        start_date_str = start_date.strftime('%Y-%m-%d')
-        end_date_str = end_date.strftime('%Y-%m-%d')
-        
-        # MODIS Snow Cover
-        snowExtent = ee.ImageCollection('MODIS/061/MOD10A1') \
-            .select("NDSI_Snow_Cover") \
-            .filterDate(start_date_str, end_date_str) \
-            .filterBounds(aoi)
-        
-        meanNDSI = snowExtent.mean().divide(100)
-        fsc = meanNDSI.multiply(1.45).subtract(0.01).clamp(0, 1)
-        
-        # GLDAS SWE
-        gldasSWE = ee.ImageCollection("NASA/GLDAS/V021/NOAH/G025/T3H") \
-            .select("SWE_inst") \
-            .filterDate(start_date_str, end_date_str) \
-            .filterBounds(aoi) \
-            .mean()
-        
-        # Resample GLDAS (bilinear). No .reproject(): output resolution is set by the
-        # caller (export/download scale, or the map tile zoom). Forcing a fixed-scale
-        # reproject made large-AOI previews fail with "Image.reproject exceeds 2^31 pixels".
-        gldasSWE_resampled = gldasSWE.resample("bilinear")
-        
-        # Snow density calculation based on selected method
+        return start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')
+
+    def _snow_density(self, fsc, month: int):
+        """Snow density image (kg/m³) from FSC using the selected density method."""
         if self.density_method == "original":
             # Original method - get density for this month
             density_value = get_seasonal_snow_density(month, self.use_seasonal_density, 
@@ -403,17 +380,16 @@ class SnowDepthCalculator:
             if self.use_seasonal_density and self.custom_density_value is None and self.custom_monthly_densities is None:
                 rho_min = max(100, density_value - 80)  # Minimum density
                 rho_max = min(500, density_value + 80)  # Maximum density
-                snowDensity = fsc.expression(
+                return fsc.expression(
                     "rho_min + (rho_max - rho_min) * (1 - FSC)", {
                         "rho_min": rho_min,
                         "rho_max": rho_max,
                         "FSC": fsc
                     })
-            else:
-                # Use constant density
-                snowDensity = ee.Image.constant(density_value)
+            # Use constant density
+            return ee.Image.constant(density_value)
                 
-        elif self.density_method in ["enhanced_method1", "enhanced_method2"]:
+        if self.density_method in ["enhanced_method1", "enhanced_method2"]:
             # Enhanced methods using ρ = ρ_min + (ρ_max - ρ_min) * (1 - FSC)^γ
             
             # Determine gamma value for this month
@@ -427,24 +403,131 @@ class SnowDepthCalculator:
                 phi = self.gamma_params.get('phi', 1.0)
                 gamma_value = sinusoidal_gamma_function(month, alpha, beta, phi)
             
-            # Calculate density using the enhanced formula
             # ρ = ρ_min + (ρ_max - ρ_min) * (1 - FSC)^γ
-            snowDensity = fsc.expression(
+            return fsc.expression(
                 "rho_min + (rho_max - rho_min) * pow(1 - FSC, gamma)", {
                     "rho_min": self.rho_min,
                     "rho_max": self.rho_max,
                     "FSC": fsc,
                     "gamma": gamma_value
                 })
-        else:
-            # Fallback to constant density
-            snowDensity = ee.Image.constant(280)
-        
-        # Final calculations
-        fineSWE = gldasSWE_resampled.multiply(fsc)
+        # Fallback to constant density
+        return ee.Image.constant(280)
+
+    def _depth_and_density(self, ndsi_percent, swe, month: int):
+        """Two-band image [snow_depth (m), snow_density (kg/m³)] from NDSI (0–100) and SWE (kg/m²).
+
+        Density is only meaningful where there is snow, so it is masked where FSC = 0.
+        """
+        fsc = ndsi_percent.divide(100).multiply(1.45).subtract(0.01).clamp(0, 1)
+        snowDensity = self._snow_density(fsc, month)
+        fineSWE = swe.resample("bilinear").multiply(fsc)
         snowDepth = fineSWE.divide(snowDensity.add(1e-6))
+        # toFloat(): density value ranges differ by month, and GEE collection reducers
+        # reject images whose band types (value ranges) differ.
+        return ee.Image.cat([
+            snowDepth.rename("snow_depth"),
+            snowDensity.updateMask(fsc.gt(0)).rename("snow_density"),
+        ]).toFloat()
+
+    @staticmethod
+    def _empty_products():
+        """Fully-masked [snow_depth, snow_density] image for months/days without data.
+
+        Keeps band names and types consistent so collection reducers still work when a
+        period reaches into the future or past the latest GLDAS date.
+        """
+        return ee.Image.constant([0, 0]).rename(["snow_depth", "snow_density"]) \
+            .toFloat().updateMask(0)
+
+    def calculate_monthly_products(self, aoi, year: int, month: int):
+        """Monthly [snow_depth, snow_density] using the monthly algorithm (mean NDSI, mean SWE).
+
+        GLDAS is resampled bilinearly with no .reproject(): output resolution is set by
+        the caller (export/download scale, or the map tile zoom). Forcing a fixed-scale
+        reproject made large-AOI previews fail with "Image.reproject exceeds 2^31 pixels".
+        """
+        start_date_str, end_date_str = self._month_range(year, month)
         
-        return snowDepth.clip(aoi)
+        # MODIS Snow Cover
+        snowExtent = ee.ImageCollection('MODIS/061/MOD10A1') \
+            .select("NDSI_Snow_Cover") \
+            .filterDate(start_date_str, end_date_str) \
+            .filterBounds(aoi)
+        
+        # GLDAS SWE
+        gldas = ee.ImageCollection("NASA/GLDAS/V021/NOAH/G025/T3H") \
+            .select("SWE_inst") \
+            .filterDate(start_date_str, end_date_str) \
+            .filterBounds(aoi)
+        
+        has_data = snowExtent.size().gt(0).And(gldas.size().gt(0))
+        products = ee.Image(ee.Algorithms.If(
+            has_data,
+            self._depth_and_density(snowExtent.mean(), gldas.mean(), month),
+            self._empty_products(),
+        ))
+        return products.clip(aoi)
+
+    def calculate_daily_products(self, aoi, year: int, month: int):
+        """One [snow_depth, snow_density] image per MODIS day in the month.
+
+        Daily NDSI is paired with that day's mean GLDAS SWE. Cloudy days are masked
+        by MODIS, so reducers over the collection only use clear-sky days.
+        """
+        start_date_str, end_date_str = self._month_range(year, month)
+        snowExtent = ee.ImageCollection('MODIS/061/MOD10A1') \
+            .select("NDSI_Snow_Cover") \
+            .filterDate(start_date_str, end_date_str) \
+            .filterBounds(aoi)
+        gldas = ee.ImageCollection("NASA/GLDAS/V021/NOAH/G025/T3H") \
+            .select("SWE_inst") \
+            .filterDate(start_date_str, end_date_str) \
+            .filterBounds(aoi)
+
+        def daily(img):
+            day = ee.Date(img.get("system:time_start"))
+            day_swe = gldas.filterDate(day, day.advance(1, "day"))
+            # Clip BEFORE any math: GEE fails on clip() of a computed MOD10A1 image
+            # ("Image.clip: Unable to transform edge ... SR-ORG:6974").
+            ndsi = img.clip(aoi)
+            # Days past the latest GLDAS date (GLDAS lags MODIS) → masked, not a crash
+            products = ee.Image(ee.Algorithms.If(
+                day_swe.size().gt(0),
+                self._depth_and_density(ndsi, day_swe.mean(), month),
+                self._empty_products(),
+            ))
+            return products.copyProperties(img, ["system:time_start"])
+
+        return ee.ImageCollection(snowExtent.map(daily))
+
+    def calculate_products(self, aoi, months: list, statistic: str = "mean"):
+        """[snow_depth, snow_density] summarised over the (year, month) pairs in `months`.
+
+        statistic:
+          "mean"                  — mean of the monthly-algorithm images (unchanged method)
+          "median" / "max" / "min" — over the daily estimates of all days in those months
+        """
+        if statistic == "mean":
+            return ee.ImageCollection(
+                [self.calculate_monthly_products(aoi, yr, mo) for yr, mo in months]
+            ).mean()
+
+        daily = self.calculate_daily_products(aoi, *months[0])
+        for yr, mo in months[1:]:
+            daily = daily.merge(self.calculate_daily_products(aoi, yr, mo))
+        reducers = {"median": daily.median, "max": daily.max, "min": daily.min}
+        if statistic not in reducers:
+            raise ValueError(f"Unknown statistic: {statistic}")
+        # No MODIS days at all (e.g. a future month) → masked image instead of no bands
+        reduced = ee.Image(ee.Algorithms.If(
+            daily.size().gt(0), reducers[statistic](), self._empty_products()
+        ))
+        return reduced.clip(aoi)
+
+    def calculate_monthly_snow_depth(self, aoi, year: int, month: int):
+        """Calculate snow depth for a specific month and year"""
+        return self.calculate_monthly_products(aoi, year, month).select("snow_depth")
 
 def initialize_earth_engine(project_id: str, credentials_content: Optional[str] = None) -> bool:
     """Initialize Google Earth Engine with user-provided credentials"""
@@ -512,8 +595,15 @@ def create_chunks(bounds: List[float], max_pixels: int = 50000000) -> List[List[
     
     return chunks
 
+def output_file_stem(product: str = "snow_depth", statistic: str = "mean") -> str:
+    """File name stem: 'snow_depth' for the default monthly mean, else '<product>_<statistic>'."""
+    if product == "snow_depth" and statistic == "mean":
+        return "snow_depth"
+    return f"{product}_{statistic}"
+
 def download_chunk(calculator: SnowDepthCalculator, chunk_bounds: List[float], 
-                  chunk_id: int, year: int, month: int, output_dir: str) -> str:
+                  chunk_id: int, year: int, month: int, output_dir: str,
+                  product: str = "snow_depth", statistic: str = "mean") -> str:
     """Download a single chunk for a specific month
     
     Args:
@@ -523,6 +613,8 @@ def download_chunk(calculator: SnowDepthCalculator, chunk_bounds: List[float],
         year: Year for the calculation
         month: Month for the calculation
         output_dir: Directory to save the chunk
+        product: "snow_depth" or "snow_density"
+        statistic: "mean", "median", "max" or "min" (see SnowDepthCalculator.calculate_products)
         
     Returns:
         Path to the downloaded file
@@ -530,11 +622,11 @@ def download_chunk(calculator: SnowDepthCalculator, chunk_bounds: List[float],
     # Create geometry from bounds
     geometry = ee.Geometry.Rectangle(chunk_bounds)
     
-    # Calculate snow depth for specific month
-    snow_depth = calculator.calculate_monthly_snow_depth(geometry, year, month)
+    # Calculate the product for this month
+    image = calculator.calculate_products(geometry, [(year, month)], statistic).select(product)
     
     # Create download URL
-    url = snow_depth.getDownloadURL({
+    url = image.getDownloadURL({
         'scale': calculator.scale,
         'crs': 'EPSG:4326',
         'region': geometry,
@@ -545,7 +637,7 @@ def download_chunk(calculator: SnowDepthCalculator, chunk_bounds: List[float],
     response = requests.get(url)
     response.raise_for_status()
     
-    chunk_path = os.path.join(output_dir, f'snow_depth_{year}_{month:02d}_chunk_{chunk_id}.tif')
+    chunk_path = os.path.join(output_dir, f'{product}_{year}_{month:02d}_chunk_{chunk_id}.tif')
     with open(chunk_path, 'wb') as f:
         f.write(response.content)
     
@@ -587,8 +679,10 @@ def merge_chunks(chunk_paths: List[str], output_path: str):
         src.close()
 
 def process_monthly_data(calculator: SnowDepthCalculator, aoi_geom, 
-                        months_list: List[tuple], progress_bar, status_text) -> bytes:
-    """Process AOI and generate monthly snow depth data as a zip file"""
+                        months_list: List[tuple], progress_bar, status_text,
+                        product: str = "snow_depth", statistic: str = "mean") -> bytes:
+    """Process AOI and generate one monthly GeoTIFF per month as a zip file"""
+    file_stem = output_file_stem(product, statistic)
     
     # Get bounds from geometry
     if hasattr(aoi_geom, 'bounds'):
@@ -627,7 +721,8 @@ def process_monthly_data(calculator: SnowDepthCalculator, aoi_geom,
                         progress_bar.progress(current_task / total_tasks)
                         
                         chunk_path = download_chunk(
-                            calculator, chunk_bounds, chunk_id, year, month, temp_dir
+                            calculator, chunk_bounds, chunk_id, year, month, temp_dir,
+                            product=product, statistic=statistic,
                         )
                         chunk_paths.append(chunk_path)
                         
@@ -641,13 +736,13 @@ def process_monthly_data(calculator: SnowDepthCalculator, aoi_geom,
                 
                 # Merge chunks for this month
                 status_text.text(f"Merging chunks for {month_name}...")
-                monthly_output_path = os.path.join(temp_dir, f'snow_depth_{month_name}.tif')
+                monthly_output_path = os.path.join(temp_dir, f'{file_stem}_{month_name}.tif')
                 merge_chunks(chunk_paths, monthly_output_path)
                 
                 # Add to zip file
                 status_text.text(f"Adding {month_name} to zip...")
                 with open(monthly_output_path, 'rb') as f:
-                    zip_file.writestr(f'snow_depth_{month_name}.tif', f.read())
+                    zip_file.writestr(f'{file_stem}_{month_name}.tif', f.read())
                 
                 # Clean up chunk files
                 for chunk_path in chunk_paths:
@@ -686,19 +781,24 @@ def run_snow_depth_period_stats(
     period_type: str = "annual",
     month: int = 1,
     hemisphere: str = "north",
+    statistic: str = "mean",
+    product: str = "snow_depth",
 ) -> dict:
-    """Pixel-wise statistics (mean/min/max/median/std) across per-year snow depth composites.
+    """Pixel-wise statistics (mean/min/max/median/std) across per-year composites.
 
     For each year in [start_year, end_year]:
       - Build a list of monthly (year, month) pairs per `period_type`
-      - Compute `calculate_monthly_snow_depth` for each pair (lazy GEE calls)
-      - Reduce to one year-composite via ee.ImageCollection.mean()
+      - Reduce that period to one year-composite with `statistic`
+        ("mean" = mean of monthly-algorithm images, as before; "median"/"max"/"min"
+        = over the daily estimates of every day in the period — e.g. annual maximum)
     Then stack all year-composites and reduce pixel-wise across years.
 
     period_type options:
       "annual"      — all 12 calendar months
       "monthly"     — single calendar `month` repeated across years
       "snow_season" — Oct–Apr (north) or Apr–Oct (south)
+
+    product: "snow_depth" (m) or "snow_density" (kg/m³). All outputs use that band name.
     """
     images = []
     for year in range(start_year, end_year + 1):
@@ -709,18 +809,10 @@ def run_snow_depth_period_stats(
         else:
             ym_list = [(year, m) for m in range(1, 13)]
 
-        month_imgs = []
-        for yr, mo in ym_list:
-            img = (
-                calculator.calculate_monthly_snow_depth(aoi, yr, mo)
-                .rename("snow_depth")
-            )
-            month_imgs.append(img)
-
-        if month_imgs:
+        if ym_list:
             year_composite = (
-                ee.ImageCollection(month_imgs)
-                .mean()
+                calculator.calculate_products(aoi, ym_list, statistic)
+                .select(product)
                 .set("year", year)
             )
             images.append(year_composite)
@@ -730,11 +822,11 @@ def run_snow_depth_period_stats(
 
     col = ee.ImageCollection(images)
     return {
-        "mean":       col.mean().rename("snow_depth"),
-        "min":        col.min().rename("snow_depth"),
-        "max":        col.max().rename("snow_depth"),
-        "median":     col.median().rename("snow_depth"),
-        "std_dev":    col.reduce(ee.Reducer.stdDev()).rename("snow_depth"),
+        "mean":       col.mean().rename(product),
+        "min":        col.min().rename(product),
+        "max":        col.max().rename(product),
+        "median":     col.median().rename(product),
+        "std_dev":    col.reduce(ee.Reducer.stdDev()).rename(product),
         "collection": col,
         "year_count": len(images),
         "start_year": start_year,
@@ -742,6 +834,8 @@ def run_snow_depth_period_stats(
         "period_type": period_type,
         "month":      month,
         "hemisphere": hemisphere,
+        "statistic":  statistic,
+        "product":    product,
     }
 
 
@@ -750,8 +844,9 @@ def run_snow_depth_temporal_variability(
     aoi,
     start_year: int,
     end_year: int,
+    product: str = "snow_depth",
 ) -> dict:
-    """Mean, std dev, and CV across all monthly snow depth composites.
+    """Mean, std dev, and CV across all monthly composites of `product`.
 
     Builds one composite per calendar month per year (total = years × 12),
     then reduces across all composites.  CV = std_dev / mean × 100 %.
@@ -761,16 +856,16 @@ def run_snow_depth_temporal_variability(
     for year in range(start_year, end_year + 1):
         for mo in range(1, 13):
             img = (
-                calculator.calculate_monthly_snow_depth(aoi, year, mo)
-                .rename("snow_depth")
+                calculator.calculate_monthly_products(aoi, year, mo)
+                .select(product)
                 .set("year", year)
                 .set("month", mo)
             )
             images.append(img)
 
     col     = ee.ImageCollection(images)
-    mean    = col.mean().rename("snow_depth")
-    std_dev = col.reduce(ee.Reducer.stdDev()).rename("snow_depth")
+    mean    = col.mean().rename(product)
+    std_dev = col.reduce(ee.Reducer.stdDev()).rename(product)
     cv      = std_dev.divide(mean.max(ee.Image.constant(0.001))).multiply(100)
 
     return {
@@ -781,6 +876,7 @@ def run_snow_depth_temporal_variability(
         "total_months": len(images),
         "start_year":   start_year,
         "end_year":     end_year,
+        "product":      product,
     }
 
 

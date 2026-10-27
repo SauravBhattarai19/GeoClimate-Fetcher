@@ -37,6 +37,7 @@ from snow_depth_app import (
     sinusoidal_gamma_function,
     generate_month_list,
     process_monthly_data,
+    output_file_stem,
     extract_bounds_from_tiff,
     run_comparison,
     create_density_settings_ui,
@@ -85,6 +86,79 @@ _SD_VIS_PARAMS_CV = {
     "max": 250.0,
     "palette": ["#ffffcc", "#a1dab4", "#41b6c4", "#2c7fb8", "#253494"],
 }
+_SD_VIS_PARAMS_DENSITY = {
+    "min": 100.0,
+    "max": 500.0,
+    # light = fresh, low-density snow → dark = settled / wet, dense snow
+    "palette": ["#fff5eb", "#fdd0a2", "#fd8d3c", "#d94801", "#7f2704"],
+}
+_SD_VIS_PARAMS_DENSITY_STDDEV = {
+    "min": 0.0,
+    "max": 100.0,
+    "palette": _SD_VIS_PARAMS_STDDEV["palette"],
+}
+_SD_VIS_PARAMS_DENSITY_CV = {
+    "min": 0.0,
+    "max": 100.0,   # density is masked where there is no snow, so CV stays well below depth CV
+    "palette": _SD_VIS_PARAMS_CV["palette"],
+}
+
+# Products returned by SnowDepthCalculator.calculate_products (band name → display config)
+_SD_PRODUCTS = {
+    "snow_depth": {
+        "label": "Snow Depth", "unit": "m", "fmt": ".3f",
+        "vis": _SD_VIS_PARAMS, "std_vis": _SD_VIS_PARAMS_STDDEV, "cv_vis": _SD_VIS_PARAMS_CV,
+        "legend": "0 m (white) → 2 m (dark blue). Snow-free pixels appear near-white.",
+    },
+    "snow_density": {
+        "label": "Snow Density", "unit": "kg/m³", "fmt": ".0f",
+        "vis": _SD_VIS_PARAMS_DENSITY, "std_vis": _SD_VIS_PARAMS_DENSITY_STDDEV,
+        "cv_vis": _SD_VIS_PARAMS_DENSITY_CV,
+        "legend": "100 kg/m³ (light, fresh snow) → 500 kg/m³ (dark, dense snow). "
+                  "Snow-free pixels are transparent (density is undefined without snow).",
+    },
+}
+
+# Statistic within the selected period (see SnowDepthCalculator.calculate_products)
+_SD_STATISTICS = {"mean": "Mean", "median": "Median", "max": "Maximum", "min": "Minimum"}
+
+_SD_STATISTIC_HELP = (
+    "**Mean** — the monthly algorithm (mean MODIS NDSI × mean GLDAS SWE), unchanged.\n\n"
+    "**Median / Maximum / Minimum** — from daily estimates (each day's MODIS NDSI × that "
+    "day's GLDAS SWE) over all clear-sky days in the period."
+)
+
+
+def _sd_product_caption(product: str) -> str:
+    """Map / colorbar caption, e.g. 'Snow Density (kg/m³)'."""
+    cfg = _SD_PRODUCTS[product]
+    return f"{cfg['label']} ({cfg['unit']})"
+
+
+def _render_product_selector(key_prefix: str) -> str:
+    """Sidebar product radio (Snow Depth / Snow Density). Returns the band name."""
+    return st.sidebar.radio(
+        "Product:", list(_SD_PRODUCTS),
+        format_func=_sd_product_caption,
+        horizontal=True, key=f"{key_prefix}_product",
+    )
+
+
+def _render_statistic_selector(key_prefix: str, label: str) -> str:
+    """Sidebar statistic selectbox (Mean / Median / Maximum / Minimum)."""
+    statistic = st.sidebar.selectbox(
+        label, list(_SD_STATISTICS),
+        format_func=_SD_STATISTICS.get,
+        key=f"{key_prefix}_statistic", help=_SD_STATISTIC_HELP,
+    )
+    if statistic != "mean":
+        st.sidebar.caption(
+            "⏱️ Median / Maximum / Minimum use every daily image in the period — "
+            "slower than Mean, especially over long periods or large areas."
+        )
+    return statistic
+
+
 _SD_TILE_FAILED_MSG = (
     "Map preview unavailable (GEE memory limit). "
     "Use **💾 Export** below — batch export has higher memory limits."
@@ -208,7 +282,7 @@ def _render_geometry_selection():
                 "snow_depth_method_selection",
                 "snow_depth_centroid",
                 # ZIP cache
-                "sd_zip_data", "sd_zip_filename", "sd_zip_months_list",
+                "sd_zip_data", "sd_zip_filename", "sd_zip_months_list", "sd_zip_file_stem",
                 # Monthly visualization caches
                 "sd_tile_cache", "sd_sample_cache", "sd_stats_cache",
                 "sd_params_key",
@@ -262,12 +336,12 @@ def _render_persistent_download():
     if "sd_zip_data" not in st.session_state:
         return
 
-    st.success("📦 Your previously generated snow depth data is ready to download again.")
+    st.success("📦 Your previously generated monthly GeoTIFFs are ready to download again.")
 
     dl_col, clear_col = st.columns([4, 1])
     with dl_col:
         st.download_button(
-            label="📥 Re-Download Monthly Snow Depth ZIP",
+            label="📥 Re-Download Monthly GeoTIFF ZIP",
             data=st.session_state["sd_zip_data"],
             file_name=st.session_state["sd_zip_filename"],
             mime="application/zip",
@@ -276,14 +350,15 @@ def _render_persistent_download():
         )
     with clear_col:
         if st.button("✖ Clear", key="sd_clear_results", help="Remove cached results"):
-            for key in ["sd_zip_data", "sd_zip_filename", "sd_zip_months_list"]:
+            for key in ["sd_zip_data", "sd_zip_filename", "sd_zip_months_list", "sd_zip_file_stem"]:
                 st.session_state.pop(key, None)
             st.rerun()
 
     if st.session_state.get("sd_zip_months_list"):
+        file_stem = st.session_state.get("sd_zip_file_stem", "snow_depth")
         with st.expander("📋 Files in this ZIP", expanded=False):
             for yr, mo in st.session_state["sd_zip_months_list"]:
-                st.text(f"snow_depth_{datetime.date(yr, mo, 1).strftime('%Y_%m')}.tif")
+                st.text(f"{file_stem}_{datetime.date(yr, mo, 1).strftime('%Y_%m')}.tif")
 
     st.divider()
 
@@ -292,8 +367,9 @@ def _render_persistent_download():
 # VISUALIZATION HELPERS  (SERVES-style: tile cache, map, statistics)
 # ===========================================================================
 
-def _sd_params_key(scale: int, density_params: dict) -> str:
-    """MD5 of scale + area_km2 + density params — changes → invalidate all caches."""
+def _sd_params_key(scale: int, density_params: dict,
+                   product: str = "snow_depth", statistic: str = "mean") -> str:
+    """MD5 of scale + area_km2 + density params + product/statistic — changes → invalidate all caches."""
     area_km2 = st.session_state.get("snow_depth_area_km2", 0.0)
     # Serialize density_params safely (no complex objects)
     safe = {
@@ -306,7 +382,7 @@ def _sd_params_key(scale: int, density_params: dict) -> str:
         safe["custom_monthly_densities"] = json.dumps(
             {str(k): v for k, v in cmd.items()}, sort_keys=True
         )
-    raw = f"{scale}_{area_km2:.2f}_{json.dumps(safe, sort_keys=True)}"
+    raw = f"{scale}_{area_km2:.2f}_{product}_{statistic}_{json.dumps(safe, sort_keys=True)}"
     return hashlib.md5(raw.encode()).hexdigest()[:12]
 
 
@@ -337,6 +413,8 @@ def _render_sd_single_month_export(
     year: int,
     month: int,
     period_str: str,
+    product: str = "snow_depth",
+    statistic: str = "mean",
 ) -> None:
     """Smart export (Auto / Local / Drive) for the currently previewed month."""
     st.markdown(f"#### 💾 Export This Month Only — {period_str}")
@@ -347,14 +425,14 @@ def _render_sd_single_month_export(
         key=f"sd_export_mode_single_{layer_key}",
     )
 
-    filename = f"snow_depth_{year}_{month:02d}_{scale}m"
+    filename = f"{output_file_stem(product, statistic)}_{year}_{month:02d}_{scale}m"
 
     if st.button(
         f"📥 Export {period_str} GeoTIFF",
         type="primary",
         key=f"sd_single_gen_{layer_key}",
     ):
-        with st.spinner(f"Exporting snow depth for {period_str}…"):
+        with st.spinner(f"Exporting {_SD_PRODUCTS[product]['label'].lower()} for {period_str}…"):
             result = helper.execute_smart_download(
                 image=snow_img,
                 filename=filename,
@@ -381,6 +459,7 @@ def _render_snow_map(
     value_unit: str = "m",
     value_suffix: str = "",
     sample_scale: int = 500,
+    value_fmt: str = ".3f",
 ) -> bool:
     """
     Build a Folium map with a GEE tile layer, colorbar, and pixel inspector.
@@ -506,7 +585,7 @@ def _render_snow_map(
             val = _sample_cache.get(_sk)
             if val is not None:
                 st.caption(
-                    f"📍 **{clat:.4f}°, {clng:.4f}°**  →  **{val:.3f} {value_unit}**{value_suffix}"
+                    f"📍 **{clat:.4f}°, {clng:.4f}°**  →  **{val:{value_fmt}} {value_unit}**{value_suffix}"
                 )
             else:
                 st.caption(
@@ -525,11 +604,14 @@ def _render_sd_map(
     params_key: str,
     layer_key: str,
     sample_scale: int = 500,
+    product: str = "snow_depth",
 ) -> bool:
-    """Monthly-preview snow depth map (uses the sd_* caches)."""
+    """Monthly-preview map for a snow product (uses the sd_* caches)."""
+    cfg = _SD_PRODUCTS[product]
     return _render_snow_map(
-        image, _SD_VIS_PARAMS, aoi, layer_key, cache_prefix="sd",
-        caption="Snow Depth (m)", value_suffix=" snow depth", sample_scale=sample_scale,
+        image, cfg["vis"], aoi, layer_key, cache_prefix="sd",
+        caption=_sd_product_caption(product), value_unit=cfg["unit"], value_fmt=cfg["fmt"],
+        value_suffix=f" {cfg['label'].lower()}", sample_scale=sample_scale,
     )
 
 
@@ -538,6 +620,7 @@ def _render_sd_statistics(
     aoi,
     layer_key: str,
     scale: int,
+    product: str = "snow_depth",
 ) -> None:
     """Compute mean / min / max / std dev and display as metrics. Cached per layer_key."""
     stats_cache = st.session_state.setdefault("sd_stats_cache", {})
@@ -561,17 +644,21 @@ def _render_sd_statistics(
 
     raw = stats_cache.get(layer_key, {})
     # GEE names the keys as "{band}_mean", "{band}_min", "{band}_max", "{band}_stdDev"
-    mean_val = raw.get("snow_depth_mean")
-    min_val  = raw.get("snow_depth_min")
-    max_val  = raw.get("snow_depth_max")
-    std_val  = raw.get("snow_depth_stdDev")
+    mean_val = raw.get(f"{product}_mean")
+    min_val  = raw.get(f"{product}_min")
+    max_val  = raw.get(f"{product}_max")
+    std_val  = raw.get(f"{product}_stdDev")
 
+    cfg  = _SD_PRODUCTS[product]
+    name = cfg["label"].split()[-1]          # "Depth" / "Density"
+    unit, fmt = cfg["unit"], cfg["fmt"]
     if any(v is not None for v in [mean_val, min_val, max_val, std_val]):
+        st.caption("Spatial statistics of the map above across your area of interest.")
         mc1, mc2, mc3, mc4 = st.columns(4)
-        if mean_val is not None: mc1.metric("Mean Depth (m)", f"{mean_val:.3f}")
-        if min_val  is not None: mc2.metric("Min Depth (m)",  f"{min_val:.3f}")
-        if max_val  is not None: mc3.metric("Max Depth (m)",  f"{max_val:.3f}")
-        if std_val  is not None: mc4.metric("Std Dev (m)",    f"{std_val:.3f}")
+        if mean_val is not None: mc1.metric(f"Mean {name} ({unit})", f"{mean_val:{fmt}}")
+        if min_val  is not None: mc2.metric(f"Min {name} ({unit})",  f"{min_val:{fmt}}")
+        if max_val  is not None: mc3.metric(f"Max {name} ({unit})",  f"{max_val:{fmt}}")
+        if std_val  is not None: mc4.metric(f"Std Dev ({unit})",     f"{std_val:{fmt}}")
     else:
         st.info(
             "No statistics available — the area may have no snow cover this month, "
@@ -583,21 +670,25 @@ def _render_sd_preview_section(
     months_list: list,
     scale: int,
     density_params: dict,
+    product: str = "snow_depth",
+    statistic: str = "mean",
 ) -> None:
     """
     Interactive preview panel — year/month toggles, Folium map with GEE tile layer,
-    colorbar, pixel inspector, and statistics.
+    colorbar, pixel inspector, and statistics, for the selected product and statistic.
     Tile URLs are cached per (params, year, month) so switching between already-viewed
     months is instant without pressing Preview again.
     """
-    st.markdown("### 🗺️ Snow Depth Preview")
+    cfg       = _SD_PRODUCTS[product]
+    stat_name = _SD_STATISTICS[statistic]
+    st.markdown(f"### 🗺️ {cfg['label']} Preview — Monthly {stat_name}")
 
     if not months_list:
         st.warning("No months available in the selected date range.")
         return
 
     # ── Invalidate all caches when density params or scale changes ───────
-    params_key = _sd_params_key(scale, density_params)
+    params_key = _sd_params_key(scale, density_params, product, statistic)
     if st.session_state.get("sd_params_key") != params_key:
         st.session_state.pop("sd_tile_cache", None)
         st.session_state.pop("sd_sample_cache", None)
@@ -633,16 +724,16 @@ def _render_sd_preview_section(
     period_str = datetime.date(sel_year, sel_month, 1).strftime("%B %Y")
 
     if already_cached or preview_clicked:
-        st.markdown(f"#### ❄️ Snow Depth — {period_str}")
+        st.markdown(f"#### ❄️ {stat_name} {cfg['label']} — {period_str}")
         try:
             calculator = _sd_build_calculator(scale, density_params)
-            # calculate_monthly_snow_depth is lazy — no GEE network call here
+            # calculate_products is lazy — no GEE network call here
             snow_img = (
                 calculator
-                .calculate_monthly_snow_depth(
-                    st.session_state["snow_depth_geometry"], sel_year, sel_month
+                .calculate_products(
+                    st.session_state["snow_depth_geometry"], [(sel_year, sel_month)], statistic
                 )
-                .rename("snow_depth")
+                .select(product)
             )
 
             map_ok = _render_sd_map(
@@ -651,6 +742,7 @@ def _render_sd_preview_section(
                 params_key,
                 layer_key,
                 sample_scale=max(scale, 500),
+                product=product,
             )
 
             if map_ok:
@@ -660,6 +752,7 @@ def _render_sd_preview_section(
                     st.session_state["snow_depth_geometry"],
                     layer_key,
                     scale,
+                    product=product,
                 )
 
             st.markdown("---")
@@ -671,6 +764,8 @@ def _render_sd_preview_section(
                 sel_year,
                 sel_month,
                 period_str,
+                product=product,
+                statistic=statistic,
             )
 
         except Exception as exc:
@@ -682,15 +777,12 @@ def _render_sd_preview_section(
     else:
         st.info(
             f"Select a **Year** and **Month** above, then click **▶ Preview** to visualize "
-            f"snow depth for **{period_str}**. "
+            f"monthly {stat_name.lower()} {cfg['label'].lower()} for **{period_str}**. "
             "Once a month is previewed, switching back to it is instant (tile URL is cached)."
         )
 
     # Legend / palette note
-    st.caption(
-        "🎨 Colorbar range: 0 m (white) → 2 m (dark blue). "
-        "Areas with no MODIS snow cover appear transparent / near-white."
-    )
+    st.caption(f"🎨 Colorbar range: {cfg['legend']}")
 
 
 # ===========================================================================
@@ -711,7 +803,8 @@ _SD_PERIOD_TYPES = {
 
 def _sd_lt_params_key(subtype: str, start_year: int, end_year: int,
                       period_type: str, month: int, hemisphere: str,
-                      scale: int, density_params: dict) -> str:
+                      scale: int, density_params: dict,
+                      product: str = "snow_depth", statistic: str = "mean") -> str:
     """MD5 fingerprint of all Period Statistics parameters — drives cache invalidation."""
     import json as _json
     safe_dp = {
@@ -727,7 +820,7 @@ def _sd_lt_params_key(subtype: str, start_year: int, end_year: int,
     area_km2 = st.session_state.get("snow_depth_area_km2", 0.0)
     raw = (
         f"{subtype}_{start_year}_{end_year}_{period_type}_{month}"
-        f"_{hemisphere}_{scale}_{area_km2:.2f}"
+        f"_{hemisphere}_{scale}_{area_km2:.2f}_{product}_{statistic}"
         f"_{_json.dumps(safe_dp, sort_keys=True)}"
     )
     return hashlib.md5(raw.encode()).hexdigest()[:12]
@@ -735,10 +828,12 @@ def _sd_lt_params_key(subtype: str, start_year: int, end_year: int,
 
 def _render_period_statistics(density_method, density_params):
     """Render the Period Statistics mode — sidebar params + geometry + run/results."""
-    st.subheader("📈 Period Statistics — Snow Depth")
+    st.subheader("📈 Period Statistics — Snow Depth & Density")
     st.caption(
-        "Aggregate snow depth across years: pixel-wise mean / min / max / median / "
-        "std dev, or coefficient of variation across all monthly composites."
+        "Aggregate snow depth or density across years: reduce each year's period to one "
+        "value (mean / median / maximum / minimum), then map the pixel-wise mean / median / "
+        "min / max / std dev across years — or the coefficient of variation across all "
+        "monthly composites."
     )
 
     # ── Sidebar ───────────────────────────────────────────────────────────
@@ -751,6 +846,10 @@ def _render_period_statistics(density_method, density_params):
         "Type:", subtype_labels, index=0, key="sd_lt_subtype"
     )
     subtype = subtype_keys[subtype_labels.index(sel_subtype)]
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("📦 Product")
+    product = _render_product_selector("sd_lt")
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("📅 Year Range")
@@ -772,6 +871,7 @@ def _render_period_statistics(density_method, density_params):
     period_type = "annual"
     month       = 1
     hemisphere  = "north"
+    statistic   = "mean"
 
     if subtype == "interannual":
         st.sidebar.markdown("---")
@@ -796,13 +896,15 @@ def _render_period_statistics(density_method, density_params):
             )
             hemisphere = "north" if hemi_label == "Northern" else "south"
 
+        statistic = _render_statistic_selector("sd_lt", "Statistic within each period:")
         st.sidebar.caption(
-            "⚠️ One composite per year. Each year may compute 1–12 monthly images lazily."
+            "One composite per year = the chosen statistic over that year's period "
+            "(e.g. **Maximum** + Full Year = annual peak)."
         )
     else:
         n_months = (end_year - start_year + 1) * 12
         st.sidebar.caption(
-            f"⚠️ Builds {n_months} monthly composites "
+            f"⚠️ Builds {n_months} monthly-mean composites "
             f"({start_year}–{end_year}). All GEE ops are lazy — tiles render on-demand."
         )
 
@@ -816,7 +918,8 @@ def _render_period_statistics(density_method, density_params):
 
     # ── Cache invalidation ────────────────────────────────────────────────
     lt_key = _sd_lt_params_key(
-        subtype, start_year, end_year, period_type, month, hemisphere, scale, density_params
+        subtype, start_year, end_year, period_type, month, hemisphere, scale, density_params,
+        product, statistic,
     )
     if st.session_state.get("sd_lt_params_key") != lt_key:
         for k in ("sd_lt_results", "sd_lt_tile_cache",
@@ -833,7 +936,7 @@ def _render_period_statistics(density_method, density_params):
 
     # ── Run / Clear buttons ───────────────────────────────────────────────
     period_label = _sd_lt_period_label(
-        subtype, start_year, end_year, period_type, month, hemisphere
+        subtype, start_year, end_year, period_type, month, hemisphere, product, statistic
     )
     col_run, col_clr = st.columns([3, 1])
     with col_run:
@@ -856,39 +959,49 @@ def _render_period_statistics(density_method, density_params):
                 subtype, start_year, end_year, period_type,
                 month, hemisphere, scale, density_params,
                 st.session_state["snow_depth_geometry"],
-                period_label,
+                period_label, product, statistic,
             )
 
     if st.session_state.get("sd_lt_results"):
         _render_period_stats_results()
 
 
-def _sd_lt_period_label(subtype, start_year, end_year, period_type, month, hemisphere):
+def _sd_lt_composite_name(period_type: str, month: int, statistic: str) -> str:
+    """What each year is reduced to, e.g. 'annual maximum', 'January mean'."""
+    stat = _SD_STATISTICS[statistic].lower()
+    if period_type == "monthly":
+        return f"{datetime.date(2000, month, 1).strftime('%B')} {stat}"
+    if period_type == "snow_season":
+        return f"snow-season {stat}"
+    return f"annual {stat}"
+
+
+def _sd_lt_period_label(subtype, start_year, end_year, period_type, month, hemisphere,
+                        product="snow_depth", statistic="mean"):
     """Build a short human-readable label for the current Period Statistics parameters."""
     yr_range = f"{start_year}–{end_year}"
+    prod     = _SD_PRODUCTS[product]["label"]
     if subtype == "temporal_cv":
-        return f"Temporal CV · Monthly · {yr_range}"
-    if period_type == "monthly":
-        mon_name = datetime.date(2000, month, 1).strftime("%B")
-        return f"Inter-annual · {mon_name} · {yr_range}"
+        return f"{prod} · Temporal CV · Monthly · {yr_range}"
+    composite = _sd_lt_composite_name(period_type, month, statistic)
     if period_type == "snow_season":
-        hemi_label = "NH" if hemisphere == "north" else "SH"
-        return f"Inter-annual · Snow Season ({hemi_label}) · {yr_range}"
-    return f"Inter-annual · Annual · {yr_range}"
+        composite += f" ({'NH' if hemisphere == 'north' else 'SH'})"
+    return f"{prod} · Inter-annual · {composite.capitalize()} · {yr_range}"
 
 
 def _execute_period_stats(
     subtype, start_year, end_year, period_type,
-    month, hemisphere, scale, density_params, aoi, period_label
+    month, hemisphere, scale, density_params, aoi, period_label,
+    product="snow_depth", statistic="mean",
 ):
     """Run the GEE computation and store results in session state."""
     calculator = _sd_build_calculator(scale, density_params)
 
-    with st.spinner("❄️ Computing snow depth statistics on Google Earth Engine…"):
+    with st.spinner(f"❄️ Computing {_SD_PRODUCTS[product]['label'].lower()} statistics on Google Earth Engine…"):
         try:
             if subtype == "temporal_cv":
                 result = run_snow_depth_temporal_variability(
-                    calculator, aoi, start_year, end_year
+                    calculator, aoi, start_year, end_year, product=product
                 )
             else:
                 result = run_snow_depth_period_stats(
@@ -896,6 +1009,8 @@ def _execute_period_stats(
                     period_type=period_type,
                     month=month,
                     hemisphere=hemisphere,
+                    statistic=statistic,
+                    product=product,
                 )
 
             st.session_state["sd_lt_results"] = {
@@ -905,6 +1020,8 @@ def _execute_period_stats(
                 "period_label": period_label,
                 "aoi":          aoi,
                 "density_params": density_params,
+                "product":      product,
+                "statistic":    statistic,
             }
             st.rerun()
 
@@ -925,22 +1042,24 @@ def _render_period_stats_results():
     scale   = cached["scale"]
     label   = cached["period_label"]
     params  = cached["density_params"]
+    product = cached.get("product", "snow_depth")
 
     st.success(f"✅ Period Statistics complete: **{label}**")
 
     if subtype == "temporal_cv":
-        _render_temporal_cv_snow_results(result, aoi, scale, params, label)
+        _render_temporal_cv_snow_results(result, aoi, scale, params, label, product)
     else:
-        _render_interannual_snow_results(result, aoi, scale, params, label)
+        _render_interannual_snow_results(result, aoi, scale, params, label, product)
 
 
 def _render_sd_lt_map(image: ee.Image, vis_params: dict, aoi, layer_key: str,
                       caption: str = "Snow Depth (m)", sample_scale: int = 500,
-                      value_unit: str = "m") -> bool:
+                      value_unit: str = "m", value_fmt: str = ".3f") -> bool:
     """Period Statistics map — uses the sd_lt_* caches so results don't pollute monthly caches."""
     return _render_snow_map(
         image, vis_params, aoi, layer_key, cache_prefix="sd_lt",
         caption=caption, value_unit=value_unit, sample_scale=sample_scale,
+        value_fmt=value_fmt,
     )
 
 
@@ -984,7 +1103,7 @@ def _render_sd_lt_statistics(image: ee.Image, aoi, layer_key: str, scale: int,
 
 
 def _render_sd_lt_export(image: ee.Image, aoi, scale: int, label: str,
-                          export_key_suffix: str) -> None:
+                          export_key_suffix: str, product: str = "snow_depth") -> None:
     """Smart GeoTIFF export for a Period Statistics image."""
     helper      = DownloadHelper()
     export_pref = helper.render_smart_download_options(
@@ -992,7 +1111,7 @@ def _render_sd_lt_export(image: ee.Image, aoi, scale: int, label: str,
         key=f"sd_lt_export_mode_{export_key_suffix}",
     )
     import re
-    filename = re.sub(r"[^\w\-]", "_", f"snow_depth_{label}_{scale}m")[:80]
+    filename = re.sub(r"[^\w\-]", "_", f"{product}_{label}_{scale}m")[:80]
 
     if st.button(
         f"📥 Export {label} GeoTIFF",
@@ -1009,104 +1128,84 @@ def _render_sd_lt_export(image: ee.Image, aoi, scale: int, label: str,
 
 
 def _render_interannual_snow_results(result: dict, aoi, scale: int,
-                                      density_params: dict, label: str) -> None:
-    """Display Mean / Min / Max / Std Dev tabs for inter-annual statistics."""
+                                      density_params: dict, label: str,
+                                      product: str = "snow_depth") -> None:
+    """Display Mean / Median / Min / Max / Std Dev tabs for inter-annual statistics."""
     params_key = st.session_state.get("sd_lt_params_key", "lt")
+    cfg        = _SD_PRODUCTS[product]
+    prod       = cfg["label"]
+    composite  = _sd_lt_composite_name(
+        result["period_type"], result.get("month", 1), result.get("statistic", "mean")
+    )
 
     sc1, sc2, sc3 = st.columns(3)
-    sc1.metric("Valid Years",  str(result["year_count"]))
-    sc2.metric("Year Range",   f"{result['start_year']} – {result['end_year']}")
-    sc3.metric("Period Type",  _SD_PERIOD_TYPES.get(result["period_type"], result["period_type"]))
+    sc1.metric("Valid Years",       str(result["year_count"]))
+    sc2.metric("Year Range",        f"{result['start_year']} – {result['end_year']}")
+    sc3.metric("Per-year Composite", composite.capitalize())
 
     st.markdown("#### 🗺️ Pixel-wise Statistical Maps")
     st.caption(
-        "Statistics computed across **annual composites** — captures inter-annual "
-        "variability (year-to-year shifts). Maps render via live GEE tile fetching."
+        f"Each year is first reduced to its **{composite} {prod.lower()}**; the tabs then "
+        f"summarise those {result['year_count']} yearly values pixel by pixel. "
+        "Maps render via live GEE tile fetching."
     )
+    if result.get("statistic", "mean") == "mean":
+        st.caption(
+            "💡 For peak or low snow conditions, choose **Maximum** or **Minimum** under "
+            "*Statistic within each period* in the sidebar."
+        )
 
     _MAP_UNAVAILABLE = (
         "Map unavailable — GEE memory limit exceeded. "
         "Use **💾 Drive Export** below — batch export has higher limits."
     )
 
-    tab_mean, tab_median, tab_min, tab_max, tab_std = st.tabs(
-        ["📊 Mean", "➗ Median", "⬇️ Minimum", "⬆️ Maximum", "〰️ Std Dev"]
-    )
-
-    with tab_mean:
-        st.caption("Long-term **mean** snow depth — typical snow accumulation pattern.")
-        ok_mean = _render_sd_lt_map(
-            result["mean"], _SD_VIS_PARAMS, aoi,
-            f"lt_{params_key}::mean", "Mean Snow Depth (m)", max(scale, 500)
-        )
-
-    with tab_median:
-        st.caption("Pixel-wise **median** of annual means — typical year, robust to outlier years.")
-        if ok_mean:
-            _render_sd_lt_map(
-                result["median"], _SD_VIS_PARAMS, aoi,
-                f"lt_{params_key}::median", "Median Annual Mean Snow Depth (m)", max(scale, 500)
+    # (result key, tab title, across-years word, tab caption)
+    layers = [
+        ("mean",    "📊 Mean",    "Mean",    "Long-term **mean** of the yearly values — typical conditions."),
+        ("median",  "➗ Median",  "Median",  "**Median** of the yearly values — typical year, robust to outlier years."),
+        ("min",     "⬇️ Minimum", "Minimum", "Lowest yearly value at each pixel."),
+        ("max",     "⬆️ Maximum", "Maximum", "Highest yearly value at each pixel."),
+        ("std_dev", "〰️ Std Dev", "Std Dev", "**Std dev** of the yearly values — inter-annual variability. "
+                                            "High = unstable year to year."),
+    ]
+    tabs = st.tabs([title for _, title, _, _ in layers])
+    ok_mean = False
+    for tab, (key, _, across, caption) in zip(tabs, layers):
+        with tab:
+            st.caption(caption)
+            if key != "mean" and not ok_mean:
+                st.info(_MAP_UNAVAILABLE)
+                continue
+            ok = _render_sd_lt_map(
+                result[key], cfg["std_vis"] if key == "std_dev" else cfg["vis"], aoi,
+                f"lt_{params_key}::{key}",
+                f"{across} of {composite} {prod} ({cfg['unit']})", max(scale, 500),
+                value_unit=cfg["unit"], value_fmt=cfg["fmt"],
             )
-        else:
-            st.info(_MAP_UNAVAILABLE)
-
-    with tab_min:
-        st.caption("Pixel-wise **minimum** annual mean — driest/lightest-snow year.")
-        if ok_mean:
-            _render_sd_lt_map(
-                result["min"], _SD_VIS_PARAMS, aoi,
-                f"lt_{params_key}::min", "Min Annual Mean Snow Depth (m)", max(scale, 500)
-            )
-        else:
-            st.info(_MAP_UNAVAILABLE)
-
-    with tab_max:
-        st.caption("Pixel-wise **maximum** annual mean — deepest-snow year.")
-        if ok_mean:
-            _render_sd_lt_map(
-                result["max"], _SD_VIS_PARAMS, aoi,
-                f"lt_{params_key}::max", "Max Annual Mean Snow Depth (m)", max(scale, 500)
-            )
-        else:
-            st.info(_MAP_UNAVAILABLE)
-
-    with tab_std:
-        st.caption(
-            "**Std dev across annual means** — inter-annual variability. "
-            "High = unstable year-to-year snow depth."
-        )
-        if ok_mean:
-            _render_sd_lt_map(
-                result["std_dev"], _SD_VIS_PARAMS_STDDEV, aoi,
-                f"lt_{params_key}::std", "Std Dev of Annual Means (m)", max(scale, 500)
-            )
-        else:
-            st.info(_MAP_UNAVAILABLE)
+            if key == "mean":
+                ok_mean = ok
 
     st.markdown("---")
     st.markdown("#### 💾 Export a statistical image as GeoTIFF")
+    export_labels = {across: key for key, _, across, _ in layers}
     stat_choice = st.selectbox(
-        "Statistic to export:",
-        ["Mean", "Median", "Minimum", "Maximum", "Std Deviation"],
+        "Statistic to export:", list(export_labels),
         key="sd_lt_ia_export_choice",
     )
-    img_map = {
-        "Mean":          result["mean"],
-        "Median":        result["median"],
-        "Minimum":       result["min"],
-        "Maximum":       result["max"],
-        "Std Deviation": result["std_dev"],
-    }
     import re
-    safe_label = re.sub(r"[^\w\-]", "_", f"{stat_choice}_{label}")
-    _render_sd_lt_export(img_map[stat_choice], aoi, scale,
-                          safe_label, f"ia_{stat_choice.lower()[:3]}")
+    safe_label = re.sub(r"[^\w\-]", "_", f"{stat_choice}_of_{composite}_{label}")
+    _render_sd_lt_export(result[export_labels[stat_choice]], aoi, scale,
+                          safe_label, f"ia_{export_labels[stat_choice]}", product)
 
 
 def _render_temporal_cv_snow_results(result: dict, aoi, scale: int,
-                                      density_params: dict, label: str) -> None:
+                                      density_params: dict, label: str,
+                                      product: str = "snow_depth") -> None:
     """Display Long-term Mean / Temporal Std Dev / CV tabs for temporal variability."""
     params_key = st.session_state.get("sd_lt_params_key", "lt")
+    cfg        = _SD_PRODUCTS[product]
+    prod       = cfg["label"]
 
     sc1, sc2, sc3 = st.columns(3)
     sc1.metric("Monthly Composites", str(result["total_months"]))
@@ -1115,10 +1214,9 @@ def _render_temporal_cv_snow_results(result: dict, aoi, scale: int,
 
     st.markdown("#### 🗺️ Temporal Variability Maps")
     st.caption(
-        "Statistics computed across **all monthly composites** — captures total temporal "
+        "Statistics computed across **all monthly-mean composites** — captures total temporal "
         "variability (seasonal amplitude + inter-annual shifts). "
-        "CV normalises for baseline snow depth so deep-snow and shallow-snow "
-        "pixels are directly comparable."
+        f"CV normalises for the baseline {prod.lower()} so pixels are directly comparable."
     )
 
     _MAP_UNAVAILABLE = (
@@ -1132,12 +1230,13 @@ def _render_temporal_cv_snow_results(result: dict, aoi, scale: int,
 
     with tab_mean:
         st.caption(
-            "Long-term mean snow depth across all monthly composites — "
+            f"Long-term mean {prod.lower()} across all monthly composites — "
             "multi-year climatological average."
         )
         ok_mean = _render_sd_lt_map(
-            result["mean"], _SD_VIS_PARAMS, aoi,
-            f"lt_{params_key}::cv_mean", "Long-term Mean Snow Depth (m)", max(scale, 500)
+            result["mean"], cfg["vis"], aoi,
+            f"lt_{params_key}::cv_mean", f"Long-term Mean {prod} ({cfg['unit']})", max(scale, 500),
+            value_unit=cfg["unit"], value_fmt=cfg["fmt"],
         )
 
     with tab_std:
@@ -1147,24 +1246,32 @@ def _render_temporal_cv_snow_results(result: dict, aoi, scale: int,
         )
         if ok_mean:
             _render_sd_lt_map(
-                result["std_dev"], _SD_VIS_PARAMS_STDDEV, aoi,
-                f"lt_{params_key}::cv_std", "Temporal Std Dev (m)", max(scale, 500)
+                result["std_dev"], cfg["std_vis"], aoi,
+                f"lt_{params_key}::cv_std", f"Temporal Std Dev ({cfg['unit']})", max(scale, 500),
+                value_unit=cfg["unit"], value_fmt=cfg["fmt"],
             )
         else:
             st.info(_MAP_UNAVAILABLE)
 
     with tab_cv:
-        st.caption(
-            "**CV = σ/μ × 100 %** — relative fluctuation independent of baseline depth. "
-            "Because snow-free months are included, values of ~100–250 % are typical: "
-            "lower CV (≈ 100–150 %) = persistent seasonal snowpack; "
-            "higher CV (> 200 %) = ephemeral, short-lived snow cover."
-        )
+        if product == "snow_depth":
+            st.caption(
+                "**CV = σ/μ × 100 %** — relative fluctuation independent of baseline depth. "
+                "Because snow-free months are included, values of ~100–250 % are typical: "
+                "lower CV (≈ 100–150 %) = persistent seasonal snowpack; "
+                "higher CV (> 200 %) = ephemeral, short-lived snow cover."
+            )
+        else:
+            st.caption(
+                "**CV = σ/μ × 100 %** of snow density. Density is undefined without snow, so "
+                "only snow-covered months contribute — CV reflects how much the snowpack "
+                "densifies through the season (typically ~20–60 %)."
+            )
         if ok_mean:
             _render_sd_lt_map(
-                result["cv"], _SD_VIS_PARAMS_CV, aoi,
-                f"lt_{params_key}::cv_cv", "Temporal CV of Snow Depth (%)", max(scale, 500),
-                value_unit="%",
+                result["cv"], cfg["cv_vis"], aoi,
+                f"lt_{params_key}::cv_cv", f"Temporal CV of {prod} (%)", max(scale, 500),
+                value_unit="%", value_fmt=".1f",
             )
         else:
             st.info(_MAP_UNAVAILABLE)
@@ -1184,7 +1291,7 @@ def _render_temporal_cv_snow_results(result: dict, aoi, scale: int,
     import re
     safe_label = re.sub(r"[^\w\-]", "_", f"{stat_choice}_{label}")
     _render_sd_lt_export(img_map[stat_choice], aoi, scale,
-                          safe_label, f"cv_{stat_choice[:3].lower()}")
+                          safe_label, f"cv_{stat_choice[:3].lower()}", product)
 
 
 # ---------------------------------------------------------------------------
@@ -1192,7 +1299,7 @@ def _render_temporal_cv_snow_results(result: dict, aoi, scale: int,
 # ---------------------------------------------------------------------------
 def _render_monthly_analysis(density_method, density_params):
     """Render the Monthly Analysis mode UI."""
-    st.subheader("📊 Monthly Snow Depth Analysis")
+    st.subheader("📊 Monthly Snow Depth & Density Analysis")
 
     # ── Sidebar parameters ───────────────────────────────────────────────
     st.sidebar.header("📊 Monthly Analysis Parameters")
@@ -1223,6 +1330,12 @@ def _render_monthly_analysis(density_method, density_params):
         help="Pixel resolution for preview and export. Lower = higher detail but slower.",
     )
 
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("📦 Product & Statistic")
+    product   = _render_product_selector("sd")
+    statistic = _render_statistic_selector("sd", "Statistic within each month:")
+    file_stem = output_file_stem(product, statistic)
+
     if start_date >= end_date:
         st.sidebar.error("Start date must be before end date")
         st.stop()
@@ -1244,7 +1357,7 @@ def _render_monthly_analysis(density_method, density_params):
     st.divider()
 
     # ── PREVIEW SECTION ──────────────────────────────────────────────────
-    _render_sd_preview_section(months_list, scale, density_params)
+    _render_sd_preview_section(months_list, scale, density_params, product, statistic)
 
     st.divider()
 
@@ -1254,6 +1367,12 @@ def _render_monthly_analysis(density_method, density_params):
             "Generate one GeoTIFF per month. **Local / Auto** packs them into a ZIP "
             "and downloads to your browser. **Google Drive** submits each month as a "
             "separate GEE export task — handles any AOI size without memory limits."
+        )
+        st.caption(
+            f"Exporting **monthly {_SD_STATISTICS[statistic].lower()} "
+            f"{_sd_product_caption(product).lower()}** — change it under "
+            "*Product & Statistic* in the sidebar. Files: "
+            f"`{file_stem}_YYYY_MM.tif`."
         )
 
         # Smart download options (mirrors SERVES export section)
@@ -1297,14 +1416,14 @@ def _render_monthly_analysis(density_method, density_params):
                             try:
                                 img = (
                                     calculator
-                                    .calculate_monthly_snow_depth(aoi_geom, yr, mo)
-                                    .rename("snow_depth")
+                                    .calculate_products(aoi_geom, [(yr, mo)], statistic)
+                                    .select(product)
                                 )
                                 task = ee.batch.Export.image.toDrive(
                                     image=img,
-                                    description=f"snow_depth_{yr}_{mo:02d}_{scale}m",
+                                    description=f"{file_stem}_{yr}_{mo:02d}_{scale}m",
                                     folder=drive_folder,
-                                    fileNamePrefix=f"snow_depth_{yr}_{mo:02d}_{scale}m",
+                                    fileNamePrefix=f"{file_stem}_{yr}_{mo:02d}_{scale}m",
                                     region=aoi_geom,
                                     scale=scale,
                                     crs="EPSG:4326",
@@ -1339,28 +1458,30 @@ def _render_monthly_analysis(density_method, density_params):
                     status_text  = st.empty()
 
                     try:
-                        with st.spinner("Processing monthly snow depth data…"):
+                        with st.spinner(f"Processing monthly {_sd_product_caption(product).lower()} data…"):
                             zip_data = process_monthly_data(
-                                calculator, aoi_geom, months_list, progress_bar, status_text
+                                calculator, aoi_geom, months_list, progress_bar, status_text,
+                                product=product, statistic=statistic,
                             )
 
                         progress_bar.progress(100)
                         status_text.text("✅ Processing complete!")
 
                         filename = (
-                            f"snow_depth_monthly_{start_date.strftime('%Y%m')}_"
+                            f"{file_stem}_monthly_{start_date.strftime('%Y%m')}_"
                             f"{end_date.strftime('%Y%m')}_{scale}m.zip"
                         )
 
                         st.session_state["sd_zip_data"]        = zip_data
                         st.session_state["sd_zip_filename"]    = filename
                         st.session_state["sd_zip_months_list"] = list(months_list)
+                        st.session_state["sd_zip_file_stem"]   = file_stem
 
                         st.success(
                             f"✅ Generated {len(months_list)} monthly GeoTIFF files."
                         )
                         st.download_button(
-                            label="📥 Download Monthly Snow Depth Data (ZIP)",
+                            label="📥 Download Monthly GeoTIFFs (ZIP)",
                             data=zip_data,
                             file_name=filename,
                             mime="application/zip",
@@ -1371,7 +1492,7 @@ def _render_monthly_analysis(density_method, density_params):
                         with st.expander("📋 Files included in the ZIP"):
                             for yr, mo in months_list:
                                 st.text(
-                                    f"snow_depth_{datetime.date(yr, mo, 1).strftime('%Y_%m')}.tif"
+                                    f"{file_stem}_{datetime.date(yr, mo, 1).strftime('%Y_%m')}.tif"
                                 )
 
                     except Exception as e:
@@ -1515,8 +1636,9 @@ def render_snow_depth():
     """
     st.markdown("## ❄️ GLOBAL-SAM — Snow Depth Analysis & Comparison Tool")
     st.markdown(
-        "Calculate monthly snow depth using MODIS and GLDAS data from "
-        "Google Earth Engine, with interactive map preview and algorithm comparison."
+        "Calculate monthly snow depth and snow density using MODIS and GLDAS data from "
+        "Google Earth Engine — as a mean, median, maximum or minimum — with interactive "
+        "map preview, GeoTIFF download and algorithm comparison."
     )
     st.divider()
 
@@ -1557,14 +1679,29 @@ def render_snow_depth():
 
     with st.expander("ℹ️ About this tool"):
         st.markdown("""
-        This tool provides **monthly snow depth analysis** and **algorithm comparison** capabilities.
+        This tool provides **monthly snow depth & density analysis** and **algorithm comparison** capabilities.
+
+        ## 📦 Products & Statistics
+
+        Every map and download can show **Snow Depth (m)** or **Snow Density (kg/m³)**
+        (density is masked where there is no snow), reduced over the chosen period with:
+
+        | Statistic | How it is computed |
+        |---|---|
+        | **Mean** | Monthly algorithm — mean MODIS NDSI × mean GLDAS SWE (unchanged) |
+        | **Median / Maximum / Minimum** | Daily estimates — each day's MODIS NDSI × that day's GLDAS SWE — reduced over all clear-sky days in the period |
+
+        In **Monthly Analysis** the period is each month. In **Period Statistics** it is each
+        year's period (full year, a month, or the snow season) — e.g. *Maximum + Full Year*
+        gives the annual peak, then the tabs summarise those yearly peaks across years.
 
         ## 📈 Period Statistics Mode
 
         Aggregate snow depth across multiple years without downloading individual months.
 
-        **Inter-annual sub-mode** — builds one composite per year, then computes pixel-wise
-        **Mean / Min / Max / Median / Std Dev** across those year-composites. Period options:
+        **Inter-annual sub-mode** — builds one composite per year (the chosen statistic over
+        that year's period), then computes pixel-wise **Mean / Median / Min / Max / Std Dev**
+        across those year-composites. Period options:
         - *Full Year* (all 12 months averaged), *Specific Month*, or *Snow Season* (Oct–Apr NH / Apr–Oct SH)
 
         **Temporal Variability / CV sub-mode** — builds one composite per calendar-month per year,
@@ -1595,7 +1732,8 @@ def render_snow_depth():
         3. Downscale GLDAS SWE using FSC
         4. Snow Depth = Downscaled SWE ÷ Snow Density
 
-        **Output:** one GeoTIFF per month (`snow_depth_YYYY_MM.tif`), bundled in a ZIP.
+        **Output:** one GeoTIFF per month (`snow_depth_YYYY_MM.tif` for mean depth, otherwise
+        e.g. `snow_density_max_YYYY_MM.tif`), bundled in a ZIP.
 
         ## 🔍 Comparison Mode
 
