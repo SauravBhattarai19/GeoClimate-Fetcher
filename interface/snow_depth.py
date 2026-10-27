@@ -425,9 +425,9 @@ def _render_sd_map(
 
     # Satellite basemap toggle
     folium.TileLayer(
-        tiles="https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
-        attr="Google Satellite",
-        name="Google Satellite",
+        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        attr="Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community",
+        name="Satellite (Esri)",
         overlay=False,
         control=True,
         show=False,
@@ -977,8 +977,9 @@ def _render_sd_lt_map(image: ee.Image, vis_params: dict, aoi, layer_key: str,
 
     m = folium.Map(location=[ctr_lat, ctr_lon], zoom_start=zoom, tiles="OpenStreetMap")
     folium.TileLayer(
-        tiles="https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
-        attr="Google Satellite", name="Google Satellite",
+        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        attr="Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community",
+        name="Satellite (Esri)",
         overlay=False, control=True, show=False,
     ).add_to(m)
 
@@ -1677,7 +1678,7 @@ def render_snow_depth():
 
         Before downloading, visualize snow depth directly in the browser via live GEE tile rendering.
         Select any year/month within your date range and click **▶ Preview**:
-        - Interactive Folium map with OpenStreetMap and Google Satellite basemaps
+        - Interactive Folium map with OpenStreetMap and Esri satellite basemaps
         - Colorbar: white (0 m) → dark blue (≥ 2 m)
         - Pixel inspector — click anywhere to read the exact depth value
         - Pan/zoom is preserved when switching months

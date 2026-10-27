@@ -1337,9 +1337,9 @@ def _render_map_with_layer(image, vis_params: dict, region, layer_name: str,
 
     # Satellite basemap
     folium.TileLayer(
-        tiles="https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
-        attr="Google Satellite",
-        name="Google Satellite",
+        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        attr="Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community",
+        name="Satellite (Esri)",
         overlay=False,
         control=True,
         show=False,
