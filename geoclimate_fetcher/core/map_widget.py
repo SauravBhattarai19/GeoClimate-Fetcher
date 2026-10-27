@@ -49,23 +49,30 @@ class UnifiedMapWidget:
         Returns:
             Configured folium Map with consistent styling
         """
-        # Create base map
+        # Create base map (tiles=None — basemaps added explicitly below)
         m = folium.Map(
             location=[self.center_lat, self.center_lon],
-            zoom_start=self.zoom
+            zoom_start=self.zoom,
+            tiles=None
         )
-        
-        # Add standardized tile layers
+
+        # Add standardized tile layers (Esri — CARTO basemaps now require an API key).
+        # Only the default layer is shown; the last-shown base layer would otherwise cover it.
+        esri = 'https://server.arcgisonline.com/ArcGIS/rest/services/{}/MapServer/tile/{{z}}/{{y}}/{{x}}'
+        esri_attr = 'Tiles &copy; Esri &mdash; Sources: Esri, HERE, Garmin, USGS, NGA, and the GIS User Community'
+        for service, name, max_zoom in [
+            ('Canvas/World_Light_Gray_Base', 'Light', 16),
+            ('World_Topo_Map', 'Terrain', 19),
+            ('World_Imagery', 'Satellite', 19),
+        ]:
+            folium.TileLayer(
+                tiles=esri.format(service), attr=esri_attr, name=name,
+                max_zoom=max_zoom, overlay=False, control=True, show=False
+            ).add_to(m)
+
         folium.TileLayer(
-            tiles='CartoDB positron',
-            attr='© OpenStreetMap contributors © CARTO',
-            name='Light'
-        ).add_to(m)
-        
-        folium.TileLayer(
-            tiles='https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-            attr='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-            name='Terrain'
+            tiles=esri.format('World_Street_Map'), attr=esri_attr, name='Streets',
+            max_zoom=19, overlay=False, control=True, show=True
         ).add_to(m)
         
         # Add standardized drawing tools

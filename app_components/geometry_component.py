@@ -60,17 +60,18 @@ class GeometryComponent:
             tiles='OpenStreetMap',
             attr='Map data © OpenStreetMap contributors'
         )
-          # Add additional tile layers
-        folium.TileLayer(
-            tiles='https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-            attr='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-            name='Terrain'
-        ).add_to(m)
-        folium.TileLayer(
-            tiles='CartoDB positron',
-            attr='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-            name='Light'
-        ).add_to(m)
+          # Add additional tile layers (Esri — CARTO basemaps now require an API key)
+        esri = 'https://server.arcgisonline.com/ArcGIS/rest/services/{}/MapServer/tile/{{z}}/{{y}}/{{x}}'
+        esri_attr = 'Tiles &copy; Esri &mdash; Sources: Esri, HERE, Garmin, USGS, NGA, and the GIS User Community'
+        for service, name, max_zoom in [
+            ('World_Topo_Map', 'Terrain', 19),
+            ('Canvas/World_Light_Gray_Base', 'Light', 16),
+            ('World_Imagery', 'Satellite', 19),
+        ]:
+            folium.TileLayer(
+                tiles=esri.format(service), attr=esri_attr, name=name,
+                max_zoom=max_zoom, overlay=False, control=True, show=False
+            ).add_to(m)
         
         # Add drawing tools
         draw = Draw(
