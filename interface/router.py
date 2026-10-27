@@ -47,6 +47,10 @@ def route_to_interface():
         from interface.serves import render_serves
         render_serves()
 
+    elif app_mode == "water_balance":
+        from interface.water_balance import render_water_balance
+        render_water_balance()
+
     else:
         # Default case - should not happen, but handle gracefully
         st.error(f"❌ Unknown app mode: {app_mode}")

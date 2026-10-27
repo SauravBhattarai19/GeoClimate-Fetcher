@@ -1386,7 +1386,21 @@ if st.session_state.app_mode is None:
             st.rerun()
 
     with col10:
-        st.empty()  # Placeholder for future tools
+        st.markdown("""
+        <div class="tool-card">
+            <span class="tool-icon">🌊</span>
+            <div class="tool-title">Water Balance</div>
+            <div class="tool-description">
+                Global evapotranspiration from ten satellite and model products, harmonised to one
+                analysis grid. Basin time series, multi-product ensemble and uncertainty maps,
+                FAO-56 reference ET, and HydroSHEDS river-basin selection.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        if st.button("🚀 Launch Water Balance", width="stretch", type="primary"):
+            st.session_state.app_mode = "water_balance"
+            st.rerun()
 
     # ── Development Team Section ─────────────────────────────────────────────
     st.markdown("---")
