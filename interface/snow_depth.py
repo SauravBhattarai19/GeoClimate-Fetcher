@@ -50,6 +50,7 @@ from snow_depth_app import (
 
 from geoclimate_fetcher.core import GeometrySelectionWidget
 from app_components.download_component import DownloadHelper
+from app_components.ee_tile_cache import get_ee_tile_url, has_cached_tile_url
 from geoclimate_fetcher.serves_calculator import (
     PREDEFINED_REGION_COORDS,
     PREDEFINED_REGION_LABELS,
@@ -82,7 +83,10 @@ _SD_VIS_PARAMS_CV = {
     "max": 60.0,   # CV in %
     "palette": ["#ffffcc", "#a1dab4", "#41b6c4", "#2c7fb8", "#253494"],
 }
-_SD_TILE_FAILED = "__FAILED__"   # sentinel cached on getMapId() failure
+_SD_TILE_FAILED_MSG = (
+    "Map preview unavailable (GEE memory limit). "
+    "Use **💾 Export** below — batch export has higher memory limits."
+)
 
 
 # ---------------------------------------------------------------------------
@@ -305,25 +309,9 @@ def _sd_params_key(scale: int, density_params: dict) -> str:
 
 
 def _sd_get_tile_url(image: ee.Image, cache_key: str) -> str:
-    """
-    Register an ee.Image with GEE once and cache the tile URL.
-    Failures are also cached so getMapId() is never retried on re-renders.
-    """
-    cache = st.session_state.setdefault("sd_tile_cache", {})
-    if cache_key not in cache:
-        try:
-            map_id = image.getMapId(_SD_VIS_PARAMS)
-            cache[cache_key] = map_id["tile_fetcher"].url_format
-        except Exception as exc:
-            cache[cache_key] = _SD_TILE_FAILED
-            raise RuntimeError(str(exc)) from exc
-    url = cache[cache_key]
-    if url == _SD_TILE_FAILED:
-        raise RuntimeError(
-            "Map preview unavailable (cached failure). "
-            "Use **💾 Export** below — batch export has higher memory limits."
-        )
-    return url
+    """Register an ee.Image with GEE and cache the tile URL in sd_tile_cache."""
+    return get_ee_tile_url(image, _SD_VIS_PARAMS, "sd_tile_cache", cache_key,
+                           failed_msg=_SD_TILE_FAILED_MSG)
 
 
 def _sd_build_calculator(scale: int, density_params: dict) -> SnowDepthCalculator:
@@ -623,10 +611,7 @@ def _render_sd_preview_section(
 
     # ── Check if this month is already in the tile cache ─────────────────
     layer_key = f"{params_key}::{sel_year}_{sel_month:02d}"
-    tile_cache = st.session_state.get("sd_tile_cache", {})
-    already_cached = (
-        layer_key in tile_cache and tile_cache[layer_key] != _SD_TILE_FAILED
-    )
+    already_cached = has_cached_tile_url("sd_tile_cache", layer_key)
 
     period_str = datetime.date(sel_year, sel_month, 1).strftime("%B %Y")
 
@@ -933,22 +918,9 @@ def _render_period_stats_results():
 
 
 def _sd_lt_get_tile_url(image: ee.Image, vis_params: dict, cache_key: str) -> str:
-    """Register an ee.Image with GEE once, cache the tile URL in sd_lt_tile_cache."""
-    cache = st.session_state.setdefault("sd_lt_tile_cache", {})
-    if cache_key not in cache:
-        try:
-            map_id = image.getMapId(vis_params)
-            cache[cache_key] = map_id["tile_fetcher"].url_format
-        except Exception as exc:
-            cache[cache_key] = _SD_TILE_FAILED
-            raise RuntimeError(str(exc)) from exc
-    url = cache[cache_key]
-    if url == _SD_TILE_FAILED:
-        raise RuntimeError(
-            "Map preview unavailable (cached failure). "
-            "Use **💾 Export** below — batch export has higher memory limits."
-        )
-    return url
+    """Register an ee.Image with GEE and cache the tile URL in sd_lt_tile_cache."""
+    return get_ee_tile_url(image, vis_params, "sd_lt_tile_cache", cache_key,
+                           failed_msg=_SD_TILE_FAILED_MSG)
 
 
 def _render_sd_lt_map(image: ee.Image, vis_params: dict, aoi, layer_key: str,

@@ -30,6 +30,7 @@ import csv
 
 from geoclimate_fetcher.core import GeometrySelectionWidget
 from app_components.download_component import DownloadHelper
+from app_components.ee_tile_cache import get_ee_tile_url
 from geoclimate_fetcher.serves_calculator import (
     VIS_PARAMS,
     PREDEFINED_REGION_COORDS,
@@ -1261,36 +1262,23 @@ def _render_time_series_results(cached: dict, study_area, params: dict):
 # TILE URL CACHE
 # ===========================================================================
 
-_TILE_FAILED = "__FAILED__"   # sentinel stored in cache when getMapId() fails
-
-
 def _get_tile_url(image, vis_params: dict, cache_key: str) -> str:
     """
-    Register an ee.Image with GEE once and cache the tile URL by cache_key.
-    Returns the cached URL instantly on every subsequent Streamlit re-render.
-
-    Failures are also cached (sentinel _TILE_FAILED) so a failing getMapId()
-    is never retried on re-renders — avoids repeated GEE calls when the user
-    changes any widget (e.g., export mode dropdown) after a memory-limit error.
+    Register an ee.Image with GEE and cache the tile URL by cache_key.
+    Returns the cached URL instantly on re-renders (refreshed hourly, since GEE
+    map IDs expire). Memory-limit failures are cached so they aren't retried;
+    transient errors are retried on the next render.
 
     Cache is keyed on serves_params_key + layer name and invalidated whenever
     analysis parameters change or results are cleared.
     """
-    tile_cache = st.session_state.setdefault("serves_tile_cache", {})
-    if cache_key not in tile_cache:
-        try:
-            map_id = image.getMapId(vis_params)
-            tile_cache[cache_key] = map_id["tile_fetcher"].url_format
-        except Exception as exc:
-            tile_cache[cache_key] = _TILE_FAILED  # cache the failure — don't retry
-            raise RuntimeError(str(exc)) from exc
-    url = tile_cache[cache_key]
-    if url == _TILE_FAILED:
-        raise RuntimeError(
-            "Map preview unavailable (cached failure). "
+    return get_ee_tile_url(
+        image, vis_params, "serves_tile_cache", cache_key,
+        failed_msg=(
+            "Map preview unavailable (GEE memory limit). "
             "Use Drive Export below — batch export has higher memory limits."
-        )
-    return url
+        ),
+    )
 
 
 # ===========================================================================

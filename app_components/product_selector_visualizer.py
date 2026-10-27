@@ -463,7 +463,7 @@ class ProductSelectorVisualizer:
                         colors.append(0)
                         hover_text.append(f"Station: {station_id}<br>No analysis results")
                 
-                fig.add_trace(go.Scattermapbox(
+                fig.add_trace(go.Scattermap(
                     lat=stations_df['latitude'],
                     lon=stations_df['longitude'],
                     mode='markers',
@@ -480,7 +480,7 @@ class ProductSelectorVisualizer:
                     name='Stations'
                 ))
             else:
-                fig.add_trace(go.Scattermapbox(
+                fig.add_trace(go.Scattermap(
                     lat=stations_df['latitude'],
                     lon=stations_df['longitude'],
                     mode='markers',
@@ -495,7 +495,7 @@ class ProductSelectorVisualizer:
             center_lon = stations_df['longitude'].mean()
             
             fig.update_layout(
-                mapbox=dict(
+                map=dict(
                     style='open-street-map',
                     center=dict(lat=center_lat, lon=center_lon),
                     zoom=8
