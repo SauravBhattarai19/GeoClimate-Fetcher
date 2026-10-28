@@ -13,7 +13,14 @@ import ee
 import pandas as pd
 
 from .grid import DEFAULT_RES_DEG, area_weighted_mean, to_grid
-from .products import ProductSpec, monthly_collection, native_projection, period_image
+from .products import (
+    ProductSpec,
+    monthly_collection,
+    native_projection,
+    period_image,
+    storage_collection,
+)
+from .temporal import add_months
 
 ENSEMBLE_BANDS = ("median", "mean", "stdDev", "min", "max", "count", "cv")
 
@@ -75,15 +82,9 @@ def _chunk_size(spec: ProductSpec) -> int:
     return 12 if spec.native_res_deg < 0.02 else 36
 
 
-def basin_monthly_series(spec: ProductSpec, asset: str, months: list, geometry,
-                         res: float = DEFAULT_RES_DEG, on_chunk=None) -> pd.DataFrame:
-    """
-    Area-weighted basin mean of monthly totals (mm) on the analysis grid.
-
-    Requests run in chunks of months so long records stay inside interactive
-    time limits. on_chunk(done, total) reports progress. Returns a DataFrame
-    indexed by month with columns 'mean' and 'coverage'.
-    """
+def _basin_series(collection_fn, spec: ProductSpec, asset: str, months: list, geometry,
+                  res: float, on_chunk=None) -> pd.DataFrame:
+    """Area-weighted basin means of collection_fn(chunk of months), in chunks of months."""
     proj = native_projection(spec, asset)
 
     def summarize(img):
@@ -96,7 +97,7 @@ def basin_monthly_series(spec: ProductSpec, asset: str, months: list, geometry,
     step = _chunk_size(spec)
     for i in range(0, len(months), step):
         chunk = months[i:i + step]
-        feats = monthly_collection(spec, asset, chunk).map(summarize).getInfo()["features"]
+        feats = collection_fn(chunk).map(summarize).getInfo()["features"]
         for feat in feats:
             props = feat["properties"]
             month = datetime.datetime.fromtimestamp(props["t"] / 1000, tz=datetime.timezone.utc).date()
@@ -107,7 +108,45 @@ def basin_monthly_series(spec: ProductSpec, asset: str, months: list, geometry,
 
     df = pd.DataFrame(rows).set_index("month").sort_index()
     df.index = pd.to_datetime(df.index)
-    return df
+    return df.astype(float)
+
+
+def centred_change(storage: pd.Series) -> pd.Series:
+    """
+    Monthly storage change from a contiguous monthly storage series (same formula
+    as products.monthly_image): [S(m+1) − S(m−1)] / 2, falling back to the
+    forward or backward difference where one neighbour is missing.
+    """
+    nxt, prv = storage.shift(-1), storage.shift(1)
+    return ((nxt - prv) / 2).fillna(nxt - storage).fillna(storage - prv)
+
+
+def basin_monthly_series(spec: ProductSpec, asset: str, months: list, geometry,
+                         res: float = DEFAULT_RES_DEG, on_chunk=None) -> pd.DataFrame:
+    """
+    Area-weighted basin mean of monthly totals (mm) on the analysis grid.
+
+    Requests run in chunks of months so long records stay inside interactive
+    time limits. on_chunk(done, total) reports progress. Returns a DataFrame
+    indexed by month with columns 'mean' and 'coverage'; storage products add
+    'storage' (basin-mean storage in mm) and give the storage change as 'mean'.
+    `months` must be contiguous.
+    """
+    if spec.temporal != "storage":
+        return _basin_series(lambda chunk: monthly_collection(spec, asset, chunk),
+                             spec, asset, months, geometry, res, on_chunk)
+
+    # Basin means are linear, so differencing basin-mean storage equals the basin
+    # mean of the per-cell storage change, with one request instead of three.
+    extended = [add_months(months[0], -1)] + list(months) + [add_months(months[-1], 1)]
+    states = _basin_series(lambda chunk: storage_collection(spec, asset, chunk),
+                           spec, asset, extended, geometry, res, on_chunk)
+    out = pd.DataFrame({
+        "mean": centred_change(states["mean"]),
+        "coverage": states["coverage"],
+        "storage": states["mean"],
+    })
+    return out.iloc[1:-1]
 
 
 def ensemble_series(monthly: pd.DataFrame, members: list) -> pd.DataFrame:

@@ -1391,9 +1391,9 @@ if st.session_state.app_mode is None:
             <span class="tool-icon">🌊</span>
             <div class="tool-title">Water Balance</div>
             <div class="tool-description">
-                Global evapotranspiration from ten satellite and model products, harmonised to one
-                analysis grid. Basin time series, multi-product ensemble and uncertainty maps,
-                FAO-56 reference ET, and HydroSHEDS river-basin selection.
+                Global precipitation, evapotranspiration, runoff and GRACE storage change from 27
+                products on one analysis grid. Basin time series, ensemble uncertainty maps, P − ET,
+                gauge comparison, and HydroSHEDS river-basin selection.
             </div>
         </div>
         """, unsafe_allow_html=True)

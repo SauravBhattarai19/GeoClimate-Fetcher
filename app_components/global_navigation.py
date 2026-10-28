@@ -212,7 +212,7 @@ def get_current_tool_info():
         "data_visualizer": {"name": "Data Visualizer", "icon": "📊", "description": "Visualize Your Data"},
         "snow_depth": {"name": "GLOBAL-SAM", "icon": "❄️", "description": "Snow Depth Analysis & Comparison"},
         "serves": {"name": "SERVES", "icon": "🛰️", "description": "Satellite-based Environmental Retrieval & Visualization"},
-        "water_balance": {"name": "Water Balance", "icon": "🌊", "description": "Global Multi-Product Evapotranspiration & Water Balance"},
+        "water_balance": {"name": "Water Balance", "icon": "🌊", "description": "Global Multi-Product P, ET, Runoff & Storage Water Balance"},
     }
 
     return tool_info.get(current_mode, {"name": "Unknown", "icon": "❓", "description": "Unknown Tool"})

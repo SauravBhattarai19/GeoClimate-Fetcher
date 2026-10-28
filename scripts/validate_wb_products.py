@@ -14,6 +14,14 @@ Checks
   5. grid alignment and area weighting
   6. July-2020 monthly ET of every product lies in a plausible range
   7. HydroBASINS lookup and upstream tracing
+  8. IMERG mm/h → monthly mm conversion matches the raw band
+  9. 2019 annual precipitation of every product at four contrasting sites, and
+     masking outside the latitude band of non-global products
+ 10. P − ET pairing arithmetic (offline)
+ 11. 2019 annual runoff of every product at the same sites
+ 12. storage change: GRACE month assignment and mission gap, centred difference
+     (basin series == per-cell images, annual sum telescopes), seasonal amplitude
+ 13. discharge → runoff depth conversion (offline)
 Exits non-zero if any check fails.
 """
 
@@ -155,11 +163,11 @@ def check_plausible_july(avail):
     from geoclimate_fetcher.water_balance import (
         ALL_PRODUCTS, area_weighted_mean, monthly_image, native_projection, to_grid,
     )
-    print("\n6. July 2020 monthly totals, Iowa cropland 0.1° cell (plausible 60–250 mm)")
+    print("\n6. July 2020 monthly ET / ET₀, Iowa cropland 0.1° cell (plausible 60–250 mm)")
     cell = ee.Geometry.Rectangle([-93.6, 41.9, -93.5, 42.0], None, False)
     values = {}
     for key, spec in ALL_PRODUCTS.items():
-        if key not in avail or not (avail[key]["first_month"] <= datetime.date(2020, 7, 1)
+        if spec.kind not in ("et", "ref_et") or key not in avail or not (avail[key]["first_month"] <= datetime.date(2020, 7, 1)
                                     <= avail[key]["last_month"]):
             continue
         asset = avail[key]["asset"]
@@ -188,6 +196,163 @@ def check_basins():
         check("Ocean point rejected", True)
 
 
+def check_imerg_units(avail):
+    from geoclimate_fetcher.water_balance import P_PRODUCTS, monthly_image
+    print("\n8. IMERG units")
+    spec = P_PRODUCTS["imerg"]
+    if "imerg" not in avail:
+        check(spec.label, False, "unavailable")
+        return
+    asset = avail["imerg"]["asset"]
+    raw = ee.ImageCollection(asset).filterDate("2019-07-01", "2019-08-01").first().select(spec.band)
+    raw_v, mm_v = ee.List([
+        _point_value(raw, -93.55, 41.95, 11132),
+        _point_value(monthly_image(spec, asset, "2019-07-01"), -93.55, 41.95, 11132),
+    ]).getInfo()
+    check("Iowa July 2019: mm == mm/h × 24 × 31", abs(mm_v - raw_v * 24 * 31) < 1e-3,
+          f"{raw_v:.3f} mm/h → {mm_v:.1f} mm")
+
+
+# (west, south, east, north) of a 0.1° cell and the plausible 2019 annual range (mm)
+P_SITES = {
+    "Iowa cropland":   ([-93.6, 41.9, -93.5, 42.0], (700, 1500)),
+    "Manaus, Amazon":  ([-60.1, -3.2, -60.0, -3.1], (1800, 3500)),
+    "Central Sahara":  ([5.0, 25.0, 5.1, 25.1], (0, 100)),
+    "Yakutsk, 62°N":   ([129.6, 62.0, 129.7, 62.1], (150, 450)),
+}
+
+
+def check_precip_annual(avail):
+    from geoclimate_fetcher.water_balance import (
+        P_PRODUCTS, area_weighted_mean, covers_latitudes, gridded_period_image,
+    )
+    from geoclimate_fetcher.water_balance.temporal import month_range
+    print("\n9. 2019 annual precipitation at contrasting sites")
+    months = month_range(datetime.date(2019, 1, 1), datetime.date(2019, 12, 1))
+    for key, spec in P_PRODUCTS.items():
+        if key not in avail:
+            check(spec.label, False, "unavailable")
+            continue
+        img = gridded_period_image(spec, avail[key]["asset"], months, 12, 0.1)
+        got = ee.Dictionary({
+            name: area_weighted_mean(img, ee.Geometry.Rectangle(box, None, False), 0.1).get("mean")
+            for name, (box, _) in P_SITES.items()
+        }).getInfo()
+        for name, (box, (lo, hi)) in P_SITES.items():
+            v = got.get(name)
+            if covers_latitudes(spec, box[1], box[3]):
+                check(f"{spec.label} — {name}", v is not None and lo <= v <= hi,
+                      f"{v:.0f} mm (plausible {lo}–{hi})" if v is not None else "no data")
+            else:
+                check(f"{spec.label} — {name} masked outside {spec.lat_bounds}", v is None,
+                      "no data" if v is None else f"unexpected {v:.0f} mm")
+
+
+def check_balance_pairs():
+    import pandas as pd
+    from geoclimate_fetcher.water_balance import balance_series, pair_differences
+    print("\n10. P − ET pairing (offline)")
+    idx = pd.to_datetime(["2020-01-01", "2020-02-01"])
+    p = pd.DataFrame({"a": [100.0, 50.0], "b": [120.0, None]}, index=idx)
+    et = pd.DataFrame({"x": [40.0, 30.0], "y": [60.0, 70.0]}, index=idx)
+    diffs = pair_differences(p, et, ["a", "b"], ["x", "y"])
+    check("one column per P × ET pair", sorted(diffs.columns) == ["a|x", "a|y", "b|x", "b|y"])
+    bal = balance_series(p, et, ["a", "b"], ["x", "y"])
+    check("January median of pair differences", bal.loc[idx[0], "median"] == 60.0,
+          f"{bal.loc[idx[0], 'median']} (pairs 60, 40, 80, 60)")
+    check("missing P drops only its pairs", bal.loc[idx[1], "n"] == 2 and bal.loc[idx[1], "median"] == 0.0,
+          f"n={bal.loc[idx[1], 'n']}, median={bal.loc[idx[1], 'median']}")
+
+
+# Plausible 2019 annual runoff (mm) — wide, since models disagree; catches unit errors
+Q_RANGES = {"Iowa cropland": (50, 700), "Manaus, Amazon": (300, 2500),
+            "Central Sahara": (0, 20), "Yakutsk, 62°N": (0, 400)}
+
+
+def check_runoff_annual(avail):
+    from geoclimate_fetcher.water_balance import Q_PRODUCTS, area_weighted_mean, gridded_period_image
+    from geoclimate_fetcher.water_balance.temporal import month_range
+    print("\n11. 2019 annual runoff at contrasting sites")
+    months = month_range(datetime.date(2019, 1, 1), datetime.date(2019, 12, 1))
+    for key, spec in Q_PRODUCTS.items():
+        if key not in avail:
+            check(spec.label, False, "unavailable")
+            continue
+        img = gridded_period_image(spec, avail[key]["asset"], months, 12, 0.1)
+        got = ee.Dictionary({
+            name: area_weighted_mean(img, ee.Geometry.Rectangle(box, None, False), 0.1).get("mean")
+            for name, (box, _) in P_SITES.items()
+        }).getInfo()
+        for name, (lo, hi) in Q_RANGES.items():
+            v = got.get(name)
+            check(f"{spec.label} — {name}", v is not None and lo <= v <= hi,
+                  f"{v:.0f} mm (plausible {lo}–{hi})" if v is not None else "no data")
+
+
+def check_storage(avail):
+    from geoclimate_fetcher.water_balance import (
+        DS_PRODUCTS, area_weighted_mean, basin_monthly_series, monthly_collection, monthly_image,
+        native_projection, storage_image, to_grid,
+    )
+    from geoclimate_fetcher.water_balance.temporal import month_range
+    print("\n12. Storage change")
+    box = ee.Geometry.Rectangle([-62, -5, -58, -1], None, False)     # central Amazon
+    grace = DS_PRODUCTS["grace_jpl"]
+    if "grace_jpl" in avail:
+        asset = avail["grace_jpl"]["asset"]
+        counts = ee.Dictionary({
+            m: storage_image(grace, asset, m).reduceRegion(ee.Reducer.count(), box, 55660).get("S")
+            for m in ("2017-03-01", "2017-04-01", "2017-09-01", "2018-06-01", "2019-02-01")
+        }).getInfo()
+        check("GRACE images land in the month of their midpoint",
+              all(counts[m] > 0 for m in ("2017-03-01", "2017-04-01", "2018-06-01", "2019-02-01")),
+              str(counts))
+        check("GRACE mission gap (Sep 2017) is empty", counts["2017-09-01"] == 0)
+
+    months = month_range(datetime.date(2019, 1, 1), datetime.date(2019, 12, 1))
+    for key, spec in DS_PRODUCTS.items():
+        if key not in avail:
+            check(spec.label, False, "unavailable")
+            continue
+        asset = avail[key]["asset"]
+        df = basin_monthly_series(spec, asset, months, box, 0.1)
+        server = area_weighted_mean(
+            to_grid(monthly_image(spec, asset, "2019-07-01"), native_projection(spec, asset),
+                    spec.native_res_deg, 0.1), box, 0.1).get("mean").getInfo()
+        client = df.loc["2019-07-01", "mean"]
+        check(f"{spec.label}: basin-series ΔS == per-cell ΔS (Jul 2019)", abs(server - client) < 0.01,
+              f"{client:.2f} vs {server:.2f} mm")
+
+        # With no gaps the centred differences telescope:
+        # Σ ΔS(Jan..Dec) = ½[S(Dec) + S(Jan+1)] − ½[S(Dec−1) + S(Jan)]
+        ends = [storage_image(spec, asset, m) for m in ("2018-12-01", "2019-01-01", "2019-12-01", "2020-01-01")]
+        s_dec0, s_jan, s_dec, s_jan1 = ee.List([_point_value(e, -60.05, -3.05, 5000) for e in ends]).getInfo()
+        summed = _point_value(monthly_collection(spec, asset, months).sum(), -60.05, -3.05, 5000).getInfo()
+        expected = (s_dec + s_jan1) / 2 - (s_dec0 + s_jan) / 2
+        check(f"{spec.label}: annual ΔS telescopes", abs(summed - expected) < 0.01,
+              f"Σ monthly {summed:.1f} vs end-point {expected:.1f} mm")
+
+        amplitude = df["storage"].max() - df["storage"].min()
+        check(f"{spec.label}: Amazon 2019 storage range 200–2000 mm", 200 <= amplitude <= 2000,
+              f"{amplitude:.0f} mm")
+
+
+def check_discharge():
+    import pandas as pd
+    from geoclimate_fetcher.water_balance import discharge_to_monthly_mm
+    print("\n13. Discharge → runoff depth (offline)")
+    daily = pd.Series(100.0, index=pd.date_range("2020-01-01", "2020-02-29", freq="D"))
+    daily = daily.drop(pd.date_range("2020-02-01", "2020-02-10"))     # February only 19/29 days
+    mm = discharge_to_monthly_mm(daily, 1000.0)
+    check("100 m³/s for 31 days over 1000 km² = 267.84 mm", abs(mm.iloc[0] - 267.84) < 1e-9,
+          f"{mm.iloc[0]:.2f} mm")
+    check("month with < 80% of days dropped", pd.isna(mm.iloc[1]))
+    monthly = pd.Series([50.0, 60.0], index=pd.to_datetime(["2020-01-15", "2020-02-15"]))
+    mm = discharge_to_monthly_mm(monthly, 1000.0)
+    check("monthly record kept as monthly values", mm.notna().all() and abs(mm.iloc[1] - 60 * 29 * 0.0864) < 1e-9,
+          f"{mm.round(2).tolist()}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     parser.add_argument("--project", default=os.environ.get("EE_PROJECT"),
@@ -202,6 +367,12 @@ def main():
     check_grid()
     check_plausible_july(avail)
     check_basins()
+    check_imerg_units(avail)
+    check_precip_annual(avail)
+    check_balance_pairs()
+    check_runoff_annual(avail)
+    check_storage(avail)
+    check_discharge()
 
     failed = RESULTS.count(False)
     print(f"\n{len(RESULTS) - failed}/{len(RESULTS)} checks passed")
