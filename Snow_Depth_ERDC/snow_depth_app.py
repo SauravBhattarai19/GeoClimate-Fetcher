@@ -334,6 +334,9 @@ def calculate_mean_fsc_for_months(aoi, year_range: tuple = (2018, 2023)) -> Dict
     
     return monthly_fsc
 
+PRODUCT_BANDS = ["snow_depth", "snow_density"]
+
+
 class SnowDepthCalculator:
     def __init__(self, scale: int = 500, use_seasonal_density: bool = True, custom_density_value: float = None, 
                  custom_monthly_densities: dict = None, density_method: str = "original", 
@@ -368,6 +371,35 @@ class SnowDepthCalculator:
         else:
             end_date = datetime.date(year, month + 1, 1)
         return start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')
+
+    @staticmethod
+    def month_segments(start: datetime.date, end: datetime.date) -> list:
+        """Split [start, end) into calendar-month pieces: [(piece_start, piece_end, month), ...].
+
+        `end` is exclusive (GEE filterDate convention). Each piece is computed with the
+        snow density of its own month.
+        """
+        segments = []
+        current = start
+        while current < end:
+            next_month = (current.replace(day=1) + datetime.timedelta(days=32)).replace(day=1)
+            piece_end = min(next_month, end)
+            segments.append((current, piece_end, current.month))
+            current = piece_end
+        return segments
+
+    @staticmethod
+    def _source_collections(aoi, start: str, end: str):
+        """MODIS NDSI and GLDAS SWE collections for [start, end)."""
+        snowExtent = ee.ImageCollection('MODIS/061/MOD10A1') \
+            .select("NDSI_Snow_Cover") \
+            .filterDate(start, end) \
+            .filterBounds(aoi)
+        gldas = ee.ImageCollection("NASA/GLDAS/V021/NOAH/G025/T3H") \
+            .select("SWE_inst") \
+            .filterDate(start, end) \
+            .filterBounds(aoi)
+        return snowExtent, gldas
 
     def _snow_density(self, fsc, month: int):
         """Snow density image (kg/m³) from FSC using the selected density method."""
@@ -440,27 +472,15 @@ class SnowDepthCalculator:
         return ee.Image.constant([0, 0]).rename(["snow_depth", "snow_density"]) \
             .toFloat().updateMask(0)
 
-    def calculate_monthly_products(self, aoi, year: int, month: int):
-        """Monthly [snow_depth, snow_density] using the monthly algorithm (mean NDSI, mean SWE).
+    def _segment_products(self, aoi, start: str, end: str, month: int):
+        """[snow_depth, snow_density] from the monthly algorithm (mean NDSI, mean SWE) over
+        [start, end), which lies within one calendar month.
 
         GLDAS is resampled bilinearly with no .reproject(): output resolution is set by
         the caller (export/download scale, or the map tile zoom). Forcing a fixed-scale
         reproject made large-AOI previews fail with "Image.reproject exceeds 2^31 pixels".
         """
-        start_date_str, end_date_str = self._month_range(year, month)
-        
-        # MODIS Snow Cover
-        snowExtent = ee.ImageCollection('MODIS/061/MOD10A1') \
-            .select("NDSI_Snow_Cover") \
-            .filterDate(start_date_str, end_date_str) \
-            .filterBounds(aoi)
-        
-        # GLDAS SWE
-        gldas = ee.ImageCollection("NASA/GLDAS/V021/NOAH/G025/T3H") \
-            .select("SWE_inst") \
-            .filterDate(start_date_str, end_date_str) \
-            .filterBounds(aoi)
-        
+        snowExtent, gldas = self._source_collections(aoi, start, end)
         has_data = snowExtent.size().gt(0).And(gldas.size().gt(0))
         products = ee.Image(ee.Algorithms.If(
             has_data,
@@ -469,21 +489,17 @@ class SnowDepthCalculator:
         ))
         return products.clip(aoi)
 
-    def calculate_daily_products(self, aoi, year: int, month: int):
-        """One [snow_depth, snow_density] image per MODIS day in the month.
+    def calculate_monthly_products(self, aoi, year: int, month: int):
+        """Monthly [snow_depth, snow_density] using the monthly algorithm (mean NDSI, mean SWE)."""
+        return self._segment_products(aoi, *self._month_range(year, month), month)
+
+    def _segment_daily(self, aoi, start: str, end: str, month: int):
+        """One [snow_depth, snow_density] image per MODIS day in [start, end) (within one month).
 
         Daily NDSI is paired with that day's mean GLDAS SWE. Cloudy days are masked
         by MODIS, so reducers over the collection only use clear-sky days.
         """
-        start_date_str, end_date_str = self._month_range(year, month)
-        snowExtent = ee.ImageCollection('MODIS/061/MOD10A1') \
-            .select("NDSI_Snow_Cover") \
-            .filterDate(start_date_str, end_date_str) \
-            .filterBounds(aoi)
-        gldas = ee.ImageCollection("NASA/GLDAS/V021/NOAH/G025/T3H") \
-            .select("SWE_inst") \
-            .filterDate(start_date_str, end_date_str) \
-            .filterBounds(aoi)
+        snowExtent, gldas = self._source_collections(aoi, start, end)
 
         def daily(img):
             day = ee.Date(img.get("system:time_start"))
@@ -501,21 +517,52 @@ class SnowDepthCalculator:
 
         return ee.ImageCollection(snowExtent.map(daily))
 
-    def calculate_products(self, aoi, months: list, statistic: str = "mean"):
-        """[snow_depth, snow_density] summarised over the (year, month) pairs in `months`.
+    def calculate_daily_products(self, aoi, year: int, month: int):
+        """One [snow_depth, snow_density] image per MODIS day in the month."""
+        return self._segment_daily(aoi, *self._month_range(year, month), month)
+
+    def _daily_collection(self, aoi, segments: list):
+        """Daily estimates for every day in the segments [(start, end, month), ...]."""
+        daily = None
+        for seg_start, seg_end, month in segments:
+            col = self._segment_daily(aoi, seg_start.isoformat(), seg_end.isoformat(), month)
+            daily = col if daily is None else daily.merge(col)
+        return daily
+
+    def _reduce_segments(self, aoi, segments: list, statistic: str = "mean"):
+        """[snow_depth, snow_density] summarised over date segments [(start, end, month), ...].
 
         statistic:
-          "mean"                  — mean of the monthly-algorithm images (unchanged method)
-          "median" / "max" / "min" — over the daily estimates of all days in those months
+          "mean"                   — monthly algorithm per segment, averaged weighted by the
+                                     segment's number of days (a single whole month is the
+                                     unchanged monthly algorithm)
+          "median" / "max" / "min" — over the daily estimates of every day in the segments
         """
-        if statistic == "mean":
-            return ee.ImageCollection(
-                [self.calculate_monthly_products(aoi, yr, mo) for yr, mo in months]
-            ).mean()
+        if not segments:
+            raise ValueError("The selected period contains no days.")
 
-        daily = self.calculate_daily_products(aoi, *months[0])
-        for yr, mo in months[1:]:
-            daily = daily.merge(self.calculate_daily_products(aoi, yr, mo))
+        if statistic == "mean":
+            images = [
+                self._segment_products(aoi, s.isoformat(), e.isoformat(), month)
+                for s, e, month in segments
+            ]
+            if len(images) == 1:
+                return images[0]
+            # Weighted by days so a 5-day piece of a month counts 5/31 of the full month.
+            # Binary mask weights skip pixels without data (cloud-covered all period, no
+            # snow); fractional edge masks from clip() would otherwise inflate the mean.
+            weighted = ee.ImageCollection([
+                ee.Image.cat([
+                    img.unmask(0).multiply(days).rename(["depth", "density"]),
+                    img.mask().gt(0).multiply(days).rename(["w_depth", "w_density"]),
+                ]).toFloat()
+                for img, days in zip(images, [(e - s).days for s, e, _ in segments])
+            ]).sum()
+            weights = weighted.select(["w_depth", "w_density"])
+            mean = weighted.select(["depth", "density"]).divide(weights).updateMask(weights.gt(0))
+            return mean.rename(PRODUCT_BANDS).clip(aoi)
+
+        daily = self._daily_collection(aoi, segments)
         reducers = {"median": daily.median, "max": daily.max, "min": daily.min}
         if statistic not in reducers:
             raise ValueError(f"Unknown statistic: {statistic}")
@@ -524,6 +571,50 @@ class SnowDepthCalculator:
             daily.size().gt(0), reducers[statistic](), self._empty_products()
         ))
         return reduced.clip(aoi)
+
+    def calculate_products(self, aoi, months: list, statistic: str = "mean"):
+        """[snow_depth, snow_density] summarised over the (year, month) pairs in `months`.
+
+        statistic:
+          "mean"                   — day-weighted mean of the monthly-algorithm images
+          "median" / "max" / "min" — over the daily estimates of all days in those months
+        """
+        segments = []
+        for yr, mo in months:
+            start, end = self._month_range(yr, mo)
+            segments.append((datetime.date.fromisoformat(start), datetime.date.fromisoformat(end), mo))
+        return self._reduce_segments(aoi, segments, statistic)
+
+    def calculate_range_products(self, aoi, start: datetime.date, end: datetime.date,
+                                 statistic: str = "mean"):
+        """[snow_depth, snow_density] summarised over any date range [start, end) (end exclusive).
+
+        Partial months are handled exactly: each calendar-month piece uses its own month's
+        density, and "mean" weights pieces by their number of days.
+        """
+        return self._reduce_segments(aoi, self.month_segments(start, end), statistic)
+
+    def calculate_closest_products(self, aoi, target: datetime.date, window_days: int):
+        """Per pixel, the clear-sky daily estimate nearest to `target` within ±window_days.
+
+        Each pixel takes the day closest to the target on which MODIS saw the ground
+        (ties go to the earlier day), so cloudy target days are gap-filled from nearby days.
+        """
+        start = target - datetime.timedelta(days=window_days)
+        end = target + datetime.timedelta(days=window_days + 1)
+        daily = self._daily_collection(aoi, self.month_segments(start, end))
+        target_ms = ee.Date(target.isoformat()).millis()
+
+        def add_closeness(img):
+            days_away = ee.Number(img.get("system:time_start")).subtract(target_ms).abs() \
+                .divide(86400000)
+            closeness = ee.Image(days_away.multiply(-1)).toFloat().rename("closeness")
+            # Only clear-sky pixels compete; cloudy days are masked out of the mosaic
+            return img.addBands(closeness.updateMask(img.select("snow_depth").mask()))
+
+        mosaic = daily.map(add_closeness).qualityMosaic("closeness").select(PRODUCT_BANDS)
+        closest = ee.Image(ee.Algorithms.If(daily.size().gt(0), mosaic, self._empty_products()))
+        return closest.clip(aoi)
 
     def calculate_monthly_snow_depth(self, aoi, year: int, month: int):
         """Calculate snow depth for a specific month and year"""
@@ -682,6 +773,29 @@ def process_monthly_data(calculator: SnowDepthCalculator, aoi_geom,
                         months_list: List[tuple], progress_bar, status_text,
                         product: str = "snow_depth", statistic: str = "mean") -> bytes:
     """Process AOI and generate one monthly GeoTIFF per month as a zip file"""
+    steps = []
+    for year, month in months_list:
+        start, end = calculator._month_range(year, month)
+        steps.append((f"{year}-{month:02d}", datetime.date.fromisoformat(start),
+                      datetime.date.fromisoformat(end)))
+    return process_period_steps(calculator, aoi_geom, steps, progress_bar, status_text,
+                                product=product, statistic=statistic)
+
+
+def step_file_tag(label: str) -> str:
+    """File-name tag for a time step label: '2023-01' → '2023_01', '2023-01-08' → '2023_01_08'."""
+    return label.replace("-", "_")
+
+
+def process_period_steps(calculator: SnowDepthCalculator, aoi_geom, steps: List[tuple],
+                         progress_bar, status_text,
+                         product: str = "snow_depth", statistic: str = "mean") -> bytes:
+    """One GeoTIFF per time step as a zip file.
+
+    steps: [(label, start, end), ...] with datetime.date bounds, end exclusive.
+    Files are named '<file stem>_<label>.tif', e.g. snow_depth_2023_01.tif.
+    Large AOIs are downloaded in chunks and merged.
+    """
     file_stem = output_file_stem(product, statistic)
     
     # Get bounds from geometry
@@ -694,10 +808,11 @@ def process_monthly_data(calculator: SnowDepthCalculator, aoi_geom,
     else:
         # Assume it's already in bounds format
         bounds = aoi_geom
+        aoi_geom = ee.Geometry.Rectangle(bounds)
     
     # Create chunks
     chunks = create_chunks(bounds)
-    total_tasks = len(months_list) * len(chunks)
+    total_tasks = len(steps) * len(chunks)
     current_task = 0
     
     # Create in-memory zip buffer
@@ -707,42 +822,52 @@ def process_monthly_data(calculator: SnowDepthCalculator, aoi_geom,
         # Create temporary directory for processing
         with tempfile.TemporaryDirectory() as temp_dir:
             
-            # Process each month
-            for year, month in months_list:
-                month_name = datetime.date(year, month, 1).strftime('%Y_%m')
-                status_text.text(f"Processing {month_name} ({len(chunks)} chunks)...")
+            # Process each step
+            for label, step_start, step_end in steps:
+                tag = step_file_tag(label)
+                status_text.text(f"Processing {label} ({len(chunks)} chunks)...")
+                image = calculator.calculate_range_products(
+                    aoi_geom, step_start, step_end, statistic
+                ).select(product)
                 
                 chunk_paths = []
                 
-                # Process each chunk for this month
+                # Process each chunk for this step
                 for chunk_id, chunk_bounds in enumerate(chunks):
                     try:
                         current_task += 1
                         progress_bar.progress(current_task / total_tasks)
                         
-                        chunk_path = download_chunk(
-                            calculator, chunk_bounds, chunk_id, year, month, temp_dir,
-                            product=product, statistic=statistic,
-                        )
+                        chunk_path = os.path.join(temp_dir, f'{product}_{tag}_chunk_{chunk_id}.tif')
+                        url = image.getDownloadURL({
+                            'scale': calculator.scale,
+                            'crs': 'EPSG:4326',
+                            'region': ee.Geometry.Rectangle(chunk_bounds),
+                            'format': 'GEO_TIFF'
+                        })
+                        response = requests.get(url)
+                        response.raise_for_status()
+                        with open(chunk_path, 'wb') as f:
+                            f.write(response.content)
                         chunk_paths.append(chunk_path)
                         
                     except Exception as e:
-                        st.warning(f"Error processing chunk {chunk_id+1} for {month_name}: {str(e)}")
+                        st.warning(f"Error processing chunk {chunk_id+1} for {label}: {str(e)}")
                         continue
                 
                 if not chunk_paths:
-                    st.warning(f"No chunks processed successfully for {month_name}")
+                    st.warning(f"No chunks processed successfully for {label}")
                     continue
                 
-                # Merge chunks for this month
-                status_text.text(f"Merging chunks for {month_name}...")
-                monthly_output_path = os.path.join(temp_dir, f'{file_stem}_{month_name}.tif')
-                merge_chunks(chunk_paths, monthly_output_path)
+                # Merge chunks for this step
+                status_text.text(f"Merging chunks for {label}...")
+                step_output_path = os.path.join(temp_dir, f'{file_stem}_{tag}.tif')
+                merge_chunks(chunk_paths, step_output_path)
                 
                 # Add to zip file
-                status_text.text(f"Adding {month_name} to zip...")
-                with open(monthly_output_path, 'rb') as f:
-                    zip_file.writestr(f'{file_stem}_{month_name}.tif', f.read())
+                status_text.text(f"Adding {label} to zip...")
+                with open(step_output_path, 'rb') as f:
+                    zip_file.writestr(f'{file_stem}_{tag}.tif', f.read())
                 
                 # Clean up chunk files
                 for chunk_path in chunk_paths:
@@ -773,6 +898,45 @@ def _get_snow_season_months(year: int, hemisphere: str = "north") -> list:
         return [(year, m) for m in range(4, 11)]
 
 
+# Calendar seasons (Northern Hemisphere months; the Southern Hemisphere is shifted 6 months).
+SEASON_MONTHS = {
+    "winter": (12, 1, 2),
+    "spring": (3, 4, 5),
+    "summer": (6, 7, 8),
+    "fall":   (9, 10, 11),
+}
+_SOUTHERN_SEASON = {"winter": "summer", "spring": "fall", "summer": "winter", "fall": "spring"}
+
+
+def get_season_months(year: int, season: str, hemisphere: str = "north") -> list:
+    """(year, month) tuples of a season.
+
+    "snow_season" → Oct `year` – Apr `year+1` (north) / Apr–Oct `year` (south).
+    Seasons that span the new year end in `year` (same convention as SERVES):
+    Northern winter 2023 = Dec 2022 – Feb 2023.
+    """
+    if season == "snow_season":
+        return _get_snow_season_months(year, hemisphere)
+    months = SEASON_MONTHS[season if hemisphere == "north" else _SOUTHERN_SEASON[season]]
+    return [(year - 1, m) if m == 12 else (year, m) for m in months]
+
+
+def get_period_months(year: int, period_type: str = "annual", month: int = 1,
+                      season: str = "snow_season", hemisphere: str = "north") -> list:
+    """(year, month) tuples of one year's period.
+
+    period_type: "annual" (12 months), "monthly" (`month`), "seasonal" (`season`, see
+    get_season_months) or "snow_season" (same as seasonal + season="snow_season").
+    """
+    if period_type == "monthly":
+        return [(year, month)]
+    if period_type == "snow_season":
+        return _get_snow_season_months(year, hemisphere)
+    if period_type == "seasonal":
+        return get_season_months(year, season, hemisphere)
+    return [(year, m) for m in range(1, 13)]
+
+
 def run_snow_depth_period_stats(
     calculator,
     aoi,
@@ -783,6 +947,7 @@ def run_snow_depth_period_stats(
     hemisphere: str = "north",
     statistic: str = "mean",
     product: str = "snow_depth",
+    season: str = "snow_season",
 ) -> dict:
     """Pixel-wise statistics (mean/min/max/median/std) across per-year composites.
 
@@ -796,18 +961,14 @@ def run_snow_depth_period_stats(
     period_type options:
       "annual"      — all 12 calendar months
       "monthly"     — single calendar `month` repeated across years
+      "seasonal"    — `season` (snow_season / winter / spring / summer / fall)
       "snow_season" — Oct–Apr (north) or Apr–Oct (south)
 
     product: "snow_depth" (m) or "snow_density" (kg/m³). All outputs use that band name.
     """
     images = []
     for year in range(start_year, end_year + 1):
-        if period_type == "monthly":
-            ym_list = [(year, month)]
-        elif period_type == "snow_season":
-            ym_list = _get_snow_season_months(year, hemisphere)
-        else:
-            ym_list = [(year, m) for m in range(1, 13)]
+        ym_list = get_period_months(year, period_type, month, season, hemisphere)
 
         if ym_list:
             year_composite = (
@@ -834,6 +995,7 @@ def run_snow_depth_period_stats(
         "period_type": period_type,
         "month":      month,
         "hemisphere": hemisphere,
+        "season":     season,
         "statistic":  statistic,
         "product":    product,
     }
@@ -878,6 +1040,77 @@ def run_snow_depth_temporal_variability(
         "end_year":     end_year,
         "product":      product,
     }
+
+
+def snow_time_steps(start: datetime.date, end: datetime.date, interval: str = "monthly") -> list:
+    """Time steps [(label, step_start, step_end), ...] covering start … end (inclusive).
+
+    step_end is exclusive. "monthly" → calendar months touching the range (label 'YYYY-MM');
+    "16day" / "weekly" → consecutive 16- / 7-day blocks from `start`, the last one cut at
+    `end` (label = block start date).
+    """
+    steps = []
+    if interval == "monthly":
+        current = start.replace(day=1)
+        while current <= end:
+            next_month = (current + datetime.timedelta(days=32)).replace(day=1)
+            steps.append((current.strftime("%Y-%m"), current, next_month))
+            current = next_month
+        return steps
+
+    block = datetime.timedelta(days=7 if interval == "weekly" else 16)
+    stop = end + datetime.timedelta(days=1)
+    current = start
+    while current < stop:
+        steps.append((current.isoformat(), current, min(current + block, stop)))
+        current += block
+    return steps
+
+
+def extract_snow_time_series(calculator, aoi, steps: list, statistic: str = "mean",
+                             product: str = "snow_depth", scale: int = 500,
+                             batch_size: int = 12, progress=None) -> list:
+    """AOI statistics for each time step, fetched from GEE in batches.
+
+    Returns one dict per step: label, start, end (inclusive), mean / min / max of `product`,
+    snow_cover_pct (share of observed area with snow depth ≥ 1 cm) and data_pct (share of
+    the AOI with a valid estimate — cloud-covered or missing pixels lower it).
+    progress(done, total) is called after each batch.
+    """
+    reducer = ee.Reducer.mean().combine(ee.Reducer.minMax(), "", True)
+    rows = []
+    for i in range(0, len(steps), batch_size):
+        batch = steps[i:i + batch_size]
+        features = []
+        for label, step_start, step_end in batch:
+            img = calculator.calculate_range_products(aoi, step_start, step_end, statistic)
+            depth = img.select("snow_depth")
+            stack = ee.Image.cat([
+                img.select(product).rename("value"),
+                depth.gte(0.01).multiply(100).rename("snow_cover"),
+                depth.mask().gt(0).multiply(100).rename("data"),
+            ])
+            stats = stack.reduceRegion(
+                reducer=reducer, geometry=aoi, scale=scale,
+                maxPixels=1e9, bestEffort=True, tileScale=4,
+            )
+            features.append(ee.Feature(None, stats).set("label", label))
+        info = ee.FeatureCollection(features).getInfo()
+        for (label, step_start, step_end), feat in zip(batch, info["features"]):
+            props = feat["properties"]
+            rows.append({
+                "label":          label,
+                "start":          step_start.isoformat(),
+                "end":            (step_end - datetime.timedelta(days=1)).isoformat(),
+                "mean":           props.get("value_mean"),
+                "min":            props.get("value_min"),
+                "max":            props.get("value_max"),
+                "snow_cover_pct": props.get("snow_cover_mean"),
+                "data_pct":       props.get("data_mean"),
+            })
+        if progress:
+            progress(len(rows), len(steps))
+    return rows
 
 
 def extract_bounds_from_tiff(tiff_file) -> tuple:

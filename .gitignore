@@ -105,6 +105,7 @@ file/
 *.csv                # 👈 Global ignore after exception
 
 downloads/
+docs/manual/
 tmp/
 output/
 *.tif
