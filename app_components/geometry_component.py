@@ -74,8 +74,11 @@ class GeometryComponent:
             ).add_to(m)
         
         # Add drawing tools
+        # export=False: folium>=1.0 names the Export link export_<id>, but streamlit-folium
+        # renames the control's id in the script, so its onclick hook hits null and the
+        # map script aborts (blank map, no drawing).
         draw = Draw(
-            export=True,
+            export=False,
             position='topright',
             draw_options={
                 'polyline': False,

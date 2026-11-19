@@ -2292,8 +2292,11 @@ def main():
                 
                 # Add drawing tools
                 from folium.plugins import Draw
+                # export=False: folium>=1.0 names the Export link export_<id>, but streamlit-folium
+                # renames the control's id in the script, so its onclick hook hits null and the
+                # map script aborts (blank map, no drawing). Geometry export is offered below the map.
                 draw = Draw(
-                    export=True,
+                    export=False,
                     filename='data.geojson',
                     position='topleft',
                     draw_options={
